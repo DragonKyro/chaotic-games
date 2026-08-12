@@ -1,0 +1,413 @@
+/* Exploding Kittens — game-specific styles. Imported by ui.tsx, so it only
+ * loads with the game's lazy chunk. Uses the shell's theme variables. */
+
+.ek-root {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ---------------------------------------------------------------- cards ---- */
+
+.ek-card {
+  --ek-accent: #444;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: #fbf6ea;
+  border: 2px solid #221f33;
+  border-radius: 10px;
+  padding: 5px 5px 6px;
+  font: inherit;
+  color: #221f33;
+  cursor: default;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+  transition: transform 90ms ease, box-shadow 90ms ease;
+}
+
+.ek-card-art {
+  display: block;
+  width: 100%;
+  background: var(--ek-accent);
+  border-radius: 6px;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.ek-card .ek-art {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.ek-card-name {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.15;
+  text-align: center;
+  letter-spacing: 0.01em;
+}
+
+.ek-card-foot {
+  font-size: 9px;
+  color: #6d6580;
+}
+
+.ek-card-sm { width: 66px; }
+.ek-card-md { width: 88px; }
+.ek-card-lg { width: 116px; }
+
+.ek-card-sm .ek-card-name { font-size: 8.5px; }
+
+.ek-card.is-interactive {
+  cursor: pointer;
+}
+.ek-card.is-interactive:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 6px 10px rgba(0, 0, 0, 0.45);
+}
+.ek-card.is-selected {
+  transform: translateY(-8px);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent), 0 6px 10px rgba(0, 0, 0, 0.45);
+}
+.ek-card.is-disabled {
+  opacity: 0.72;
+}
+.ek-card.is-facedown {
+  border-color: #4a3f70;
+}
+.ek-card.is-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 5 / 7;
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--border);
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------- table ---- */
+
+.ek-table {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .ek-table { grid-template-columns: 1fr; }
+}
+
+.ek-opponents {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ek-opponent {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.ek-opponent.is-turn {
+  border-left-color: var(--accent);
+  background: var(--bg-hover);
+}
+.ek-opponent.is-dead {
+  opacity: 0.5;
+}
+
+.ek-opponent-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+}
+
+.ek-opponent-cards {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.ek-handcount { color: var(--fg-muted); }
+
+.ek-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  flex: none;
+}
+
+.ek-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--fg-muted);
+}
+.ek-tag-dead { color: var(--danger); border-color: var(--danger); }
+.ek-tag-warn { color: var(--warning); border-color: var(--warning); }
+
+.ek-center {
+  display: flex;
+  gap: 18px;
+  justify-content: center;
+}
+
+.ek-pile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.ek-pile-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ek-log {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.ek-log-line { color: var(--fg-muted); }
+.ek-log-danger { color: var(--danger); font-weight: 600; }
+.ek-log-good { color: #6bd48f; font-weight: 600; }
+
+/* -------------------------------------------------------------- prompts ---- */
+
+.ek-prompt {
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.ek-prompt h4 { margin: 0 0 4px; }
+.ek-prompt p { margin: 0 0 10px; font-size: 13px; color: var(--fg-muted); }
+.ek-prompt.is-danger { border-color: var(--danger); }
+.ek-prompt.is-good { border-color: #6bd48f; }
+.ek-prompt.is-nope { border-color: var(--warning); }
+
+.ek-prompt-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.ek-prompt-row.ek-scroll {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.ek-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 12px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.ek-slider input { flex: 1; max-width: 320px; }
+
+/* ----------------------------------------------------------------- hand ---- */
+
+.ek-hand-area {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.ek-hand-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.ek-hand-head h4 { margin: 0; }
+
+.ek-known {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.ek-known-chip {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.ek-known-chip.is-bad {
+  color: var(--danger);
+  border-color: var(--danger);
+  font-weight: 700;
+}
+
+.ek-danger-meter {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.ek-danger-meter .is-bad { color: var(--danger); }
+
+.ek-hand {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 40px;
+}
+
+.ek-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.ek-owed {
+  color: var(--warning);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ek-play-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-hover);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+
+.ek-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.ek-picker button.is-on {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+.ek-play-row { display: flex; gap: 8px; }
+
+.ek-draw {
+  align-self: flex-start;
+  font-size: 15px;
+  padding: 10px 18px;
+}
+
+.ek-hint { font-size: 12px; color: var(--fg-muted); margin: 0; }
+.ek-hint-bad { font-size: 12px; color: var(--warning); margin: 0; }
+.ek-muted { color: var(--fg-muted); font-size: 13px; }
+
+/* ---------------------------------------------------------------- lobby ---- */
+
+.ek-lobby {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ek-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.ek-check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+}
+.ek-check small {
+  display: block;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+  margin-top: 2px;
+}
+
+.ek-expansion-note {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.ek-expansion-note p { margin: 4px 0 0; color: var(--fg-muted); line-height: 1.5; }
+
+/* ---------------------------------------------------------------- rules ---- */
+
+.ek-rules h4 { margin: 18px 0 6px; }
+.ek-rules h4:first-child { margin-top: 0; }
+.ek-rules p, .ek-rules li { line-height: 1.6; }
+
+.ek-rules-note {
+  background: var(--bg-hover);
+  border-left: 3px solid var(--accent);
+  padding: 8px 10px;
+  font-size: 12.5px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.ek-rules-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.ek-rules-table th,
+.ek-rules-table td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.ek-rules-table th { color: var(--fg-muted); font-weight: 600; }
+.ek-rules-table .ek-num { text-align: center; font-variant-numeric: tabular-nums; font-weight: 700; }
+.ek-rules-table tr.is-bad td { color: var(--danger); }
+.ek-rules-table tr.ek-rules-total td { font-weight: 700; border-bottom: none; }
+
+.ek-rules-cats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}

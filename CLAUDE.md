@@ -22,12 +22,17 @@ look there first; it has five finished games' worth of precedent.
 
 ## Current status
 
-**Infrastructure complete. All six games are OUTLINES ONLY.** Each has a
-`types.ts` with state/action/config types plus design notes, and a `module.ts`
-whose `applyAction` throws via `notImplemented()`. No reducers, no cards, no art.
+**Exploding Kittens base game is implemented and playable.** The other five
+games are OUTLINES ONLY: each has a `types.ts` with state/action/config types
+plus design notes, and a `module.ts` whose `applyAction` throws via
+`notImplemented()`. No reducers, no cards, no art for those five.
 
-Next up: **Exploding Kittens** — it's the smallest ruleset that forces all three
-engine primitives this family needs (see below).
+93 tests pass (`npm run test:run`), including 48 complete AI-vs-AI Exploding
+Kittens games across 2–5 players and 12 seeds.
+
+Next up: **Unstable Unicorns** — Neigh reuses the reaction window built for
+Nope almost directly. Or Imploding Kittens, if extending EK is more appealing
+than starting a new game.
 
 ## Tech stack (locked)
 
@@ -46,7 +51,7 @@ Five layers, separated by directory:
 
 Plus one temporary folder:
 
-- **`src/games/_scaffold/`** — placeholder helpers shared by the six outlines: `index.ts` (`baseInitialState`, `notImplemented`, `ExpansionMeta`) and `ui.tsx` (`makeScaffoldUi`, the "outline only" lobby form + board). Games stop importing it as they get real implementations; **delete the folder when the last one is done**, along with the `.scaffold-*` rules in `theme.css`.
+- **`src/games/_scaffold/`** — placeholder helpers shared by the five remaining outlines: `index.ts` (`baseInitialState`, `notImplemented`, `ExpansionMeta`) and `ui.tsx` (`makeScaffoldUi`, the "outline only" lobby form + board). Exploding Kittens no longer imports it. Games stop importing it as they get real implementations; **delete the folder when the last one is done**, along with the `.scaffold-*` rules in `theme.css`.
 
 ## GameModule contract
 
@@ -93,7 +98,10 @@ This family needs three engine capabilities the card-collecting games never did.
 Build each **once**, in the first game that needs it, then reuse. Don't build
 them speculatively.
 
-### 1. Reaction windows (the big one)
+**All three now exist in `src/games/exploding-kittens/`.** Read that reducer
+before reimplementing any of them elsewhere.
+
+### 1. Reaction windows (the big one) — BUILT
 
 Nope (Exploding Kittens), Neigh (Unstable Unicorns), Challenge and Modifier
 (Here to Slay) are all the same shape: a card playable **out of turn** that
@@ -104,37 +112,47 @@ pending play in state, give each eligible responder an explicit respond/decline
 prompt, and resolve when the window closes. Never a timer race between peers.
 Skip seats holding no legal response — they have no decision to make.
 
-Variants the primitive must support:
-- **Cancel, stackable** — Nope, Neigh, Challenge. Odd count = negated.
-- **Cancel, terminal** — Super Neigh cannot be answered.
-- **Modify, accumulating** — Here to Slay's Modifier cards adjust a pending dice roll rather than cancelling it, and several can pile on. The window opens on a *roll*, not on a card play, and iterates until everyone passes.
+Reference implementation: `state.pending` (`EkPendingPlay`) + `openOrResolve` /
+`resolvePending` / `buildResponderQueue` in `exploding-kittens/reducer.ts`.
+Key decisions baked in there:
 
-`activePlayerId` should park on the next eligible responder during an open
-window so the `GameHost` AI driver ticks them one at a time — the same trick the
-sibling project used for simultaneous picks.
+- Only players **holding a legal answer** are queued. Prompting someone with no Nope is pure noise, and in hot-seat it would leak whose turn it is to bluff.
+- **Playing** an answer is allowed out of order (it's a shout in the physical game); **declining** is strictly sequenced, because declining is what advances the queue.
+- Every landed Nope **rebuilds the queue**, so the original player gets to counter-Nope. Termination is guaranteed because each answer consumes a card.
+- `activePlayerId` parks on the current responder while `turnPlayerId` remembers whose turn it actually is. That's what lets the `GameHost` AI driver tick responders one at a time with no special-casing.
 
-### 2. Player elimination
+Variants still to add when reused:
+- **Cancel, terminal** — Super Neigh (Unstable Unicorns) cannot be answered. Needs a flag on the pending play that empties the queue.
+- **Modify, accumulating** — Here to Slay's Modifier cards adjust a pending dice *roll* rather than cancelling a card, and several can pile on. The window opens on a roll and iterates until everyone passes.
 
-Exploding Kittens knocks players out; Happy Little Dinosaurs runs them off a
-track. Needs an `eliminated: PlayerId[]` concept and turn advance that skips
-dead seats. Note `GameStateShape.finalScores` is `Record<PlayerId, number>` —
-for a last-one-standing game, score it 1/0 rather than changing the contract.
+### 2. Player elimination — BUILT
 
-### 3. Secret deck order — UNRESOLVED, decide before Exploding Kittens
+`eliminated: PlayerId[]` plus `nextLivePlayer()` skipping dead seats, in
+`exploding-kittens/reducer.ts`. Notes:
 
-The sibling project's hidden information was opponents' hands: easy to
-honor-system, since you have no reason to peek. This family leans on **secret
-deck order** — See The Future, Alter the Future, and especially Defuse
-reinsertion are only fun if you can't read the deck. Full state replication
-means a determined player can open devtools and see it.
+- An exploded player discards their **whole hand** along with the kitten.
+- Their owed turns (from an Attack) die with them; the next seat starts fresh on one turn.
+- `GameStateShape.finalScores` is `Record<PlayerId, number>`, so a last-one-standing game scores by **how many players you outlasted** — the winner tops the table and the end screen stays meaningful. Don't change the contract for this.
 
-Three options:
-1. **Accept it** — friends-only honor, consistent with the sibling project.
-2. **Host-authoritative deck** — keep order only on the host and stream reveals. Breaks the "every peer reduces identically" invariant and makes the host a server.
-3. **Commit-and-reveal** — hash the shuffled order at setup, reveal with proofs. Deterministic and cheat-resistant, but a real chunk of work.
+### 3. Secret deck order — DECIDED: accept it
 
-**No decision yet.** Pick one before writing the Exploding Kittens reducer, and
-record the choice here and in README.
+Friends-only honour, same stance as the sibling project. Not host-authoritative
+(that would break "every peer reduces identically" and make the host a server),
+and not commit-and-reveal (deterministic and cheat-resistant, but a lot of work
+for a game you play with five friends).
+
+What makes it hold up in practice is **`knownTopCount: Record<PlayerId, number>`**
+— how many top-of-deck cards each seat has legitimately earned sight of. This is
+the *only* sanctioned window into the deck, and the rule is enforced by
+convention plus tests:
+
+- The UI renders deck contents **only** via `knownTopCards(state, localPlayerId)`.
+- The AI reads the deck **only** via `drawDanger()` / `knownTopCards()`, plus `kittensInDeck()` which is pure public info (setup seeded `players - 1`; each explosion moves one to the discard). `ai.test.ts` asserts it walks into a kitten it had no way of knowing about.
+- Knowledge decays honestly: a draw decrements everyone by one, a shuffle zeroes everyone, a reinsertion clamps everyone to the insert index (cards below it are unchanged) and grants the placer exactly one card of knowledge if they hid it on top.
+
+If you add a card that reveals or manipulates the deck (Alter the Future, Draw
+From The Bottom, Swap Top and Bottom), **update the knowledge rules in the same
+change** or the AI silently starts cheating.
 
 Related: dice (Here to Slay, Casting Shadows) are *not* affected — a roll is
 public the instant it happens, so folding it into the action payload is enough.
@@ -145,14 +163,49 @@ All six are outlines. Each `types.ts` is the design doc — read it before
 touching that game. Expansion lists were verified against publisher stores
 except where noted.
 
-### Exploding Kittens (`src/games/exploding-kittens/`)
-2–5 players (6 with Imploding Kittens, 10 with Party Pack). Play cards, then end
-your turn **by drawing** — drawing is the turn-ender, not a choice. Draw a
-kitten without a Defuse and you're out. Deck always holds exactly
-`playerCount - 1` kittens.
-Expansions (verified): Imploding Kittens, Streaking Kittens, Barking Kittens,
-Zombie Kittens, Party Pack, Recipes for Disaster.
-Needs: all three primitives. **Implement this first.**
+### Exploding Kittens (`src/games/exploding-kittens/`) — ✅ BASE GAME BUILT
+
+2–5 players. Play cards, then end your turn **by drawing** — drawing is the
+turn-ender, not a choice. Draw a kitten without a Defuse and you're out. The
+deck always holds exactly `playerCount - 1` kittens, so exactly one player
+survives.
+
+**Files:**
+- `cards.ts` — deck composition, card metadata, `dealSetup`, combo detection, AI card values.
+- `types.ts` — state machine, action union, config, expansion list.
+- `reducer.ts` — all rules. Also exports the shared derivations (`kittensInDeck`, `drawDanger`, `knownTopCards`, `availableCombos`) used by both UI and AI.
+- `ai.ts` — heuristic AI. `reducer.test.ts` / `ai.test.ts` / `ui.test.tsx` — 93 tests.
+- `CardArt.tsx` — original inline SVG for all 13 cards + back + picker thumbnail. `Card.tsx`, `ui.tsx`, `Rules.tsx`, `ek.css`.
+
+**Deck composition (`BASE_DECK_COUNTS`) — 56 cards:** 4 Exploding Kitten,
+6 Defuse, 5 Nope, 4 each Attack / Skip / Favor / Shuffle, 5 See the Future,
+and 4 each of the five cats (20). ⚠ **Reconstructed, not read off the box** —
+explodingkittens.com, BGG and every rules mirror returned 503/403 during
+implementation. It totals 56 and the action-card subtotal (26) cross-checks, but
+spot-check it against the physical game. If a count is wrong, fix it in that one
+constant; nothing else depends on the numbers.
+
+**Two rule readings we had to choose** (both flagged in-app in `Rules.tsx`):
+- **Combos work with any matching cards**, not cats only — two Skips is a legal pair. `EkConfig.combosCatsOnly` flips it. Confirm against the rulebook and then consider dropping the option.
+- **Attack stacking**: playing Attack ends your turns and the next player owes `2 + turns you still owed`. Attacked-then-attacking passes on 3.
+
+**AI design.** Deterministic, single difficulty, no search, one action per call —
+the shell's driver ticks it repeatedly, so "See the Future, then decide whether
+to Skip" falls out across two ticks with no lookahead. It ranks by risk:
+certain-death on top → Attack (best: dodges the draw *and* hands the next player
+the kitten) > Skip > Shuffle > eat it with a Defuse and re-hide it. Unknown top →
+buy information first, then dodge. Safe → build advantage with combos. It
+deliberately does **not** Attack when the deck is safe, since drawing gains a
+card for free and Attack is worth saving. Nopes are spent only on plays that
+actually hurt it. Kitten placement is on top unless it still owes turns and
+would draw its own kitten, in which case it buries it.
+
+**Fair play is a hard rule here** — see primitive 3 above. The AI must never
+read `state.deck` except through `knownTopCards`.
+
+**Not built:** every expansion. Imploding Kittens is the cheapest next step
+(Reverse needs `turnDirection`, which already exists; Alter the Future is a
+variant of the existing peek).
 
 ### Unstable Unicorns (`src/games/unstable-unicorns/`)
 2–8 players. Build a Stable of 7 unicorns (6 at 6–8 players). Four-phase turns
@@ -234,7 +287,24 @@ points CI at public npmjs.org.
 
 ## Where to start next
 
-1. **Decide the secret-deck-order question.** It blocks Exploding Kittens.
-2. **Exploding Kittens**: `cards.ts` (56-card base deck, card-by-card from the rulebook) → reaction window → elimination + turn advance → combos → reducer tests.
-3. **Source the Doomlings expansion list** and confirm Casting Shadows' rules — the two research gaps.
-4. Confirm Here to Slay's action-point costs and Happy Little Dinosaurs' resolution order against their rulebooks.
+1. **Unstable Unicorns** — the reaction window is the bulk of the work and it already exists; it needs the terminal-cancel variant for Super Neigh. The 135-card list is the real cost.
+2. **Imploding Kittens** — cheapest expansion: Reverse uses the existing `turnDirection`, Alter the Future is a variant of the existing peek, Feral Cat is a wildcard in `detectCombo`. Raises max players to 6. Remember to update the deck-knowledge rules for any card that touches deck order.
+3. **Spot-check `BASE_DECK_COUNTS`** against a physical Exploding Kittens box, and confirm the combo rule (any matching cards vs cats only).
+4. **Source the Doomlings expansion list** and confirm Casting Shadows' rules — the two research gaps.
+5. Confirm Here to Slay's action-point costs and Happy Little Dinosaurs' resolution order against their rulebooks.
+
+## Art notes
+
+Card art is original inline SVG, drawn per game, no raster assets and nothing
+traced from retail cards. Exploding Kittens' set is built from one canonical
+`CatHead` primitive (centred at 50,56 on a `0 0 100 100` canvas) plus per-card
+props and accessories, which is what makes thirteen cards read as one set. Each
+card gets one accent colour from `CARD_ACCENT`, and every outline uses the same
+near-black ink.
+
+If you draw more: **look at it rendered before calling it done.** A typecheck and
+a render test both pass on art that looks like nothing. The first pass of this set
+had a beard that read as a wooden bucket, a foreleg that read as a tail, and a
+rainbow that started at the cat's cheek instead of its mouth — all invisible in
+tests, all obvious in a screenshot. `ui.test.tsx` asserts each card puts more
+than three shapes on the canvas, which catches empty art but not ugly art.

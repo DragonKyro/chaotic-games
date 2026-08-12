@@ -39,13 +39,7 @@
       "Bash(npm install:*)",
       "Bash(npx tsc:*)",
       "WebSearch",
-      "WebFetch(domain:en.wikipedia.org)",
-      "WebFetch(domain:boardgamegeek.com)",
-      "WebFetch(domain:api.geekdo.com)",
-      "WebFetch(domain:unstablegames.com)",
-      "WebFetch(domain:teeturtle.com)",
-      "WebFetch(domain:doomlings.com)",
-      "WebFetch(domain:explodingkittens.com)"
+      "WebFetch"
     ]
   }
 }

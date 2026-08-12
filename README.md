@@ -6,20 +6,34 @@ Infrastructure is lifted from the sibling [card-collecting](../card-collecting) 
 
 ## Status
 
-**Infrastructure is done. All six games are outlines only** — types, state machines and design notes, with reducers that throw. Nothing is playable yet. Each game's `types.ts` is its design doc.
+**Exploding Kittens (base game) is playable** — hot-seat, online, or against the AI, with its own hand-drawn card art and an in-app rules book. The other five games are outlines only: types, state machines and design notes, with reducers that throw. Each game's `types.ts` is its design doc.
 
-| Game | Players | Expansions modelled as toggles | Outline confidence |
+| Game | Players | Expansions modelled as toggles | State |
 |---|---|---|---|
-| **Exploding Kittens** | 2–5 (6 / 10 w/ exp.) | Imploding, Streaking, Barking, Zombie, Party Pack, Recipes for Disaster | Rules solid, deck list needed |
-| **Unstable Unicorns** | 2–8 | Uncut, NSFW, Rainbow Apocalypse, Dragons, Unicorns of Legend, Adventures, Christmas, Nightmares | Rules solid, 135 cards needed |
-| **Here to Slay** | 2–6 | Warriors & Druids, Berserkers & Necromancers, Here to Sleigh | ⚠ Action-point costs unconfirmed |
-| **Happy Little Dinosaurs** | 2–4 (6 w/ exp.) | Hazards Ahead, Dating Disasters, Perils of Puberty, 5–6 Player | ⚠ Resolution order unconfirmed |
-| **Casting Shadows** | 2–4 ⚠ | The Ice Storm, The Molten Rock | ⚠⚠ Rules reconstructed — get the rulebook |
-| **Doomlings** | 2–6 ⚠ | *none sourced yet* | ⚠⚠ Rules reconstructed, expansion list missing |
+| **Exploding Kittens** | 2–5 | Imploding, Streaking, Barking, Zombie, Party Pack, Recipes for Disaster | ✅ **Base game playable.** Expansions not built |
+| **Unstable Unicorns** | 2–8 | Uncut, NSFW, Rainbow Apocalypse, Dragons, Unicorns of Legend, Adventures, Christmas, Nightmares | Outline. Rules solid, 135 cards needed |
+| **Here to Slay** | 2–6 | Warriors & Druids, Berserkers & Necromancers, Here to Sleigh | Outline. ⚠ Action-point costs unconfirmed |
+| **Happy Little Dinosaurs** | 2–4 (6 w/ exp.) | Hazards Ahead, Dating Disasters, Perils of Puberty, 5–6 Player | Outline. ⚠ Resolution order unconfirmed |
+| **Casting Shadows** | 2–4 ⚠ | The Ice Storm, The Molten Rock | Outline. ⚠⚠ Rules reconstructed — get the rulebook |
+| **Doomlings** | 2–6 ⚠ | *none sourced yet* | Outline. ⚠⚠ Rules reconstructed, expansion list missing |
 
 Expansion names were verified against the publishers' stores, except Doomlings — its site was unreachable during research, so its list is deliberately empty rather than guessed.
 
-**Next up: Exploding Kittens.** It's the smallest ruleset that forces all three engine primitives below.
+### Exploding Kittens
+
+Everything in the base game: the 56-card deck, drawing as the turn-ender, Defuse
+plus secret reinsertion, the Nope stack, Attack turn-stacking, Skip, Favor,
+Shuffle, See the Future, all three combos, and player elimination. 93 tests
+cover it, including 48 complete AI-vs-AI games across 2–5 players.
+
+- **Card art** is original inline SVG — thirteen cards built from one shared cat-head primitive, in `CardArt.tsx`. No raster assets.
+- **The AI** plays to a risk model and is deliberately honest: it only reads the deck through what that seat has legitimately seen. See below.
+- **Rules** live in the app behind the 📖 button, including a card-count table and a note on every place the rules were ambiguous.
+
+Two calls we had to make, both documented in-app and in `cards.ts`:
+
+- **Combos work with any matching cards**, not just cats — the common reading of the rules. A lobby toggle restricts them to cats if your group plays it that way.
+- **Card counts were reconstructed, not read off the box.** Every rules source was unreachable at implementation time. The split totals 56 and cross-checks cleanly, but it deserves a spot-check: `BASE_DECK_COUNTS` in `cards.ts` is the single place to fix it.
 
 ## Tech stack
 
@@ -90,33 +104,38 @@ Copied from card-collecting: `GameModule` contract, seeded RNG, Trystero P2P lay
 ### Phase 1 — Game outlines ✅
 All six games scaffolded: `types.ts` per game carrying the state machine, action union, config and expansion list, plus a `module.ts` registered in the picker whose reducer throws. Expansion lists researched and verified (except Doomlings). Design notes record what's confirmed and what's a guess.
 
-### Phase 2 — Chaos primitives (next)
-Three engine capabilities the card-collecting games never needed. Build each in the first game that needs it, then reuse — not speculatively:
+### Phase 2 — Chaos primitives ✅ (via Exploding Kittens)
+Three engine capabilities the card-collecting games never needed. Each was built in the first game that needed it rather than speculatively:
 
-1. **Reaction windows.** Nope, Neigh, Challenge and Modifier are one shape: a card playable out of turn that answers a pending play and can itself be answered, resolving last-in-first-out. Must be deterministic — explicit respond/decline prompts per eligible responder, never a real-time race between peers. Three variants: stackable cancel, terminal cancel (Super Neigh), and accumulating modify (Here to Slay's dice modifiers).
-2. **Player elimination.** Exploding Kittens knocks players out; Happy Little Dinosaurs runs them off a track. Needs an `eliminated` list plus turn-advance that skips dead seats.
-3. **Secret deck order.** See The Future, Alter the Future and Defuse reinsertion all depend on deck order being secret. Under full state replication every peer can read it — see the open question below. **This one is a decision, not code, and it blocks Phase 3.**
+1. **Reaction windows** — built. Nope, Neigh, Challenge and Modifier are one shape: a card playable out of turn that answers a pending play and can itself be answered, resolving last-in-first-out. The implementation parks the play in `state.pending`, queues only players who actually hold an answer, and reopens the window every time one lands. Deterministic, no real-time race between peers. Still to generalise when reused: a *terminal* cancel (Super Neigh can't be Noped) and an *accumulating modify* (Here to Slay's dice modifiers adjust a roll instead of cancelling it).
+2. **Player elimination** — built. `eliminated: PlayerId[]` plus a turn advance that skips dead seats, and final scores ranked by who outlasted whom.
+3. **Secret deck order** — **decided: accept it.** Same friends-only honour stance as the sibling project; no host authority, no commit-and-reveal. What makes it work in practice is `knownTopCount` — a per-player count of how many top-of-deck cards that seat has legitimately earned sight of, via See the Future or by hiding a kitten itself. The UI renders the deck *only* through that, and the AI reads it *only* through that. See the note below.
 
 Dice (Here to Slay, Casting Shadows) need no new primitive: a roll is public the moment it happens, so folding it into the action payload is enough.
 
-### Phase 3 — Exploding Kittens
-Smallest ruleset that exercises all three primitives. Good forcing function for the shared scaffolding.
+### Phase 3 — Exploding Kittens base game ✅
+See the status section above.
 
 ### Phase 4+ — Remaining titles
-Unstable Unicorns (Neigh chains reuse the reaction window), Happy Little Dinosaurs (simultaneous face-down commits), Doomlings (trait tableau + ages deck), Here to Slay and Casting Shadows (dice; Casting Shadows also brings the first spatial board).
+Unstable Unicorns is the natural next one: Neigh chains reuse the reaction window almost directly, and it needs a terminal-cancel variant. Then Happy Little Dinosaurs (simultaneous face-down commits), Doomlings (trait tableau + ages deck), Here to Slay and Casting Shadows (dice; Casting Shadows also brings the first spatial board).
+
+Exploding Kittens' own expansions are a separate track — Imploding Kittens is the cheapest, since Reverse and Alter the Future both slot into machinery that already exists.
 
 Blocked on research: Casting Shadows and Doomlings both need rulebooks, and Doomlings needs its expansion list sourced.
 
-## Open question: hidden deck order
+## Decided: hidden deck order
 
-The card-collecting project's hidden information was opponents' hands — easy to honor-system, since you have no reason to peek. This family leans much harder on *secret deck order*: See The Future, Defuse reinsertion, and deck-stacking are only fun if you can't read the deck. Full state replication means a determined player can open devtools and see it.
+The card-collecting project's hidden information was opponents' hands — easy to honour-system, since you have no reason to peek. This family leans much harder on *secret deck order*: See the Future, Defuse reinsertion and deck-stacking are only fun if you can't read the deck. Full state replication means a determined player can open devtools and see it.
 
-Options, to be decided before the Exploding Kittens reducer is written:
-- **Accept it** (friends-only honor, consistent with the sibling project's stance), or
-- **Host-authoritative deck**: keep deck order only on the host and stream reveals — breaks the "every peer reduces identically" invariant and makes the host a server, or
-- **Commit-and-reveal**: hash the shuffled order at setup, reveal cards with proofs — deterministic and cheat-resistant, but a significant chunk of work.
+The options were to accept it, to make the host authoritative over deck order (which breaks "every peer reduces identically" and turns the host into a server), or to do commit-and-reveal with hashes (deterministic and cheat-resistant, but a lot of work).
 
-No decision yet. Documented here so it isn't discovered halfway through the first reducer.
+**We accept it** — friends-only honour, consistent with the sibling project. The discipline that makes it hold up:
+
+- The UI never renders deck contents. The only window in is `knownTopCount[playerId]`, the number of top cards that seat has legitimately seen.
+- The AI is written against the same window. It has `drawDanger()` and `knownTopCards()` and nothing else; a test asserts it walks into a kitten it had no way of knowing about. An AI that peeked would also be unbeatable and boring.
+- Knowledge decays honestly: a draw shifts it down by one, a shuffle wipes it, and a reinsertion clamps everyone's to the insert index.
+
+Revisit only if the game ever leaves the friends-only setting.
 
 ## Non-goals
 

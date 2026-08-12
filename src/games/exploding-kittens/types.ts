@@ -1,49 +1,45 @@
-// Exploding Kittens — types + design outline. NO LOGIC YET.
+// Exploding Kittens — types for the implemented BASE GAME.
 //
 // ============================================================================
 // Core loop
 // ============================================================================
-// Turn = optionally play any number of cards, then END YOUR TURN BY DRAWING one
-// card from the deck. Drawing is the turn-ender, not an action you choose — the
-// only ways to end a turn without drawing are Skip and Attack.
-// Draw an Exploding Kitten and you must play a Defuse (then secretly reinsert
-// the kitten anywhere in the deck) or you are OUT. Last player alive wins.
+// A turn is: play any number of cards (or none), then END YOUR TURN BY DRAWING
+// one card. Drawing is the turn-ender, not an action you pick — the only ways to
+// end a turn without drawing are Skip and Attack. Draw an Exploding Kitten and
+// you must play a Defuse (then secretly reinsert the kitten anywhere in the
+// deck) or you are out. Last player alive wins.
 //
-// Deck setup (base): remove all Exploding Kittens and Defuses. Deal 7 random
-// cards + 1 Defuse to each player. Return (playerCount - 1) Exploding Kittens
-// and the leftover Defuses to the deck, shuffle. So the deck ALWAYS has exactly
-// one fewer kitten than players — someone survives.
+// Deck holds exactly (playerCount - 1) kittens, so exactly one player survives.
+// See cards.ts for the 56-card composition and the setup deal.
 //
 // ============================================================================
-// Why this game first
+// Hidden information — the deck-order caveat
 // ============================================================================
-// It's the smallest ruleset that forces all three engine primitives this whole
-// project needs (see README "Chaos primitives"):
-//   1. Player elimination + turn advance that skips the dead.
-//   2. Reaction windows — Nope can be played by anyone, out of turn, and Noped
-//      by another Nope, LIFO.
-//   3. Secret deck order — Defuse reinsertion, See The Future, Alter the Future.
-//      Under full state replication every peer can read the deck array. This is
-//      the project's open design question; see README.
+// Per the project's model the full state is replicated, so `state.deck` is
+// readable by every peer in devtools. We accept that (friends-only honour, same
+// stance as the sibling project) rather than making the host authoritative.
+// Two consequences the code must respect:
+//   - The UI NEVER renders deck contents. The only legitimate window into the
+//     deck is `knownTopCount`, below.
+//   - The AI must not read `state.deck` beyond `knownTopCount[me]`. Anything
+//     else is cheating, and it would also make the AI unbeatable and boring.
 //
 // ============================================================================
 // Turn / subphase state machine
 // ============================================================================
-//   awaitingAction        main loop: active player plays cards or draws
-//   awaitingNope          a card is on the stack; eligible players may Nope
-//   awaitingDefuse        active player drew a kitten and holds a Defuse
-//   awaitingKittenPlace   Defuse played; choose the reinsertion index (secret)
-//   awaitingFavorTarget   Favor played; choose whom to take from
-//   awaitingFavorGive     target chooses which card to hand over
-//   awaitingComboTarget   2-of-a-kind: choose a victim (blind steal)
-//   awaitingComboSteal    3-of-a-kind: name a card type to demand
-//   awaitingFutureView    See The Future: peek top 3 (view-only, ack to close)
-//   awaitingFutureOrder   Alter the Future: reorder the top 3 (Imploding)
+//   awaitingAction      main loop: active player plays cards or draws
+//   awaitingNope        a play is parked; eligible holders may Nope, LIFO
+//   awaitingDefuse      active player drew a kitten and holds a Defuse
+//   awaitingKittenPlace Defuse played; choose the secret reinsertion index
+//   awaitingFavorGive   Favor resolved; the target picks a card to hand over
+//   awaitingDiscardPick five-different combo; take any card from the discard
+//   awaitingFutureView  See the Future peek is open; acknowledge to close
 //   gameOver
 //
-// `activePlayerId` follows the acting seat. During awaitingNope it parks on the
-// next seat eligible to respond so the GameHost AI driver ticks responders one
-// at a time (same trick the card-collecting project used for simultaneous picks).
+// `activePlayerId` follows whoever owes a decision — during awaitingNope it
+// parks on the next eligible responder, and during awaitingFavorGive on the
+// Favor's victim. That keeps the shell's AI driver ticking one seat at a time
+// without any special-casing (same trick the sibling project used).
 
 import type { GameStateShape } from '@/core/module';
 import type { PlayerId } from '@/core/types';
@@ -54,78 +50,45 @@ import type { ExpansionMeta, ScaffoldConfig } from '../_scaffold';
 // ============================================================================
 
 /**
- * Base set card kinds. The five "cat" cards have no ability on their own —
- * they exist purely as pair/triple fodder for combos.
- *
- * Base deck (56 cards) composition per the rulebook still needs confirming
- * card-by-card before `cards.ts` is written.
+ * Base set card kinds. The five cat cards have no ability of their own — they
+ * exist purely as combo fodder.
  */
 export type EkBaseCardKind =
   | 'explodingKitten'
   | 'defuse'
+  | 'nope'
   | 'attack'
   | 'skip'
   | 'favor'
   | 'shuffle'
   | 'seeTheFuture'
-  // Cat cards (combo fodder only)
   | 'tacoCat'
   | 'rainbowRalphingCat'
   | 'cattermelon'
   | 'hairyPotatoCat'
-  | 'beardCat'
-  // Nope is base but deliberately listed last: it's the only card playable
-  // out of turn, so it's the one the reaction-window primitive is built for.
-  | 'nope';
+  | 'beardCat';
 
-/** Cards introduced by expansions. Grouped by source; contents per Wikipedia's expansion table. */
-export type EkExpansionCardKind =
-  // Imploding Kittens
-  | 'implodingKitten'      // cannot be defused; first draw = face up, second = death
-  | 'reverse'              // reverses turn order and ends your turn
-  | 'drawFromTheBottom'
-  | 'alterTheFuture'       // view AND reorder top 3
-  | 'feralCat'             // wild cat card — counts as any cat for combos
-  | 'targetedAttack'       // choose who takes the extra turns
-  // Streaking Kittens
-  | 'streakingKitten'      // lets you secretly hold one Exploding Kitten
-  | 'superSkip'
-  | 'swapTopAndBottom'
-  | 'catomicBomb'
-  | 'curseOfTheCatButt'
-  | 'garbageCollector'
-  | 'mark'                 // force a card in a player's hand face up
-  // Barking Kittens
-  | 'barkingKitten'        // pair mechanic — one holds, one is drawn
-  | 'bury'
-  | 'alterTheFutureNow'
-  | 'illTakeThat'
-  | 'shareTheFuture'
-  | 'towerOfPower'
-  | 'personalAttack'
-  | 'potluck'
-  // Zombie Kittens
-  | 'zombieKitten';        // exploded players continue from the graveyard
-
-export type EkCardKind = EkBaseCardKind | EkExpansionCardKind;
+// Cards the expansions add, for planning only — none are implemented, and
+// `EkCard.kind` is deliberately narrowed to the base set so the reducer cannot
+// silently receive one:
+//
+//   Imploding Kittens — implodingKitten, reverse, drawFromTheBottom,
+//                       alterTheFuture, feralCat, targetedAttack
+//   Streaking Kittens — streakingKitten, superSkip, swapTopAndBottom,
+//                       catomicBomb, curseOfTheCatButt, garbageCollector, mark
+//   Barking Kittens   — barkingKitten, bury, alterTheFutureNow, illTakeThat,
+//                       shareTheFuture, towerOfPower, personalAttack, potluck
+//   Zombie Kittens    — zombieKitten
 
 /**
- * A physical card instance. Instance ids matter here more than in the
- * card-collecting games: the deck is an ordered list of specific cards, and
- * Defuse reinsertion moves one exact card to one exact index.
+ * A physical card instance. Instance ids matter more here than in the sibling
+ * project: the deck is an ordered list of specific cards, and a Defuse moves
+ * one exact card to one exact index.
  */
 export interface EkCard {
   id: number;
-  kind: EkCardKind;
+  kind: EkBaseCardKind;
 }
-
-// ============================================================================
-// Combos
-// ============================================================================
-// 2 of a kind → pick a player, steal a RANDOM card from their hand.
-// 3 of a kind → pick a player, NAME a card type; they must give it if they have it.
-// 5 different cats → take any one card from the discard pile.
-// Feral Cat (Imploding) counts as any cat card for these.
 
 export type EkComboKind = 'pair' | 'triple' | 'fiveDifferent';
 
@@ -134,22 +97,42 @@ export type EkComboKind = 'pair' | 'triple' | 'fiveDifferent';
 // ============================================================================
 
 /**
- * A card played but not yet resolved, sitting under an open Nope window.
- * Resolution is LIFO: the last Nope played wins, so an even number of Nopes on
- * top of a card means it still resolves.
+ * A play that has been declared but not yet resolved, sitting under an open
+ * Nope window. Resolution is LIFO: an ODD number of Nopes cancels the play, an
+ * even number means it still resolves.
  */
 export interface EkPendingPlay {
   byPlayerId: PlayerId;
-  /** The card(s) played — a combo puts 2, 3, or 5 cards on the stack at once. */
+  /** The card(s) played. A combo puts 2, 3 or 5 cards down at once. */
   cards: EkCard[];
-  /** Set for combos so the resolver knows which combo shape was declared. */
   combo: EkComboKind | null;
-  /** Chosen target, when the card needs one and it's declared on play. */
+  /** Declared on play, so responders can decide knowing the target. */
   targetPlayerId: PlayerId | null;
-  /** Nopes stacked on top, in play order. Odd count = negated. */
-  nopeCount: number;
-  /** Seats that have already declined to respond in the current window. */
-  respondedPlayerIds: PlayerId[];
+  /** Three-of-a-kind: the card type being demanded, named on play. */
+  demandKind: EkBaseCardKind | null;
+  /** Nopes stacked on top, in play order. Odd = cancelled. */
+  nopeCards: EkCard[];
+  /**
+   * Live players who still owe a respond/decline decision in the CURRENT
+   * window. Rebuilt each time a Nope lands, since the situation changed.
+   * Players holding no Nope are never queued — they have no legal response.
+   */
+  responderQueue: PlayerId[];
+}
+
+// ============================================================================
+// Log
+// ============================================================================
+// A take-that game is unreadable without a record of who did what to whom, so
+// the log is part of replicated state. Capped in the reducer.
+
+export interface EkLogEntry {
+  /** Monotonic counter, not a timestamp — reducers must stay pure. */
+  seq: number;
+  byPlayerId: PlayerId | null;
+  text: string;
+  /** Drives log styling: explosions and eliminations read differently. */
+  tone: 'normal' | 'danger' | 'good';
 }
 
 // ============================================================================
@@ -204,13 +187,19 @@ export const EK_EXPANSIONS: readonly ExpansionMeta[] = [
 ];
 
 export interface EkConfig extends ScaffoldConfig {
+  /** None are implemented — the lobby shows them as unavailable. */
   expansions: EkExpansionId[];
   /**
-   * Base is 2–5. Imploding Kittens raises the cap to 6; Party Pack to 10.
-   * The module's maxPlayers is the widest case; validateConfig narrows it
-   * against the enabled expansions.
+   * Random cards dealt to each player before their guaranteed Defuse. The
+   * rulebook deal is 4 (+1 Defuse = a 5-card opening hand). Newer printings
+   * bundled with expansions deal 7.
    */
-  humanReadableNote?: string;
+  handSize: number;
+  /**
+   * ⚠ Rule uncertainty, see cards.ts. false (default) = any matching cards may
+   * form a combo; true = cat cards only.
+   */
+  combosCatsOnly: boolean;
 }
 
 // ============================================================================
@@ -222,20 +211,17 @@ export type EkSubPhase =
   | 'awaitingNope'
   | 'awaitingDefuse'
   | 'awaitingKittenPlace'
-  | 'awaitingFavorTarget'
   | 'awaitingFavorGive'
-  | 'awaitingComboTarget'
-  | 'awaitingComboSteal'
+  | 'awaitingDiscardPick'
   | 'awaitingFutureView'
-  | 'awaitingFutureOrder'
   | 'gameOver';
 
 export interface EkState extends GameStateShape {
   subPhase: EkSubPhase;
 
-  /** Ordered, top of deck = index 0. SECRET in the physical game (see README). */
+  /** Ordered; index 0 is the top of the deck. Never render this in the UI. */
   deck: EkCard[];
-  /** Top of discard = last element. Publicly visible. */
+  /** Top of the discard is the last element. Public. */
   discard: EkCard[];
   hands: Record<PlayerId, EkCard[]>;
 
@@ -243,23 +229,53 @@ export interface EkState extends GameStateShape {
   eliminated: PlayerId[];
 
   /**
-   * Attack stacking: how many turns the active player still owes. An Attack
-   * ends your turn immediately and gives the next player 2 turns; an Attack
-   * played into that adds to the count rather than resetting it.
+   * How many top-of-deck cards each player legitimately knows, from See the
+   * Future or from placing a kitten on top themselves. This is the ONLY channel
+   * through which a player or AI may look at the deck. Invalidated by draws
+   * (decrement), shuffles (zero), and reinsertions (clamped to the insert index).
+   */
+  knownTopCount: Record<PlayerId, number>;
+
+  /**
+   * Whose TURN it is. Distinct from `activePlayerId`, which is repurposed to
+   * point at whoever owes the next decision — a Nope responder, or a Favor's
+   * victim. Always come back to this seat when a subphase finishes.
+   */
+  turnPlayerId: PlayerId;
+
+  /**
+   * Turns the active player still owes, including the one in progress. Attack
+   * pushes this onto the next player; Skip burns exactly one.
    */
   turnsRemaining: number;
 
-  /** +1 clockwise, -1 counter-clockwise. Flipped by Reverse (Imploding). */
+  /** +1 clockwise. Always +1 in the base game — Reverse arrives with Imploding. */
   turnDirection: 1 | -1;
 
   /** Open reaction window, if any. */
   pending: EkPendingPlay | null;
 
-  /** Cards revealed to one player by See The Future / Share The Future. */
+  /** Open See the Future peek — drives the modal, then folds into knownTopCount. */
   peek: { playerId: PlayerId; cards: EkCard[] } | null;
 
-  /** Face-up Imploding Kitten location once revealed, else null. */
-  implodingRevealedAt: number | null;
+  /** In-flight Favor: `from` owes `to` a card of their choosing. */
+  pendingFavor: { fromPlayerId: PlayerId; toPlayerId: PlayerId } | null;
+
+  /**
+   * A kitten that has been drawn and is awaiting resolution — first a Defuse,
+   * then a secret reinsertion index.
+   */
+  pendingKitten: EkCard | null;
+
+  /**
+   * Cards that have been played and resolved but not yet flushed to the discard
+   * pile. Only the five-different combo uses this, so that the five cards you
+   * just played aren't available for you to immediately reclaim.
+   */
+  limbo: EkCard[];
+
+  log: EkLogEntry[];
+  logSeq: number;
 
   config: EkConfig;
 }
@@ -269,42 +285,31 @@ export interface EkState extends GameStateShape {
 // ============================================================================
 
 export type EkAction =
-  /** Play one card, or a declared combo. Does not resolve until the Nope window closes. */
-  | { type: 'playCards'; playerId: PlayerId; cardIds: number[]; combo: EkComboKind | null; targetPlayerId?: PlayerId }
-  /** Nope the current pending play. Out of turn — legal for any live player holding a Nope. */
+  /**
+   * Play one card, or a declared combo. Opens a Nope window rather than
+   * resolving immediately. Targets and demands are declared here so responders
+   * can judge the play.
+   */
+  | {
+      type: 'playCards';
+      playerId: PlayerId;
+      cardIds: number[];
+      targetPlayerId?: PlayerId;
+      demandKind?: EkBaseCardKind;
+    }
+  /** Nope the pending play. Out of turn — legal for any live holder of a Nope. */
   | { type: 'playNope'; playerId: PlayerId; cardId: number }
   /** Decline to respond in the open Nope window. */
   | { type: 'declineNope'; playerId: PlayerId }
-  /** End your turn by drawing. Resolves kitten draws into awaitingDefuse or elimination. */
+  /** End your turn by drawing. Resolves kitten draws into a Defuse or death. */
   | { type: 'drawCard'; playerId: PlayerId }
-  /** Play the Defuse for a kitten you just drew. */
+  /** Play the Defuse for the kitten you just drew. */
   | { type: 'playDefuse'; playerId: PlayerId; cardId: number }
-  /** Secretly reinsert the defused kitten at `index` (0 = top). */
+  /** Secretly reinsert the defused kitten. index 0 = top of deck. */
   | { type: 'placeKitten'; playerId: PlayerId; index: number }
-  /** Favor / combo target selection. */
-  | { type: 'chooseTarget'; playerId: PlayerId; targetPlayerId: PlayerId }
-  /** Favor: the target hands over a card of their choosing. */
+  /** Favor's victim hands over a card of their own choosing. */
   | { type: 'giveCard'; playerId: PlayerId; cardId: number }
-  /** 3-of-a-kind: name the card type being demanded. */
-  | { type: 'demandKind'; playerId: PlayerId; kind: EkCardKind }
-  /** Close a See The Future peek. */
-  | { type: 'ackPeek'; playerId: PlayerId }
-  /** Alter The Future: submit the new order for the peeked cards. */
-  | { type: 'reorderFuture'; playerId: PlayerId; cardIds: number[] };
-
-// ============================================================================
-// Open questions — resolve before writing the reducer
-// ============================================================================
-// 1. SECRET DECK ORDER. The blocker. Options in README; pick one first.
-// 2. Nope window timing. Physically it's a real-time shout. We need a
-//    deterministic window: does every live holder of a Nope get an explicit
-//    respond/decline prompt (slow but exact), or a short timer (fast but
-//    racy over P2P)? Leaning explicit prompt, skipping seats with no Nope in
-//    hand since they have no legal response anyway.
-// 3. Base deck composition card-by-card, and per-player-count kitten/Defuse
-//    counts for Party Pack's 6–10 player range.
-// 4. Streaking Kitten lets a player HOLD an Exploding Kitten in hand — the
-//    "cards in hand are private" assumption needs to survive that.
-// 5. Barking Kitten's two-card pair mechanic needs rulebook text.
-// 6. Party Pack replaces Attack with Slap; Slap's exact rules need confirming.
-//    Treat party-pack as mutually exclusive with plain Attack in validateConfig.
+  /** Five-different combo: take any one card from the discard pile. */
+  | { type: 'takeFromDiscard'; playerId: PlayerId; cardId: number }
+  /** Close a See the Future peek. */
+  | { type: 'ackPeek'; playerId: PlayerId };
