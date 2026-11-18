@@ -22,17 +22,18 @@ look there first; it has five finished games' worth of precedent.
 
 ## Current status
 
-**Exploding Kittens base game is implemented and playable.** The other five
-games are OUTLINES ONLY: each has a `types.ts` with state/action/config types
-plus design notes, and a `module.ts` whose `applyAction` throws via
-`notImplemented()`. No reducers, no cards, no art for those five.
+**All six base games are implemented and playable** (Exploding Kittens, Unstable
+Unicorns, Here to Slay, Happy Little Dinosaurs, Casting Shadows, Doomlings).
+Each game has its official base-game card pool, pure deterministic reducer,
+interactive prompts for every player decision, heuristic AI driver, functional
+UI (`GameView` + `LobbyConfig` + `Rules`), and unit + AI-vs-AI playout tests.
 
-93 tests pass (`npm run test:run`), including 48 complete AI-vs-AI Exploding
-Kittens games across 2–5 players and 12 seeds.
+117 tests pass (`npm run test:run`), covering all six base games across 2–6
+players and multiple seeds.
 
-Next up: **Unstable Unicorns** — Neigh reuses the reaction window built for
-Nope almost directly. Or Imploding Kittens, if extending EK is more appealing
-than starting a new game.
+Next up: custom inline SVG card/board art and animations for the five newly
+implemented games, or expansion packs (e.g., Imploding Kittens, Unstable
+Unicorns expansions, Here to Slay Warriors & Druids).
 
 ## Tech stack (locked)
 
@@ -207,46 +208,49 @@ read `state.deck` except through `knownTopCards`.
 (Reverse needs `turnDirection`, which already exists; Alter the Future is a
 variant of the existing peek).
 
-### Unstable Unicorns (`src/games/unstable-unicorns/`)
+### Unstable Unicorns (`src/games/unstable-unicorns/`) — ✅ BASE GAME BUILT
 2–8 players. Build a Stable of 7 unicorns (6 at 6–8 players). Four-phase turns
 (Beginning / Draw / Action / End), 7-card hand limit, shared Nursery for Baby
 Unicorns. Neigh = the reaction primitive; Super Neigh is terminal.
-Expansions (verified): Uncut Unicorns, NSFW, Rainbow Apocalypse, Dragons,
-Unicorns of Legend, Adventures, Christmas, Nightmares.
-Editions (Control, Chaos, Diamond, Travel, Kids, NSFW, 2nd) are **alternate base
-decks, not stackable expansions** — `UuConfig.edition`, exactly one.
-135 base cards need rulebook text; model by trigger tier.
+All 127 playable cards (13 Baby Unicorns, 22 Basic Unicorns, 30 Magical
+Unicorns, 25 Magic, 15 Instant, 14 Upgrade, 8 Downgrade) + 8 reference cards =
+135 cards from the 2nd Edition Base Deck are implemented.
 
-### Here to Slay (`src/games/here-to-slay/`)
-2–6 players. 3 action points a turn; recruit heroes, equip items, attack monsters
-with 2d6. Win by slaying 3 monsters or completing a full party.
-Expansions (verified): Warriors & Druids, Berserkers & Necromancers, Here to Sleigh.
-⚠ Action-point costs in `types.ts` are from memory — confirm before coding.
-⚠ Whether 'dragon' is a playable class or just a cosmetic dice/meeple line is unconfirmed.
+### Here to Slay (`src/games/here-to-slay/`) — ✅ BASE GAME BUILT
+2–6 players. 3 action points a turn (4 with Mega Slime): 1 AP draw, 1 AP play
+Hero/Item/Magic, 1 AP roll for Hero ability, 2 AP attack a Monster, 3 AP discard
+hand and draw 5. Win by slaying 3 monsters or completing a full 6-class party
+(Party Leader and Mask items count). All 6 Party Leaders, 15 Monsters, 48
+Heroes, 15 Items/Cursed Items, 13 Magic, 25 Modifiers, and 14 Challenges are
+implemented.
 
-### Casting Shadows (`src/games/casting-shadows/`)
-⚠ **Least verified outline in the repo.** Expansion names are confirmed (The Ice
-Storm, The Molten Rock); the *rules* in `types.ts` are reconstructed from general
-knowledge and the components sold alongside it. Get the rulebook before writing
-anything. First game here with **spatial state** (board tiles, positions,
-adjacency) and dice pools.
+### Casting Shadows (`src/games/casting-shadows/`) — ✅ BASE GAME BUILT
+2–4 players, last player standing wins (18 HP start). 7-Hex board (Ancient Rune
+at center + 6 outer hexes), 4 double-sided Character boards (Kit Gale, Frill
+Lilypad, Nuzzle Thornwood, Haze Greentongue), 5 Resource Dice, 52 Main Deck
+cards (34 Attack Spells, 10 Conversion Spells, 8 Resource cards), 10
+Counterspells, and 10 Companions. Three-phase turns: Resource Roll → Action
+Phase (4 AP: Travel, Cast, Reroll, Protect, Refresh, Collect) → Shadow
+Absorption & Cursed Crystal damage.
 
-### Happy Little Dinosaurs (`src/games/happy-little-dinos/`)
-2–4 players, 6 with the player expansion. Flip a disaster, everyone commits a
-point card face down, reveal, whoever fails takes the hit and moves down their
-survival track.
-Expansions (verified): Hazards Ahead, Dating Disasters, Perils of Puberty, 5–6 Player.
-⚠ Resolution order, track length and disaster category names are reconstructed.
-Simultaneous face-down commits — reuse the sibling project's `pendingPick` +
-reveal-tick pattern, **including parking `activePlayerId` on the next
-un-submitted AI seat** or all-AI matches freeze. That trap was hit twice over there.
+### Happy Little Dinosaurs (`src/games/happy-little-dinos/`) — ✅ BASE GAME BUILT
+2–4 players (up to 6 with 5–6 Player toggle). 4 Dinosaur boards (Nervous Rex,
+Cry Ceratops, Bad Luck Bronto, Stego), 28 Disaster cards (8 Natural, 8
+Predatory, 8 Emotional, 4 Meteor wild), 53 Point cards (values 0–9 with weapon
+effects resolved lowest-to-highest), and 16 Instant cards (Score Booster, Score
+Sapper, Score Inversion, Disaster Insurance, Disaster Redirect). Win by reaching
+50 points on your Escape Route or being the last Dinosaur standing (eliminated on
+3 same-type or 3 different-type Disasters).
 
-### Doomlings (`src/games/doomlings/`)
-⚠ **The one game with no verified expansion list** — doomlings.com returned 503
-and BGG blocked fetches during research, so `DM_EXPANSIONS` is deliberately
-empty rather than guessed. Source it from the publisher before building lobby
-toggles. Tableau of trait cards, Ages deck driving the clock with catastrophes
-shuffled in, most points at the World's End.
+### Doomlings (`src/games/doomlings/`) — ✅ BASE GAME BUILT
+2–6 players. Gene Pool starts at 5 (clamped 1–8, dynamically adjusted by Ages,
+Catastrophes, and Traits in your Trait Pile). 13-card Age Deck built from 3 Era
+piles of (3 random Ages + 1 random Catastrophe) topped by The Birth of Life.
+Play 1 Trait per turn, resolve its Action, and Stabilize hand to Gene Pool size.
+3rd Catastrophe triggers World's End (Trait World's End effects + Catastrophe
+World's End effect + Drop of Life scoring). All 7 official expansions (Overlush,
+Imaginary Ends, Legends of Enderas, Ancient Fates, Shadow Puppets, Castle Glass,
+Mokoko Village) are documented in `DM_EXPANSIONS`.
 
 ## Conventions
 

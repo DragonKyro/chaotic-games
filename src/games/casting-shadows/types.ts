@@ -1,124 +1,125 @@
-// Casting Shadows — types + design outline. NO LOGIC YET.
-//
-// ============================================================================
-// ⚠ CONFIDENCE WARNING
-// ============================================================================
-// This is the least-verified outline in the project. The expansion names below
-// are confirmed from the publisher's store (Unstable Games / TeeTurtle), but the
-// RULES are reconstructed from general knowledge of the game and the components
-// sold alongside it (central board, per-player play mats, resource dice sets,
-// character standees in paired "light form / shadow form" sets).
-//
-// Do not write the reducer from this file. Get the rulebook first, then rewrite
-// these types. Everything below marked ⚠ is a guess.
-//
-// ============================================================================
-// Core loop (⚠ reconstructed)
-// ============================================================================
-// A dice-driven battle game on a shared modular board. Broad shape:
-//   - Each player controls a character that has a light form and a SHADOW form
-//     it transforms into as it powers up (the store sells standees in pairs, e.g.
-//     "Nuzzle Thornwood & Nuzzle the Savage").
-//   - Turns involve moving on the board, gathering resources (resource dice),
-//     crafting/casting spells from cards, and battling monsters or other players.
-//   - Combat resolves by rolling dice against a target, modified by spells and
-//     equipment.
-//   - ⚠ Win condition unknown: likely first to a shadow/victory threshold.
-//
-// ============================================================================
-// What this game adds to the engine
-// ============================================================================
-// 1. SPATIAL STATE. The first game in this project with a board — tiles,
-//    positions, adjacency, movement ranges. Everything so far has been zones
-//    (hand / deck / tableau). Positions are plain coordinates in state; keep
-//    adjacency as a pure function over the tile layout, not stored edges.
-// 2. DICE POOLS, not single rolls. Multiple dice rolled and allocated. Same
-//    determinism rule as Here to Slay: the acting client rolls and the results
-//    ride along in the action payload.
-// 3. PLAYER-VS-PLAYER COMBAT with a defender who gets to respond — another
-//    reaction window, but two-sided rather than table-wide.
+// Casting Shadows — types for the implemented Base Game.
 
 import type { GameStateShape } from '@/core/module';
 import type { PlayerId } from '@/core/types';
 import type { ExpansionMeta, ScaffoldConfig } from '../_scaffold';
 
 // ============================================================================
-// Board (⚠ all guesses)
+// Hex Map & Resources
 // ============================================================================
 
-/** Axial coordinate on the central board. ⚠ Hex vs square grid unconfirmed. */
-export interface CsPosition {
+export type CsHexId =
+  | 'ancient-rune'
+  | 'dusty-desert'
+  | 'underground-volcano'
+  | 'amber-mountain'
+  | 'whispering-marsh'
+  | 'crystal-crypt'
+  | 'scorched-peaks';
+
+export type CsResource =
+  | 'redGem'
+  | 'blueGem'
+  | 'purpleGem'
+  | 'redOrb'
+  | 'blueOrb'
+  | 'purpleOrb'
+  | 'shadowFragment'
+  | 'cursedCrystal';
+
+export interface CsHexTile {
+  id: CsHexId;
+  name: string;
   q: number;
   r: number;
-}
-
-/** ⚠ Terrain types are a placeholder — the real set comes from the board art. */
-export type CsTerrain = 'forest' | 'mountain' | 'water' | 'ash' | 'ice' | 'void';
-
-export interface CsTile {
-  position: CsPosition;
-  terrain: CsTerrain;
-  /** Resource harvested by ending movement here, if any. */
-  yields: CsResource | null;
+  startTurnResource: CsResource | null;
+  hasMainDeckSlot: boolean;
+  faceUpCard: CsCard | null;
+  effectText: string;
 }
 
 // ============================================================================
-// Resources & spells (⚠)
+// Cards & Characters
 // ============================================================================
 
-/** ⚠ Placeholder resource set — "Sparkle Core" dice are sold as an add-on. */
-export type CsResource = 'spark' | 'ember' | 'frost' | 'bloom' | 'shadow';
+export type CsCardType =
+  | 'attackSpell'
+  | 'conversionSpell'
+  | 'resource'
+  | 'counterspell'
+  | 'companion';
 
-export interface CsSpellCard {
+export type CsSpellRange = 'same' | 'adjacent' | 'sameOrAdjacent' | 'any';
+
+export interface CsResourceCost {
+  redGem?: number;
+  blueGem?: number;
+  anyGem?: number;
+  redOrb?: number;
+  blueOrb?: number;
+  anyOrb?: number;
+  shadowFragment?: number;
+  cursedCrystal?: number;
+}
+
+export interface CsCard {
   id: number;
+  kind: string;
   name: string;
-  /** Resources that must be spent to cast. */
-  cost: Partial<Record<CsResource, number>>;
+  type: CsCardType;
+  level: 1 | 2 | 3;
+  collectionCost: CsResourceCost;
+  /** For Attack / Conversion spells: one or more cast tiers the player can choose from. */
+  castTiers?: {
+    cost: CsResourceCost;
+    damage: number;
+    heal?: number;
+    produce?: CsResource[];
+    label: string;
+  }[];
+  range?: CsSpellRange;
+  targetsAllOnHex?: boolean;
+  grantsResource?: CsResource;
   text: string;
-  source: 'base' | CsExpansionId;
 }
 
-// ============================================================================
-// Characters
-// ============================================================================
-
-/** Each character has two forms; the shadow form is the powered-up state. */
 export type CsForm = 'light' | 'shadow';
 
-export interface CsCharacter {
+export interface CsCharacterDef {
   id: string;
-  /** e.g. "Nuzzle Thornwood" / "Nuzzle the Savage". */
   lightName: string;
   shadowName: string;
-  source: 'base' | CsExpansionId;
+  homeHex: CsHexId;
+  shadowAbilityCost: number;
+  shadowAbilityText: string;
 }
 
 export interface CsPlayerBoard {
-  character: CsCharacter | null;
+  characterId: string;
   form: CsForm;
-  position: CsPosition | null;
-  health: number;
-  resources: Record<CsResource, number>;
-  /** Spells crafted and available to cast. */
-  spells: CsSpellCard[];
-  /** ⚠ Progress toward transformation / victory. Mechanic unconfirmed. */
-  shadowPoints: number;
+  hexId: CsHexId;
+  hp: number;
+  maxHp: number;
+  shadowEnergy: number;
+  spellBook: CsCard[];
+  usedSpellIdsThisTurn: number[];
+  companion: CsCard | null;
+  usedShadowAbilityThisTurn: boolean;
 }
 
-// ============================================================================
-// Combat (⚠)
-// ============================================================================
-
-export interface CsPendingCombat {
+export interface CsPendingAttack {
   attackerId: PlayerId;
-  /** A player, or a monster id on the board. */
-  defenderId: PlayerId | null;
-  defenderMonsterId: number | null;
-  /** Dice rolled by the attacking client and broadcast. */
-  attackDice: number[];
-  /** Defender's response dice, once they act. */
-  defenceDice: number[] | null;
-  spellsPlayed: { playerId: PlayerId; cardId: number }[];
+  targetId: PlayerId;
+  damage: number;
+  unreducible: boolean;
+  remainingTargetIds: PlayerId[];
+}
+
+export interface CsLogEntry {
+  seq: number;
+  byPlayerId: PlayerId | null;
+  text: string;
+  tone: 'normal' | 'danger' | 'good';
 }
 
 // ============================================================================
@@ -131,20 +132,19 @@ export const CS_EXPANSIONS: readonly ExpansionMeta[] = [
   {
     id: 'ice-storm',
     name: 'The Ice Storm',
-    summary: 'Expansion — new characters, spells and board content. Contents need the rulebook.',
+    summary: 'Adds Stun/Freeze mechanics, 2 characters, hex tiles, and spells.',
     verified: true,
   },
   {
     id: 'molten-rock',
     name: 'The Molten Rock',
-    summary: 'Expansion — new characters, spells and board content. Contents need the rulebook.',
+    summary: 'Adds Burn/Fortify mechanics, 2 characters, hex tiles, and spells.',
     verified: true,
   },
 ];
 
 export interface CsConfig extends ScaffoldConfig {
   expansions: CsExpansionId[];
-  /** Chosen character per seat, keyed by PlayerId. Empty until picked in the lobby. */
   characterByPlayer: Record<PlayerId, string>;
 }
 
@@ -153,24 +153,37 @@ export interface CsConfig extends ScaffoldConfig {
 // ============================================================================
 
 export type CsSubPhase =
-  | 'awaitingCharacterPick'
-  | 'awaitingMovement'
+  | 'awaitingRoll'
   | 'awaitingAction'
-  | 'awaitingSpellCast'
-  | 'awaitingCombatDefence'
+  | 'awaitingCompanionPick'
+  | 'awaitingCounterspell'
   | 'gameOver';
 
 export interface CsState extends GameStateShape {
   subPhase: CsSubPhase;
 
-  /** The central board. Layout is modular, so tiles live in state. */
-  tiles: CsTile[];
+  hexes: Record<CsHexId, CsHexTile>;
   boards: Record<PlayerId, CsPlayerBoard>;
+  eliminated: PlayerId[];
 
-  spellDeck: CsSpellCard[];
-  spellDiscard: CsSpellCard[];
+  mainDeck: CsCard[];
+  mainDiscard: CsCard[];
+  counterspellDeck: CsCard[];
+  counterspellDiscard: CsCard[];
+  companionDeck: CsCard[];
+  companionPortal: CsCard[];
 
-  pendingCombat: CsPendingCombat | null;
+  turnPlayerId: PlayerId;
+  actionPointsRemaining: number;
+  /** Current turn's rolled 5 dice + bonus tokens in the active player's Resource Pool. */
+  dicePool: CsResource[];
+  bonusPool: CsResource[];
+
+  pendingAttack: CsPendingAttack | null;
+  winnerId: PlayerId | null;
+
+  log: CsLogEntry[];
+  logSeq: number;
 
   config: CsConfig;
 }
@@ -180,23 +193,41 @@ export interface CsState extends GameStateShape {
 // ============================================================================
 
 export type CsAction =
-  | { type: 'pickCharacter'; playerId: PlayerId; characterId: string }
-  | { type: 'move'; playerId: PlayerId; to: CsPosition }
-  | { type: 'harvest'; playerId: PlayerId }
-  | { type: 'craftSpell'; playerId: PlayerId; cardId: number }
-  | { type: 'castSpell'; playerId: PlayerId; cardId: number; targetPlayerId?: PlayerId; targetPosition?: CsPosition }
-  | { type: 'attack'; playerId: PlayerId; targetPlayerId?: PlayerId; targetMonsterId?: number; dice: number[] }
-  | { type: 'defend'; playerId: PlayerId; dice: number[]; spellCardIds: number[] }
-  | { type: 'transform'; playerId: PlayerId }
-  | { type: 'endTurn'; playerId: PlayerId };
-
-// ============================================================================
-// Open questions — ALL of them, effectively
-// ============================================================================
-// 1. Get the rulebook. Everything above is provisional.
-// 2. Player count (⚠ believed 2–4) and whether expansions change it.
-// 3. Board geometry: hex or square, fixed or modular per match.
-// 4. The real resource set and how the resource dice work.
-// 5. Win condition and what shadowPoints actually represents.
-// 6. Whether combat is symmetric (both roll) or attacker-only vs a defence value.
-// 7. Character roster for base + both expansions.
+  | { type: 'rollResourceDice'; playerId: PlayerId; dice: CsResource[] }
+  | { type: 'travel'; playerId: PlayerId; toHexId: CsHexId }
+  | {
+      type: 'rerollDice';
+      playerId: PlayerId;
+      diceIndices: number[];
+      newValues: CsResource[];
+    }
+  | { type: 'protect'; playerId: PlayerId; targetHexId?: CsHexId }
+  | { type: 'refreshHexCard'; playerId: PlayerId }
+  | {
+      type: 'collectCard';
+      playerId: PlayerId;
+      fromCounterspellDeck?: boolean;
+      replaceSpellId?: number;
+    }
+  | {
+      type: 'castSpell';
+      playerId: PlayerId;
+      spellId: number;
+      tierIndex?: number;
+      targetPlayerId?: PlayerId;
+      targetHexId?: CsHexId;
+    }
+  | {
+      type: 'useShadowAbility';
+      playerId: PlayerId;
+      targetPlayerId?: PlayerId;
+      targetHexId?: CsHexId;
+    }
+  | { type: 'transformAndEndTurn'; playerId: PlayerId; transform?: boolean }
+  | { type: 'pickCompanion'; playerId: PlayerId; companionId: number }
+  | {
+      type: 'respondCounterspell';
+      playerId: PlayerId;
+      counterspellId?: number;
+      escapeHexId?: CsHexId;
+    };

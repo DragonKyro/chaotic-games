@@ -1,28 +1,4 @@
-// Unstable Unicorns — types + design outline. NO LOGIC YET.
-//
-// ============================================================================
-// Core loop
-// ============================================================================
-// Build a Stable of 7 unicorns (6 at 6–8 players) and you win. Everyone starts
-// with one Baby Unicorn from the shared Nursery. Turn is four phases:
-//   Beginning  — "at the start of your turn" effects fire
-//   Draw       — draw 1
-//   Action     — EITHER play a card OR draw an extra card
-//   End        — "at the end of your turn" effects fire, then discard to 7
-// If the deck runs out, most unicorns wins; tie broken by total letters in the
-// names of tabled unicorns; still tied = nobody wins.
-//
-// ============================================================================
-// Why it matters for this project
-// ============================================================================
-// Neigh is the same primitive as Exploding Kittens' Nope: an Instant, playable
-// out of turn, cancelling another player's card, and itself Neigh-able. Build
-// the reaction window once in Exploding Kittens and reuse it here.
-//
-// The other new shape is a persistent TABLEAU with continuous modifiers —
-// Upgrades and Downgrades sit in a Stable and change the rules while they're
-// there. Follow the card-collecting project's rule for this: compute modifiers
-// by walking the tableau, never store them as flags.
+// Unstable Unicorns — types for the implemented 2nd Edition Base Game.
 
 import type { GameStateShape } from '@/core/module';
 import type { PlayerId } from '@/core/types';
@@ -32,71 +8,247 @@ import type { ExpansionMeta, ScaffoldConfig } from '../_scaffold';
 // Cards
 // ============================================================================
 
-/** The nine card types, colour-coded across the visible spectrum in the physical game. */
 export type UuCardType =
-  | 'instant'          // Neigh, Super Neigh — playable out of turn
-  | 'upgrade'          // beneficial persistent card in your Stable
-  | 'downgrade'        // detrimental persistent card, usually forced onto a rival
-  | 'magic'            // one-shot effect, then discarded
+  | 'babyUnicorn'
   | 'basicUnicorn'
-  | 'magicalUnicorn'   // unicorn with an ongoing or triggered ability
-  | 'babyUnicorn'      // from the Nursery; cannot be sacrificed/destroyed/returned
-  | 'ultimateUnicorn'
-  | 'diamondUnicorn';  // Diamond Edition only
+  | 'magicalUnicorn'
+  | 'magic'
+  | 'instant'
+  | 'upgrade'
+  | 'downgrade';
 
-/** Everything that counts toward the 7-unicorn win condition. */
 export const UNICORN_TYPES: readonly UuCardType[] = [
-  'basicUnicorn', 'magicalUnicorn', 'babyUnicorn', 'ultimateUnicorn', 'diamondUnicorn',
+  'babyUnicorn',
+  'basicUnicorn',
+  'magicalUnicorn',
 ];
 
-/**
- * When an ability fires. Effects themselves are deliberately unmodelled at this
- * stage — the base deck is 135 cards and each needs rulebook text.
- */
-export type UuTriggerTiming =
-  | 'onPlay'           // "When this card enters your Stable…"
-  | 'beginningOfTurn'
-  | 'endOfTurn'
-  | 'onDestroyed'
-  | 'onSacrificed'
-  | 'continuous';      // static rule modification while in a Stable
+export function isUnicornType(t: UuCardType): boolean {
+  return t === 'babyUnicorn' || t === 'basicUnicorn' || t === 'magicalUnicorn';
+}
+
+export type UuCardKind =
+  // Baby Unicorns (13)
+  | 'baby-red'
+  | 'baby-pink'
+  | 'baby-orange'
+  | 'baby-yellow'
+  | 'baby-green'
+  | 'baby-blue'
+  | 'baby-purple'
+  | 'baby-black'
+  | 'baby-white'
+  | 'baby-brown'
+  | 'baby-rainbow'
+  | 'baby-death'
+  | 'baby-narwhal'
+  // Basic Unicorns (8 kinds, 22 cards)
+  | 'basic-red'
+  | 'basic-orange'
+  | 'basic-yellow'
+  | 'basic-green'
+  | 'basic-blue'
+  | 'basic-indigo'
+  | 'basic-purple'
+  | 'basic-narwhal'
+  // Magical Unicorns (30 kinds, 30 cards)
+  | 'alluring-narwhal'
+  | 'americorn'
+  | 'annoying-flying-unicorn'
+  | 'black-knight-unicorn'
+  | 'chainsaw-unicorn'
+  | 'classy-narwhal'
+  | 'dark-angel-unicorn'
+  | 'extremely-destructive-unicorn'
+  | 'ginormous-unicorn'
+  | 'greedy-flying-unicorn'
+  | 'llamacorn'
+  | 'magical-flying-unicorn'
+  | 'magical-kittencorn'
+  | 'majestic-flying-unicorn'
+  | 'mermaid-unicorn'
+  | 'mother-goose-unicorn'
+  | 'narwhal-torpedo'
+  | 'necromancer-unicorn'
+  | 'queen-bee-unicorn'
+  | 'rainbow-unicorn'
+  | 'rhinocorn'
+  | 'seductive-unicorn'
+  | 'shabby-the-narwhal'
+  | 'shark-with-a-horn'
+  | 'stabby-the-unicorn'
+  | 'swift-flying-unicorn'
+  | 'the-great-narwhal'
+  | 'unicorn-on-the-cob'
+  | 'unicorn-oracle'
+  | 'unicorn-phoenix'
+  // Magic cards (15 kinds, 25 cards)
+  | 'back-kick'
+  | 'blatant-thievery'
+  | 'change-of-luck'
+  | 'glitter-tornado'
+  | 'good-deal'
+  | 'kiss-of-life'
+  | 'mystical-vortex'
+  | 're-target'
+  | 'reset-button'
+  | 'shake-up'
+  | 'targeted-destruction'
+  | 'two-for-one'
+  | 'unfair-bargain'
+  | 'unicorn-poison'
+  | 'unicorn-swap'
+  // Instant cards (2 kinds, 15 cards)
+  | 'neigh'
+  | 'super-neigh'
+  // Upgrade cards (8 kinds, 14 cards)
+  | 'caffeine-overload'
+  | 'claw-machine'
+  | 'double-dutch'
+  | 'glitter-bomb'
+  | 'rainbow-aura'
+  | 'rainbow-lasso'
+  | 'stable-artillery'
+  | 'yay'
+  // Downgrade cards (8 kinds, 8 cards)
+  | 'barbed-wire'
+  | 'blinding-light'
+  | 'broken-stable'
+  | 'nanny-cam'
+  | 'pandamonium'
+  | 'sadistic-ritual'
+  | 'slowdown'
+  | 'tiny-stable';
 
 export interface UuCard {
   id: number;
+  kind: UuCardKind;
   name: string;
   type: UuCardType;
-  /** Rulebook text, verbatim. Effects get modelled later, one card at a time. */
   text: string;
-  triggers: UuTriggerTiming[];
-  /** Which product this card comes from — base or an expansion id. */
-  source: 'base' | UuExpansionId;
 }
 
 // ============================================================================
-// Zones
+// Zones & Prompts
 // ============================================================================
 
-/** One player's board. Unicorns win the game; upgrades/downgrades modify rules. */
 export interface UuStable {
   unicorns: UuCard[];
   upgrades: UuCard[];
   downgrades: UuCard[];
 }
 
-// ============================================================================
-// Reaction stack (shared shape with Exploding Kittens' Nope)
-// ============================================================================
-
 export interface UuPendingPlay {
   byPlayerId: PlayerId;
   card: UuCard;
+  /** Target stable owner where a Unicorn/Upgrade/Downgrade will enter, or target of a Magic card. */
   targetPlayerId: PlayerId | null;
-  /** Target card within the target's Stable, when the card needs one. */
-  targetCardId: number | null;
-  /** Neighs stacked on top. Odd = cancelled. Super Neigh cannot be Neighed. */
-  neighCount: number;
+  neighCards: UuCard[];
   superNeighed: boolean;
-  respondedPlayerIds: PlayerId[];
+  responderQueue: PlayerId[];
+}
+
+export type UuPrompt =
+  | {
+      kind: 'beginningTrigger';
+      playerId: PlayerId;
+      sourceCard: UuCard;
+      mandatory: boolean;
+    }
+  | {
+      kind: 'chooseCardsFromHand';
+      playerId: PlayerId;
+      reason: string;
+      count: number;
+      optional: boolean;
+      filter: 'any' | 'unicorn' | 'basicUnicorn';
+      effectTag:
+        | 'discard'
+        | 'rainbowUnicornBring'
+        | 'necromancerDiscard'
+        | 'seductiveDiscard'
+        | 'changeOfLuckDiscard'
+        | 'mysticalVortexDiscard'
+        | 'PhoenixSave'
+        | 'clawMachineDiscard'
+        | 'stableArtilleryDiscard'
+        | 'rainbowLassoDiscard'
+        | 'endOfTurnLimit';
+      contextCardId?: number;
+      afterContext?: {
+        pendingDestroyOwnerId?: PlayerId;
+        pendingDestroyCardId?: number;
+        fromSacrifice?: boolean;
+      };
+    }
+  | {
+      kind: 'chooseStableCard';
+      playerId: PlayerId;
+      reason: string;
+      optional: boolean;
+      scope: 'own' | 'others' | 'any' | 'specificPlayer';
+      specificPlayerId?: PlayerId;
+      filter:
+        | 'any'
+        | 'unicorn'
+        | 'upgrade'
+        | 'downgrade'
+        | 'upgradeOrDowngrade'
+        | 'destroyUpgradeOrSacrificeDowngrade';
+      mode: 'sacrifice' | 'destroy' | 'steal' | 'bounce' | 'moveSource' | 'swapGive' | 'swapSteal';
+      sourceType: 'magic' | 'unicorn' | 'upgrade' | 'downgrade';
+      effectTag?: string;
+    }
+  | {
+      kind: 'choosePlayer';
+      playerId: PlayerId;
+      reason: string;
+      optional: boolean;
+      allowSelf: boolean;
+      effectTag:
+        | 'americornPull'
+        | 'annoyingDiscard'
+        | 'blatantThieveryLook'
+        | 'unfairBargainTrade'
+        | 'reTargetDestination'
+        | 'unicornSwapTarget';
+      movedCardId?: number;
+      movedFromPlayerId?: PlayerId;
+    }
+  | {
+      kind: 'chooseFromOpponentHand';
+      playerId: PlayerId;
+      targetPlayerId: PlayerId;
+      reason: string;
+    }
+  | {
+      kind: 'chooseFromPile';
+      playerId: PlayerId;
+      reason: string;
+      optional: boolean;
+      pile: 'discard' | 'deck' | 'nursery';
+      filter: 'unicorn' | 'magic' | 'upgrade' | 'downgrade' | 'neigh' | 'narwhal' | 'baby';
+      destination: 'hand' | 'stable';
+      shuffleDeckAfter?: boolean;
+    }
+  | {
+      kind: 'oraclePeek';
+      playerId: PlayerId;
+      cards: UuCard[];
+    }
+  | {
+      kind: 'blackKnightSave';
+      playerId: PlayerId;
+      blackKnightCardId: number;
+      targetUnicornId: number;
+      sourceType: 'magic' | 'unicorn' | 'upgrade' | 'downgrade';
+    };
+
+export interface UuLogEntry {
+  seq: number;
+  byPlayerId: PlayerId | null;
+  text: string;
+  tone: 'normal' | 'danger' | 'good';
 }
 
 // ============================================================================
@@ -113,16 +265,15 @@ export type UuExpansionId =
   | 'christmas'
   | 'nightmares';
 
-/** Alternate base decks, not expansions — pick exactly one. */
 export type UuEdition =
   | 'base'
   | 'base-2nd'
-  | 'control'      // Kickstarter exclusive: protective magic + deck manipulation
-  | 'chaos'        // Kickstarter exclusive: destruction + discard recursion
+  | 'control'
+  | 'chaos'
   | 'nsfw'
   | 'travel'
   | 'kids'
-  | 'diamond';     // adds 4 Diamond Unicorns, a d4, and the Vault zone
+  | 'diamond';
 
 export const UU_EXPANSIONS: readonly ExpansionMeta[] = [
   { id: 'uncut-unicorns', name: 'Uncut Unicorns', summary: 'Expansion pack.', verified: true },
@@ -149,30 +300,40 @@ export type UuPhase =
   | 'draw'
   | 'action'
   | 'endOfTurn'
-  | 'awaitingNeigh'        // reaction window open
-  | 'awaitingTarget'       // played card needs a target chosen
-  | 'awaitingSacrifice'    // player must choose one of their own to lose
-  | 'awaitingDiscard'      // over the 7-card hand limit at end of turn
-  | 'awaitingNurseryPick'
+  | 'awaitingNeigh'
+  | 'awaitingPrompt'
   | 'gameOver';
 
 export interface UuState extends GameStateShape {
   subPhase: UuPhase;
+  /** The phase to resume once awaitingNeigh / awaitingPrompt finishes. */
+  resumePhase: 'beginningOfTurn' | 'draw' | 'action' | 'endOfTurn';
 
   deck: UuCard[];
   discard: UuCard[];
-  /** Shared pool of Baby Unicorns. Babies always return here, never to a hand. */
   nursery: UuCard[];
-  /** Diamond Edition only — set aside zone. */
-  vault: UuCard[];
 
   hands: Record<PlayerId, UuCard[]>;
   stables: Record<PlayerId, UuStable>;
 
-  pending: UuPendingPlay | null;
+  turnPlayerId: PlayerId;
+  /** Number of card plays left in the current Action phase (1 normally, 2 if Double Dutch was active at start of turn). */
+  playsRemaining: number;
+  /** True if the active player already took an action in the Action phase (so they can end Action phase if Double Dutch gave 2 plays). */
+  actedInActionPhase: boolean;
+  /** Set by Change of Luck when resolved; grants an extra turn after this one. */
+  extraTurnPending: boolean;
+  /** Set by Rhinocorn when its beginning-of-turn destroy is used; skips immediately to endOfTurn. */
+  skipToEndOfTurn: boolean;
 
-  /** 7 unicorns at 2–5 players, 6 at 6–8. Derived at setup, stored for clarity. */
+  pending: UuPendingPlay | null;
+  promptQueue: UuPrompt[];
+
   unicornsToWin: number;
+  winnerId: PlayerId | null;
+
+  log: UuLogEntry[];
+  logSeq: number;
 
   config: UuConfig;
 }
@@ -183,29 +344,24 @@ export interface UuState extends GameStateShape {
 
 export type UuAction =
   | { type: 'drawForTurn'; playerId: PlayerId }
-  /** Action phase: play a card. Opens a Neigh window. */
-  | { type: 'playCard'; playerId: PlayerId; cardId: number; targetPlayerId?: PlayerId; targetCardId?: number }
-  /** Action phase alternative: draw an extra card instead of playing. */
+  | {
+      type: 'playCard';
+      playerId: PlayerId;
+      cardId: number;
+      targetPlayerId?: PlayerId;
+    }
   | { type: 'drawInsteadOfPlaying'; playerId: PlayerId }
+  | { type: 'endActionPhase'; playerId: PlayerId }
   | { type: 'playNeigh'; playerId: PlayerId; cardId: number }
   | { type: 'declineNeigh'; playerId: PlayerId }
-  | { type: 'chooseTarget'; playerId: PlayerId; targetPlayerId: PlayerId; targetCardId?: number }
-  | { type: 'sacrifice'; playerId: PlayerId; cardId: number }
-  | { type: 'discardToLimit'; playerId: PlayerId; cardIds: number[] }
-  | { type: 'takeFromNursery'; playerId: PlayerId; cardId: number }
-  | { type: 'endTurn'; playerId: PlayerId };
-
-// ============================================================================
-// Open questions
-// ============================================================================
-// 1. 135 base cards each need rulebook text before effects can be modelled.
-//    Plan: model by trigger tier (pure on-play → continuous → triggered), same
-//    staged approach the card-collecting project used for 7 Wonders Leaders.
-// 2. Continuous Upgrade/Downgrade effects must be computed from the tableau on
-//    read, never cached as flags.
-// 3. Super Neigh cannot be Neighed — the reaction window needs a "terminal"
-//    response, unlike Exploding Kittens where every Nope can be Noped.
-// 4. Editions are alternate base decks, not stackable expansions. validateConfig
-//    should enforce exactly one edition.
-// 5. Deck-exhaustion tiebreak (letters in unicorn names) is trivially
-//    deterministic — implement it, it's a fun detail.
+  | {
+      type: 'resolvePrompt';
+      playerId: PlayerId;
+      decline?: boolean;
+      cardIds?: number[];
+      targetPlayerId?: PlayerId;
+      targetCardId?: number;
+      /** For oraclePeek: chosen card to add to hand, and ordered [top, second] ids to put back on deck. */
+      oraclePickId?: number;
+      oracleTopOrder?: number[];
+    };

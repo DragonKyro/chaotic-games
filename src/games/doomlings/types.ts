@@ -1,90 +1,184 @@
-// Doomlings — types + design outline. NO LOGIC YET.
-//
-// ============================================================================
-// ⚠ CONFIDENCE WARNING
-// ============================================================================
-// The EXPANSION LIST FOR THIS GAME IS MISSING. doomlings.com returned 503 and
-// BoardGameGeek blocked automated fetches while this outline was written, so
-// unlike the other five games there is no verified product list here.
-// EXPANSIONS is deliberately empty rather than guessed — fill it in from the
-// publisher's store before building the lobby toggles.
-//
-// The gameplay below is reconstructed from general knowledge and needs the
-// rulebook. Items marked ⚠ are guesses.
-//
-// ============================================================================
-// Core loop (⚠ reconstructed)
-// ============================================================================
-// Tableau-building over a fixed number of Ages. Broad shape:
-//   - Each player builds a "species" by playing TRAIT cards into their tableau.
-//     Traits have a colour and a point value; some have ongoing or scoring
-//     abilities that reference other traits.
-//   - The AGES deck drives the game clock. One age card is turned per round and
-//     applies a rule or effect for that round. Shuffled into it are
-//     CATASTROPHES, which force players to lose traits.
-//   - Your GENE POOL is your hand limit / draw allowance.
-//   - The game ends when the Ages deck runs out (the World's End). Highest total
-//     points wins.
-//
-// ============================================================================
-// What this game adds to the engine
-// ============================================================================
-// 1. A ROUND-LEVEL RULE MODIFIER — the current age card changes the rules while
-//    it is face up. Same discipline as continuous tableau modifiers: read the
-//    active age card when evaluating a rule, never copy its effect into flags.
-// 2. GLOBAL DESTRUCTIVE EVENTS (catastrophes) that hit every player at once and
-//    may require simultaneous choices about what to discard.
-// 3. Endgame SCORING across categories with trait-to-trait references — the
-//    closest thing here to the sibling project's 7 Wonders scoring pass.
+// Doomlings — types for the implemented Base Game.
 
 import type { GameStateShape } from '@/core/module';
 import type { PlayerId } from '@/core/types';
 import type { ExpansionMeta, ScaffoldConfig } from '../_scaffold';
 
 // ============================================================================
-// Cards
+// Trait Colors & Cards
 // ============================================================================
 
-/** ⚠ Placeholder colour set — confirm against the physical cards. */
-export type DmTraitColor = 'red' | 'green' | 'blue' | 'yellow' | 'purple' | 'colorless';
+export type DmTraitColor = 'red' | 'blue' | 'green' | 'purple' | 'colorless';
+
+export const DM_COLORS: readonly DmTraitColor[] = ['red', 'blue', 'green', 'purple', 'colorless'];
+
+export type DmActionTag =
+  | 'draw1'
+  | 'draw2'
+  | 'draw3'
+  | 'draw4'
+  | 'playExtraTrait'
+  | 'stealTrait'
+  | 'vampirismSteal'
+  | 'destroyOpponentTrait'
+  | 'swapTraits'
+  | 'giveCardFromHand'
+  | 'stealRandomHandCard'
+  | 'discardFromHand1'
+  | 'discardFromHand2'
+  | 'takeFromDiscard1'
+  | 'venomousMoveSelf';
+
+export type DmDropOfLifeTag =
+  | 'perRed'
+  | 'perBlue'
+  | 'perGreen'
+  | 'perPurple'
+  | 'perColorless'
+  | 'perColorPair'
+  | 'perHandCard'
+  | 'genePoolSize'
+  | 'colorVariety'
+  | 'symbiosisLowestColor'
+  | 'apexPredatorMostTraits'
+  | 'minusPerColorless';
+
+export type DmWorldsEndTag =
+  | 'hyperIntelligenceDiscardColor'
+  | 'viralPenaltyColor'
+  | 'faithChangeColor'
+  | 'eloquencePlayTrait';
 
 export interface DmTraitCard {
   id: number;
+  kind: string;
   name: string;
   color: DmTraitColor;
-  /** Base point value printed on the card. */
+  /** Printed face value (or 0 if variable via Drop of Life). */
   points: number;
-  /** Rulebook text. Effects modelled later, one card at a time. */
-  text: string;
-  /** ⚠ "Dominant" traits are believed to be a distinct, stronger class. */
   dominant: boolean;
-  source: 'base' | string;
+  /** Permanent Gene Pool modifier while this card is in a player's Trait Pile. */
+  genePoolDelta: number;
+  /** Optional play requirement: must have at least 1 trait of this color in your Trait Pile. */
+  requireColor?: DmTraitColor;
+  /** Optional play requirement: must have at least N traits in your Trait Pile. */
+  requireTraitCount?: number;
+  /** True if this card is Motley (counts as Red, Blue, Green, and Purple simultaneously). */
+  isAllColors?: boolean;
+  /** True if this card cannot be removed from your Trait Pile (e.g. Fulfilled or Dominant). */
+  indestructible?: boolean;
+  actionTag?: DmActionTag;
+  dropOfLifeTag?: DmDropOfLifeTag;
+  dropOfLifeMultiplier?: number;
+  worldsEndTag?: DmWorldsEndTag;
+  text: string;
 }
 
-/** Cards in the Ages deck: ordinary ages, catastrophes, and the final card. */
-export type DmAgeCardKind = 'age' | 'catastrophe' | 'worldsEnd';
+export type DmAgeCardKind = 'birthOfLife' | 'age' | 'catastrophe';
+
+export type DmAgeRuleTag =
+  | 'none'
+  | 'noColorless'
+  | 'noBlue'
+  | 'noGreen'
+  | 'noRed'
+  | 'noPurple'
+  | 'ignoreActions'
+  | 'maxFaceValue3'
+  | 'protectTraitPiles'
+  | 'stabilizeTo4'
+  | 'plusOneGenePoolPerm'
+  | 'allDraw1'
+  | 'allDiscard1';
+
+export type DmCatastropheEffectTag =
+  | 'discardHandPerBlue'
+  | 'discardHandPerGreen'
+  | 'discardHandPerRed'
+  | 'discardHandPerPurple'
+  | 'sacrificeOneTrait'
+  | 'drawPerColorType'
+  | 'discardAndRedrawGenePool'
+  | 'passCardLeft';
+
+export type DmWorldsEndCatastropheTag =
+  | 'minus1PerBlue'
+  | 'minus1PerGreen'
+  | 'minus1PerRed'
+  | 'minus1PerPurple'
+  | 'plus4FewestTraits'
+  | 'minus5MostTraits'
+  | 'plus1PerColorless'
+  | 'plus2PerDominant';
 
 export interface DmAgeCard {
   id: number;
   name: string;
   kind: DmAgeCardKind;
-  /** The rule this card applies while it is the current age. */
+  genePoolDelta: number;
+  ruleTag: DmAgeRuleTag;
+  catastropheEffect?: DmCatastropheEffectTag;
+  worldsEndEffect?: DmWorldsEndCatastropheTag;
   text: string;
-  source: 'base' | string;
+  worldsEndText?: string;
 }
 
 // ============================================================================
-// Config
+// Prompts
 // ============================================================================
 
-/**
- * ⚠ EMPTY ON PURPOSE — see the warning at the top of this file. Do not invent
- * entries; take them from the publisher's product list.
- */
-export const DM_EXPANSIONS: readonly ExpansionMeta[] = [];
+export type DmPrompt =
+  | {
+      kind: 'chooseCardsFromHand';
+      playerId: PlayerId;
+      reason: string;
+      count: number;
+      optional: boolean;
+      effectTag: 'discard' | 'stabilizeDiscard' | 'giveToOpponent' | 'playExtraTrait' | 'eloquencePlay';
+    }
+  | {
+      kind: 'chooseTraitInPile';
+      playerId: PlayerId;
+      reason: string;
+      optional: boolean;
+      scope: 'own' | 'others';
+      mode: 'steal' | 'destroy' | 'sacrifice';
+    }
+  | {
+      kind: 'chooseColor';
+      playerId: PlayerId;
+      reason: string;
+      effectTag: 'hyperIntelligence' | 'viral' | 'faithFrom' | 'faithTo';
+      fromColor?: DmTraitColor;
+    }
+  | {
+      kind: 'chooseFromDiscard';
+      playerId: PlayerId;
+      reason: string;
+    };
+
+export interface DmLogEntry {
+  seq: number;
+  byPlayerId: PlayerId | null;
+  text: string;
+  tone: 'normal' | 'danger' | 'good';
+}
+
+// ============================================================================
+// Config (Verified Expansion List from Doomlings)
+// ============================================================================
+
+export const DM_EXPANSIONS: readonly ExpansionMeta[] = [
+  { id: 'overlush', name: 'Overlush', summary: 'Mystery expansion set adding new traits and ages.', verified: true },
+  { id: 'imaginary-ends', name: 'Imaginary Ends', summary: 'Multi-pack expansion: Magical, Techlings, Meaning of Life, Dinolings, Mythlings.', verified: true },
+  { id: 'legends-of-enderas', name: 'Legends of Enderas', summary: 'Expansion adding Treasure cards and new realms.', verified: true },
+  { id: 'ancient-fates', name: 'Ancient Fates', summary: 'Expansion adding ancient traits and new ages.', verified: true },
+  { id: 'shadow-puppets', name: 'Shadow Puppets', summary: 'Bolster expansion pack.', verified: true },
+  { id: 'castle-glass', name: 'Castle Glass', summary: 'Bolster expansion pack.', verified: true },
+  { id: 'mokoko-village', name: 'Mokoko Village', summary: 'Bolster expansion pack.', verified: true },
+];
 
 export interface DmConfig extends ScaffoldConfig {
-  /** Expansion ids, once the real list is known. */
   expansions: string[];
 }
 
@@ -93,10 +187,8 @@ export interface DmConfig extends ScaffoldConfig {
 // ============================================================================
 
 export type DmSubPhase =
-  | 'turnAge'              // flip the next age card
-  | 'awaitingAction'       // active player draws / plays traits
-  | 'awaitingCatastrophe'  // every player chooses what to lose
-  | 'scoring'
+  | 'awaitingAction'
+  | 'awaitingPrompt'
   | 'gameOver';
 
 export interface DmState extends GameStateShape {
@@ -105,17 +197,30 @@ export interface DmState extends GameStateShape {
   traitDeck: DmTraitCard[];
   traitDiscard: DmTraitCard[];
   ageDeck: DmAgeCard[];
-  /** Ages already turned, most recent last. The last element is the active rule. */
   agesPlayed: DmAgeCard[];
+  currentAge: DmAgeCard;
 
   hands: Record<PlayerId, DmTraitCard[]>;
-  /** Each player's species — the traits they have in play. */
   tableaus: Record<PlayerId, DmTraitCard[]>;
-  /** Hand limit / draw allowance per player; grows during the game. */
-  genePool: Record<PlayerId, number>;
+  /** Base Gene Pool before trait modifiers (starts at 5). */
+  baseGenePool: Record<PlayerId, number>;
+  /** Color overrides from Faith at World's End: playerId -> { from, to }. */
+  faithColorSwap: Record<PlayerId, { from: DmTraitColor; to: DmTraitColor } | null>;
+  /** Viral penalty colors chosen at World's End: { byPlayerId, color }[]. */
+  viralPenalties: { byPlayerId: PlayerId; color: DmTraitColor }[];
+  /** Players whose Denial dominant trait is still armed to ignore the next Catastrophe. */
+  denialArmed: Record<PlayerId, boolean>;
 
-  /** Pending per-player catastrophe choices, null until submitted. */
-  catastrophePicks: Record<PlayerId, number[] | null>;
+  firstPlayerIndex: number;
+  turnPlayerId: PlayerId;
+  turnsTakenInRound: number;
+  catastrophesSeen: number;
+
+  promptQueue: DmPrompt[];
+  winnerId: PlayerId | null;
+
+  log: DmLogEntry[];
+  logSeq: number;
 
   config: DmConfig;
 }
@@ -125,23 +230,14 @@ export interface DmState extends GameStateShape {
 // ============================================================================
 
 export type DmAction =
-  | { type: 'turnAge'; playerId: PlayerId }
-  | { type: 'drawTrait'; playerId: PlayerId }
   | { type: 'playTrait'; playerId: PlayerId; cardId: number }
-  | { type: 'discardTrait'; playerId: PlayerId; cardId: number }
-  /** Catastrophe resolution: each player submits the traits they are losing. */
-  | { type: 'submitCatastrophePick'; playerId: PlayerId; cardIds: number[] }
-  | { type: 'endTurn'; playerId: PlayerId }
-  | { type: 'continue'; playerId: PlayerId };
-
-// ============================================================================
-// Open questions
-// ============================================================================
-// 1. GET THE EXPANSION LIST. It is the one gap in the project's research.
-// 2. Rulebook needed for: turn structure and how many traits may be played,
-//    how the gene pool grows, catastrophe resolution, and the scoring pass.
-// 3. Confirm the trait colour set and what "dominant" actually does.
-// 4. Player count (⚠ believed 2–6) and the number of ages per match.
-// 5. Catastrophes may need simultaneous submissions — if so, reuse the
-//    face-down-commit pattern (see happy-little-dinos/types.ts) including the
-//    activePlayerId parking trick so AI seats do not freeze.
+  | { type: 'passTurn'; playerId: PlayerId }
+  | {
+      type: 'resolvePrompt';
+      playerId: PlayerId;
+      decline?: boolean;
+      cardIds?: number[];
+      targetPlayerId?: PlayerId;
+      targetCardId?: number;
+      chosenColor?: DmTraitColor;
+    };

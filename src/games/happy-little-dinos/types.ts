@@ -1,80 +1,120 @@
-// Happy Little Dinosaurs — types + design outline. NO LOGIC YET.
-//
-// ============================================================================
-// ⚠ CONFIDENCE: expansion names verified from the publisher's store; the rules
-// below are reconstructed and need the rulebook before the reducer is written.
-// ============================================================================
-//
-// ============================================================================
-// Core loop (⚠ reconstructed)
-// ============================================================================
-// You are a dinosaur trying to survive daily disasters. Each round:
-//   1. Flip a DISASTER card from the disaster deck. It has a category and a
-//      point value everyone must beat.
-//   2. Every player simultaneously plays one Point card face down.
-//   3. Reveal. ⚠ Whoever fails the disaster (lowest, or below its value) takes
-//      the hit and moves DOWN their survival track, unless they play an Escape
-//      card that matches the disaster's category.
-//   4. Advance on the track for surviving; win by reaching the end of the track
-//      (⚠ 50 points) or by being the last dinosaur alive.
-//
-// Disaster categories (⚠ names need confirming): Natural Disaster, Predator,
-// Foolishness, Bad Luck. Escape cards are category-specific, which is where the
-// take-that comes from — you hold the escape for a disaster that hasn't come up.
-//
-// ============================================================================
-// What this game adds to the engine
-// ============================================================================
-// 1. SIMULTANEOUS FACE-DOWN COMMITS. Everyone submits a hidden pick, then all
-//    reveal. The card-collecting project solved this shape already (Sushi Go's
-//    `selecting` subphase, 7 Wonders' `pendingPick`): park `activePlayerId` on
-//    the next un-submitted AI seat so the host AI driver ticks them in turn,
-//    and batch-apply once every live player has submitted.
-// 2. A per-player TRACK — the first positional-but-not-spatial state here. Just
-//    an integer per player; no board needed.
-// 3. Instant/response cards played after the reveal (⚠ if the rulebook has
-//    them) would reuse the reaction-window primitive.
+// Happy Little Dinosaurs — types for the implemented Base Game.
 
 import type { GameStateShape } from '@/core/module';
 import type { PlayerId } from '@/core/types';
 import type { ExpansionMeta, ScaffoldConfig } from '../_scaffold';
 
 // ============================================================================
-// Cards
+// Dinosaurs & Cards
 // ============================================================================
 
-/** ⚠ Category names need confirming from the rulebook. */
 export type HldDisasterCategory =
-  | 'naturalDisaster'
+  | 'natural'
   | 'predator'
-  | 'foolishness'
-  | 'badLuck';
+  | 'emotional'
+  | 'meteor';
+
+export type HldDinoId =
+  | 'nervous-rex'
+  | 'cry-ceratops'
+  | 'bad-luck-bronto'
+  | 'stego'
+  | 'pterry-dactyl'
+  | 'raging-raptor';
+
+export interface HldDinoDef {
+  id: HldDinoId;
+  name: string;
+  plusCategory: HldDisasterCategory;
+  minusCategory: HldDisasterCategory | null;
+  text: string;
+}
 
 export interface HldDisasterCard {
   id: number;
   name: string;
   category: HldDisasterCategory;
-  /** Threshold the played point card must beat. */
-  value: number;
   text: string;
-  source: 'base' | HldExpansionId;
 }
 
-export type HldPlayCardType =
-  | 'point'      // numeric value played against a disaster
-  | 'escape'     // dodges one category of disaster outright
-  | 'instant';   // ⚠ played in response to something; existence unconfirmed
+export type HldPlayCardType = 'point' | 'instant';
+
+export type HldCardKind =
+  // Point cards (19 kinds, 53 cards)
+  | 'flaming-chainsaw'
+  | 'meteor-cannon'
+  | 'hungry-plant'
+  | 'iced-ptea'
+  | 'treenoculars'
+  | 'sting-stabber'
+  | 'special-star-fruit'
+  | 'bow-and-dino'
+  | 'mouth-trap'
+  | 'run-home-bat'
+  | 'fire-spray'
+  | 'bonehead'
+  | 'delicious-smoothie'
+  | 'grave-maker'
+  | 'grappling-snake'
+  | 'handy-pan'
+  | 'dino-grabber'
+  | 'cool-stick'
+  | 'pet-rock'
+  // Instant cards (5 kinds, 16 cards)
+  | 'score-booster'
+  | 'score-sapper'
+  | 'score-inversion'
+  | 'disaster-insurance'
+  | 'disaster-redirect';
 
 export interface HldCard {
   id: number;
+  kind: HldCardKind;
   name: string;
   type: HldPlayCardType;
-  /** Point cards only. */
   value: number | null;
-  /** Escape cards only — which category it dodges. */
-  escapes: HldDisasterCategory | null;
+  hasEffect: boolean;
   text: string;
-  source: 'base' | HldExpansionId;
+}
+
+// ============================================================================
+// Prompts
+// ============================================================================
+
+export type HldPrompt =
+  | {
+      kind: 'petRockDiscard';
+      playerId: PlayerId;
+      smoothieOnlyEffects: boolean;
+    }
+  | {
+      kind: 'dinoGrabberSteal';
+      playerId: PlayerId;
+    }
+  | {
+      kind: 'grapplingSnakeSwap';
+      playerId: PlayerId;
+      validNeighbors: PlayerId[];
+    }
+  | {
+      kind: 'fireSprayDiscard';
+      playerId: PlayerId;
+    }
+  | {
+      kind: 'treenocularsPick';
+      playerId: PlayerId;
+      cards: HldCard[];
+    }
+  | {
+      kind: 'hungryPlantSwap';
+      playerId: PlayerId;
+    };
+
+export interface HldLogEntry {
+  seq: number;
+  byPlayerId: PlayerId | null;
+  text: string;
+  tone: 'normal' | 'danger' | 'good';
 }
 
 // ============================================================================
@@ -91,32 +131,31 @@ export const HLD_EXPANSIONS: readonly ExpansionMeta[] = [
   {
     id: 'hazards-ahead',
     name: 'Hazards Ahead',
-    summary: 'Expansion pack — extra disasters and point cards. Contents need the rulebook.',
+    summary: 'Expansion pack — extra disasters and point cards.',
     verified: true,
   },
   {
     id: 'dating-disasters',
     name: 'Dating Disasters',
-    summary: 'Expansion pack — romance-themed disasters. Contents need the rulebook.',
+    summary: 'Expansion pack — romance-themed disasters.',
     verified: true,
   },
   {
     id: 'perils-of-puberty',
     name: 'Perils of Puberty',
-    summary: 'Expansion pack — puberty-themed disasters. Contents need the rulebook.',
+    summary: 'Expansion pack — puberty-themed disasters.',
     verified: true,
   },
   {
     id: 'players-5-6',
     name: '5–6 Player Expansion',
-    summary: 'Raises the player cap from 4 to 6. Adds two more dinosaur tracks and cards.',
+    summary: 'Raises the player cap from 4 to 6. Adds Pterry Dactyl and Raging Raptor.',
     verified: true,
   },
 ];
 
 export interface HldConfig extends ScaffoldConfig {
   expansions: HldExpansionId[];
-  /** ⚠ Believed 50. Confirm against the track on the physical board. */
   trackLength: number;
 }
 
@@ -125,35 +164,52 @@ export interface HldConfig extends ScaffoldConfig {
 // ============================================================================
 
 export type HldSubPhase =
-  | 'revealDisaster'     // flip the round's disaster
-  | 'selecting'          // simultaneous face-down point-card commits
-  | 'resolving'          // reveal + apply, click-through so players can read it
-  | 'awaitingEscape'     // ⚠ a hit player may play a matching escape
+  | 'selecting'
+  | 'pointEffects'
+  | 'awaitingScoringInstants'
+  | 'suddenDeath'
+  | 'awaitingDisasterSave'
   | 'gameOver';
 
 export interface HldState extends GameStateShape {
   subPhase: HldSubPhase;
 
+  dinos: Record<PlayerId, HldDinoId>;
   disasterDeck: HldDisasterCard[];
   disasterDiscard: HldDisasterCard[];
-  /** The disaster currently in play, null between rounds. */
   currentDisaster: HldDisasterCard | null;
 
   deck: HldCard[];
   discard: HldCard[];
   hands: Record<PlayerId, HldCard[]>;
 
-  /**
-   * Face-down commits for this round. Hidden-information rule as everywhere
-   * else in this project: the value IS in replicated state, and the UI is
-   * responsible for not rendering other players' picks until reveal.
-   */
-  pendingPicks: Record<PlayerId, number | null>;
+  /** Hidden face-down Point card commits during `selecting` or `suddenDeath`. */
+  pendingPicks: Record<PlayerId, HldCard | null>;
+  /** Revealed Point cards in front of each player for the current round. */
+  revealedPicks: Record<PlayerId, HldCard | null>;
 
-  /** Position on each player's survival track. */
+  /** Bonus points added to a player's score this round from Pet Rock / Delicious Smoothie. */
+  pointEffectBonuses: Record<PlayerId, number>;
+  /** Signed adjustments from Score Booster / Score Sapper (before Star Fruit doubling). */
+  instantScoreDeltas: Record<PlayerId, number>;
+  /** Number of Score Inversion instants played this round. */
+  scoreInversionsPlayed: number;
+
+  promptQueue: HldPrompt[];
+  instantResponderQueue: PlayerId[];
+  suddenDeathPlayers: PlayerId[];
+  pendingDisasterVictimId: PlayerId | null;
+
+  /**Collected Disaster cards per player. */
+  disasterAreas: Record<PlayerId, HldDisasterCard[]>;
+  /** Position on each player's 0..50 Escape Route. */
   trackPosition: Record<PlayerId, number>;
-  /** Dinosaurs that have run out of track. Turn order skips them. */
   eliminated: PlayerId[];
+  winnerId: PlayerId | null;
+
+  roundNumber: number;
+  log: HldLogEntry[];
+  logSeq: number;
 
   config: HldConfig;
 }
@@ -163,24 +219,29 @@ export interface HldState extends GameStateShape {
 // ============================================================================
 
 export type HldAction =
-  | { type: 'flipDisaster'; playerId: PlayerId }
-  /** Simultaneous phase: commit a face-down point card. */
+  | { type: 'chooseDino'; playerId: PlayerId; dinoId: HldDinoId }
   | { type: 'submitPick'; playerId: PlayerId; cardId: number }
-  /** Everyone has committed — reveal and apply. */
-  | { type: 'resolveRound'; playerId: PlayerId }
-  | { type: 'playEscape'; playerId: PlayerId; cardId: number }
-  | { type: 'declineEscape'; playerId: PlayerId }
-  /** Click-through so humans can read the round result before the next flip. */
-  | { type: 'continue'; playerId: PlayerId };
-
-// ============================================================================
-// Open questions
-// ============================================================================
-// 1. Rulebook needed for: exact resolution (is it lowest-loses, or
-//    below-threshold-loses?), track length and layout, and whether instants exist.
-// 2. Confirm the four disaster category names.
-// 3. Card lists for base + 3 content expansions.
-// 4. Whether the 5–6 player expansion changes any rules beyond the cap.
-// 5. Simultaneous-pick AI parking: `activePlayerId` must sit on the next
-//    un-submitted AI seat during `selecting` or all-AI matches will freeze.
-//    This is a known trap — the card-collecting project hit it twice.
+  | {
+      type: 'resolvePrompt';
+      playerId: PlayerId;
+      decline?: boolean;
+      cardIds?: number[];
+      targetPlayerId?: PlayerId;
+      secondPlayerId?: PlayerId;
+      targetCardId?: number;
+    }
+  | {
+      type: 'playScoringInstant';
+      playerId: PlayerId;
+      cardId: number;
+      targetPlayerId?: PlayerId;
+    }
+  | { type: 'declineScoringInstant'; playerId: PlayerId }
+  | { type: 'submitSuddenDeathPick'; playerId: PlayerId; cardId: number }
+  | {
+      type: 'playDisasterSave';
+      playerId: PlayerId;
+      cardId: number;
+      targetPlayerId?: PlayerId;
+    }
+  | { type: 'declineDisasterSave'; playerId: PlayerId };
