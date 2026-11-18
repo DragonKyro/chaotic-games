@@ -11,8 +11,9 @@ architectural decision is made (especially the secret-deck-order question below)
 
 A personal multi-game web app for **chaotic take-that card games** — Exploding
 Kittens, Unstable Unicorns, Here to Slay, Casting Shadows, Happy Little
-Dinosaurs, Doomlings. Hosted on GitHub Pages, played hot-seat or with friends
-over WebRTC. No backend.
+Dinosaurs, Doomlings. Hosted on GitHub Pages, played hot-seat or with friends online
+(rooms in a Firebase Realtime Database shared with Kyle's other game sites).
+No server code of our own.
 
 Sibling project: `../card-collecting` (Sushi Go, Sea Salt & Paper, 7 Wonders,
 7 Wonders Duel, Air Land & Sea). **All infrastructure here was copied from it**
@@ -31,23 +32,29 @@ prompts for every player decision, heuristic AI driver, picker `Thumbnail` SVG,
 functional UI (`GameView` + `LobbyConfig` + `Rules`), and unit + AI-vs-AI
 playout tests.
 
-185 tests pass (`npm run test:run`), covering all six base games and all 30
-expansions across 2–10 players and multiple seeds.
+239 tests pass (`npm run test:run`), covering all six base games and all 30
+expansions across 2–10 players and multiple seeds, plus the online layer
+(rooms, lobby, action log, races, rejoin, spectators) and a whole online match
+of each of the six games.
 
 ## Tech stack (locked)
 
-TypeScript, Vite, React 19, Zustand for state, Trystero (`/torrent`) for WebRTC
-P2P, Vitest for tests. No backend — GitHub Pages is static-only.
+TypeScript, Vite, React 19, Zustand for state, Firebase Realtime Database +
+anonymous Auth for online play (project `github-games-e7c7d`, shared with Kyle's
+other game sites — this app's data lives under `/chaotic-games`), Vitest for
+tests. No server code of our own: GitHub Pages hosts the static site, Firebase
+holds the rooms, and the only server-side logic is the security rules in
+`database.rules.json`.
 
 ## Architecture
 
 Five layers, separated by directory:
 
-- **`src/core/`** — `GameModule<S, A, C>` contract, seeded RNG (mulberry32 in `rng.ts`), shared types (`Seat`, `PlayerId`, `GamePhase`). Game-agnostic — never references a specific game.
+- **`src/core/`** — `GameModule<S, A, C>` contract, seeded RNG (mulberry32 in `rng.ts`), shared types (`Seat`, `PlayerId`, `GamePhase`), seat helpers (`seats.ts`: simultaneous-decision order, AI levels) and the seat colour palette (`seatColors.ts`). Game-agnostic — never references a specific game.
 - **`src/games/<id>/`** — one folder per game. Each folder owns its own types, reducer (`applyAction`), AI, and UI bundle. Registered in `src/games/registry.ts`.
-- **`src/net/`** — Trystero wrapper (`room.ts`), stable identity (`identity.ts` — localStorage UUID + `?fresh` escape hatch), wire envelopes (`types.ts`).
-- **`src/store/`** — Zustand stores (`gameStore`, `networkStore`). `gameStore` holds the active module + state and exposes `dispatch` (broadcasts) and `applyLocal` (silent receiver path).
-- **`src/ui/`** — Game-agnostic shell: `App.tsx` (route between picker / lobby / playing), `GameLobby.tsx` (seat builder + game's `LobbyConfig`), `GameHost.tsx` (mounts the active game's `GameView`), `ChatPanel.tsx`, `RulesBook.tsx`, `theme.css`.
+- **`src/net/`** — the room transport: `transport.ts` (the `RoomTransport` / `RoomConnection` interface, log-slot encoding), `firebaseRoom.ts` (the Firebase implementation, lazy-loaded), `fakeTransport.ts` (in-memory server for tests); `identity.ts` (localStorage UUID + saved name + room codes, `?fresh` escape hatch), `roomLink.ts` (`?room=CODE` in the URL), wire types (`types.ts`). Never imports from `src/store` or `src/ui`.
+- **`src/store/`** — Zustand stores (`gameStore`, `networkStore`) plus `actionSync.ts` (the online action log's pending queue and rollback). `gameStore` holds the active module + state and exposes `dispatch` (hands the move to networkStore's broadcast handler when online) and `applyLocal` (silent receiver path).
+- **`src/ui/`** — Game-agnostic shell: `App.tsx` (routes between picker / lobby / playing, or by room state while online), `GameLobby.tsx` (local seat builder + game's `LobbyConfig` + "Host online"), `OnlineLobby.tsx` (the room's lobby), `OnlineStatus.tsx` (join box, connecting / error card), `lobbyParts.tsx`, `GameHost.tsx` (mounts the active game's `GameView`, runs the AI driver), `ChatPanel.tsx`, `RulesBook.tsx`, `theme.css`.
 
 Plus one temporary folder:
 
@@ -70,27 +77,44 @@ GameModule<S, A, C> {
 }
 ```
 
+The shell also honours some optional fields that came over with the Firebase
+netcode from card-collecting. **None of the six games sets them yet**, so all
+of them run on the defaults: `onlineSupported` (default true), `replayInLobby`,
+`hiddenInfo` (default true: hot-seat shows the pass-the-device screen),
+`aiLevels` / `defaultAiLevel` (per-seat AI difficulty), `aiDelayMs`, `prepare`
+(async setup before a match, e.g. loading AI policy files), and
+`validateConfig(config, seats?)`. `LobbyConfig` receives `readOnly` for an
+online guest.
+
 **Hard invariants every module must uphold:**
 - `applyAction` is pure. No `Date.now`, no `Math.random`, no I/O. RNG draws from `state.rngState`.
 - Randomness chosen by the acting player (deals, draws, **dice**) is folded into the action payload so all peers reduce identically.
 - `S` (game state) is JSON-serializable — sent over the wire, snapshotted on join.
-- The full state is replicated; hidden-information rules are a UI concern. Friends-only honor, no anti-cheat. **But see the deck-order caveat — it bites harder in this family than in the sibling project.**
+- `createInitialState` must be pure given `(config, seed, seats)`: online, every device builds the opening itself from the room's start record.
+- Every device holds the full state; hidden-information rules are a UI concern. Friends-only honor, no anti-cheat. **But see the deck-order caveat — it bites harder in this family than in the sibling project.**
 
 The shell, store, and net layer never name a specific game. Adding a new game
 means: drop a folder, register it, done.
 
 ## Multiplayer model
 
-- **Trystero `/torrent`** for WebRTC signaling. No backend. App ID `chaotic-games-v1`; room code is both the topic and the encryption password. Lazy-imported in `src/net/room.ts` so the solo bundle stays small.
-- **Stable identity**: `localStorage` UUID (`chaotic-games.uuid`), exchanged via `hello` channel. `?fresh` flips storage to `sessionStorage` for two-window local testing.
-- **Full state replication**: every peer holds full `GameState`.
-- **Actions, not diffs**: `{ byUuid, actionJson }` envelopes; receivers verify the UUID owns a seat in `lobby.seats` before applying via `gameStore.applyLocal`.
-- **Determinism**: randomness lives in `state.rngState` (mulberry32 seeded at game start), plus per-action payload for player-chosen draws and dice.
-- **Host-authoritative lobby**: host owns lobby state, broadcasts on every edit. Seat assignment is done by the host via a per-seat peer dropdown. Start broadcasts the initial `GameState` + `seatUuids[]`.
-- **Rejoin / spectator**: when a peer says hello, the host responds with `sendLobby` (always) and `sendSnapshot(toPeerId)` (if a game is in flight). Joiner's uuid matching a seat → guest; otherwise spectator (read-only — dispatch is no-op'd in `GameHost`).
-- **AI in online**: only the host runs `chooseAIAction`, fired from `GameHost.tsx` when `state.activePlayerId` resolves to an AI seat. Driver early-returns for `guest` / `spectator`. If the host drops, AI seats freeze.
-- **Chat**: in-memory in `networkStore.chat`, not part of `GameState`.
-- **Channels**: `hello`, `lobby`, `start`, `action`, `snap`, `chat`. Each is a separate `makeAction` namespace.
+Ported from card-collecting (commit `eb1a838`), which ported it from the Catan
+project. Trystero / WebRTC was dropped for the same reason they dropped it:
+peer-to-peer never connected reliably (strict NAT with no TURN server, flaky
+trackers, phones dropping sockets in the background).
+
+- **Firebase Realtime Database** (instance `github-games-e7c7d-default-rtdb`, web app "Chaotic Games") via the Firebase JS SDK: one WebSocket on port 443, so it works on cellular and locked-down networks. The SDK loads lazily (`import('@/net/firebaseRoom')` from `networkStore`, its own ~77 KB gzip chunk); `warmUpNetwork()` starts it (and the sign-in) when an online box gets focus or the pointer. Solo / hot-seat play never downloads it or holds a connection: the transport `goOffline`s whenever no room is open.
+- **Shared database — everything is prefixed.** Several web apps (Catan, card-collecting, Tractor, Mahjong, …) use the one database, so everything this app stores is under one top-level key, `DB_ROOT = 'chaotic-games'` (`firebaseRoom.ts`; every path below is relative to it), and `database.rules.json` defines only that key (root `.read` / `.write` stay false). A database has a single rules set, so a plain deploy would wipe the other apps' rules: `firebase.json`'s predeploy hook runs `scripts/merge-db-rules.mjs` (copied from the siblings), which reads the live rules, replaces only the keys our file defines and deploys the merged `.firebase/database.rules.deploy.json` (git-ignored); it refuses to deploy if the live rules can't be read. First deployed 2026-11-18.
+- **Keep usage small.** The database bills bytes stored and downloaded plus open connections (free plan: 1 GB stored, 10 GB/month downloaded, 100 simultaneous connections — shared by every app on the database), not reads or writes. Every device downloads every move of the current match and a rejoin downloads its whole log, so payloads carry only what devices read: the start record is `createInitialState`'s inputs (not the state), a move is `{"a": action, "n": 8-char nonce}`.
+- **Identity**: each device signs in **anonymously and silently** (no visible login). The uid exists only so the rules can tie writes to a device. Seats belong to the `localStorage` UUID (`chaotic-games.uuid`); an online human seat's `id` *is* its owner's UUID (so it's the `PlayerId` in game state), AI seats are `ai-N`. `?fresh` puts the UUID and the sign-in in `sessionStorage`, so two windows of one incognito session are two devices. The display name is saved too (`chaotic-games.displayName`).
+- **Room layout** (`rooms/{CODE}`, header of `src/net/firebaseRoom.ts`): `meta` (host uuid / uid, createdAt, `build`, protocol `v`), `lobby` (JSON string of `LobbyState`; edited by transaction), `matches/m{N}/start` (`StartRecord`: `gameId`, `configJson`, `seed`, `seats`, `hostUuid`, `startedAt`, `check`sum of the built opening; write-once, host only), `matches/m{N}/actions/aNNNNNN` (write-once log slots), `chat/`, `presence/` (removed by `onDisconnect`). Payloads are JSON strings because the database drops empty arrays / objects and turns arrays into keyed objects. Written with each room: `roomDays/{day}` and `roomIndex/{day}/{CODE}`, so each new room's host sweeps rooms over a week old that nobody is in.
+- **Rules** (`database.rules.json`; deploy with `npm run deploy:rules`): signed-in devices read a room by its code (no listing); a room can be created over a free code only; a week-old empty room can be deleted by anyone; `meta` is never rewritten; anyone in the room edits the lobby; a match's `start` once, by the host's uid; its log slots once each, only after its start; chat once per id; presence only by its own uid; size caps everywhere. Changing the layout means bumping `PROTOCOL_VERSION` and the `v` check in the rules together.
+- **The action log is the source of truth.** Every device runs `createInitialState(JSON.parse(configJson), seed, seats)` and applies the match's log in slot order, so all devices reduce identically; one whose opening doesn't match `check` (another app version) gets a chat warning. `ActionSync`: your own move applies at once and goes in a pending queue; the head is written to the next free slot with a transaction. When another device's move took the slot (say, two players Noping the same play at once), the device restores its state, applies theirs, and replays its own on top: still-legal moves are rewritten, the rest dropped with a notice. **This is what keeps the reaction-window design below honest online**: playing an answer out of order is allowed, so two devices can race, and the log picks the winner deterministically.
+- **Lobby** (`OnlineLobby.tsx`): guests seat themselves; each player renames / recolors their own seat; the host picks the game (the room isn't tied to one), its options (guests see `LobbyConfig` read-only), adds / removes AI seats, and starts. `lobbyStartProblem` surfaces `validateConfig` errors. A local lobby's "Host online" carries its options and AI seats into the new room.
+- **Joining**: by code, or by link (`?room=ABCD` rides in the URL; a reload or "Copy invite link" rejoins automatically when a name is saved). Role: host uuid → host (a reloading host is the host again); a seat in the match → guest; else spectator (read-only). Devices on another `build` (`__APP_BUILD__`, the commit on CI) get a chat warning.
+- **AI in online**: one device runs `chooseAIAction` — the host while it's connected, else the first connected seated human (a stand-in), and the host again when it returns. Every device derives it from presence, so they agree. `GameHost.tsx`'s driver fires when `state.activePlayerId` resolves to an AI seat — which is why reducers park `activePlayerId` on reaction-window responders (see below).
+- **Chat**: stored in the room so rejoiners see it; mirrored in `networkStore.chat`, not part of `GameState`.
+- **Tests**: `fakeTransport.ts` has the database's semantics (write-once slots, atomic lobby, async events, staged races). `networkStore.test.ts` runs several "devices" against a stand-in registry (`store/testGames.ts`). `networkStore.games.test.ts` plays a whole online match of each of the six games, host + guest + AI, and checks that every device and a late joiner end equal; it pins the deal seed (some deals end in AI stalemates — see Casting Shadows below). `networkStore.live.test.ts` runs the flow, the rules and the sweep against the real project (`FIREBASE_LIVE=1`; it prints the rooms it used — delete them afterwards).
 
 ## The three chaos primitives
 
@@ -107,7 +131,7 @@ Nope (Exploding Kittens), Neigh (Unstable Unicorns), Challenge and Modifier
 (Here to Slay) are all the same shape: a card playable **out of turn** that
 answers a pending play, and which can itself be answered. Resolution is LIFO.
 
-Physically it's a real-time shout. Over P2P it must be **deterministic**: park a
+Physically it's a real-time shout. Online it must be **deterministic**: park a
 pending play in state, give each eligible responder an explicit respond/decline
 prompt, and resolve when the window closes. Never a timer race between peers.
 Skip seats holding no legal response — they have no decision to make.
@@ -215,6 +239,11 @@ All 127 playable cards (13 Baby Unicorns, 22 Basic Unicorns, 30 Magical
 Unicorns, 25 Magic, 15 Instant, 14 Upgrade, 8 Downgrade) + 8 reference cards =
 135 cards from the 2nd Edition Base Deck are implemented.
 
+The AI never offers a Dark Angel Unicorn to Dark Angel's own sacrifice: it
+used to sacrifice the Dark Angel itself, bring it straight back from the
+discard, re-trigger, and loop forever (about 1 deal in 400). Watch for the
+same shape in any other "when this enters, sacrifice, then bring back" card.
+
 ### Here to Slay (`src/games/here-to-slay/`) — ✅ BASE GAME BUILT
 2–6 players. 3 action points a turn (4 with Mega Slime): 1 AP draw, 1 AP play
 Hero/Item/Magic, 1 AP roll for Hero ability, 2 AP attack a Monster, 3 AP discard
@@ -231,6 +260,14 @@ cards (34 Attack Spells, 10 Conversion Spells, 8 Resource cards), 10
 Counterspells, and 10 Companions. Three-phase turns: Resource Roll → Action
 Phase (4 AP: Travel, Cast, Reroll, Protect, Refresh, Collect) → Shadow
 Absorption & Cursed Crystal damage.
+
+⚠ **Known AI stalemate** (found 2026-11-18, not fixed): about 1 deal in 500
+never ends AI-vs-AI. Two survivors end up on the same hex, every attack they
+hold needs an *adjacent* hex, and neither AI Travels to bring one into range,
+so chip damage and healing cancel out forever (e.g. 3 seats `host-uuid`,
+`guest-uuid`, `ai-1`, default config, seed `699613345`). A human breaks it by
+moving; an all-AI match won't. The fix belongs in `ai.ts`: Travel when no
+held attack can reach a living enemy.
 
 ### Happy Little Dinosaurs (`src/games/happy-little-dinos/`) — ✅ BASE GAME BUILT
 2–4 players (up to 6 with 5–6 Player toggle). 4 Dinosaur boards (Nervous Rex,
@@ -256,6 +293,7 @@ Mokoko Village) are documented in `DM_EXPANSIONS`.
 - Strict TypeScript. No `any` unless genuinely necessary.
 - Co-locate tests next to code: `reducer.ts` and `reducer.test.ts` side by side.
 - Game logic in `src/games/<id>/` must not import from `src/ui`, `src/net`, or `src/store`.
+- **Every AI must terminate.** An AI move loop isn't just a frozen screen online: the AI driver writes each move into the shared database's log, so a loop eats into the free plan every app shares. Sweep a few hundred seeds when you touch an AI.
 - The net layer may import from `src/core` but not `src/ui`.
 - Path alias: `@/` → `src/`.
 - Game-specific UI is lazy-loaded via `module.ui()` — keeps the picker bundle tiny. Don't statically import a game's UI from its `module.ts`; it defeats the split.
@@ -271,22 +309,33 @@ Mokoko Village) are documented in `DM_EXPANSIONS`.
 - `npm run typecheck` — `tsc` no-emit
 - `npm run test` — Vitest watch
 - `npm run test:run` — Vitest single run
+- `FIREBASE_LIVE=1 npx vitest run src/store/networkStore.live.test.ts` — online play + the security rules against the real Firebase project
+- `npm run deploy:rules` — deploy `database.rules.json`, merged into the shared database's live rules by `scripts/merge-db-rules.mjs` (never deploy the file on its own; `node scripts/merge-db-rules.mjs` alone writes the merged file without deploying). From Git Bash, set `MSYS_NO_PATHCONV=1` for CLI database paths, e.g. `database:remove /chaotic-games/rooms/X --force`
+- `npm run fix-lock` — after any `npm install`, rewrite the lockfile's mirror URLs to registry.npmjs.org (see Deployment)
 
 ## Deployment
 
 `.github/workflows/deploy.yml` deploys `dist/` to GitHub Pages on push to
-`main`. Vite `base` is `/chaotic-games/` — update in `vite.config.ts` if the repo
-is renamed. CI uses `npm install` (not `npm ci`) because the committed lockfile
-carries Artifactory URLs from Kyle's local environment; the project `.npmrc`
-points CI at public npmjs.org.
+`main`, installing with `npm ci`. Vite `base` is `/chaotic-games/` — update in
+`vite.config.ts` if the repo is renamed. The Firebase rules deploy separately
+(`npm run deploy:rules`); CI never touches them.
+
+**The lockfile must carry no DRW Artifactory URLs.** Kyle's environment sets
+`NPM_CONFIG_REGISTRY` to the corporate mirror, which overrides the project
+`.npmrc`, so every local `npm install` writes mirror URLs into
+`package-lock.json` — and GitHub Actions can't reach the mirror. Run
+`npm run fix-lock` after any install (`scripts/fix-lockfile.mjs`: swaps the host
+to registry.npmjs.org; same tarball paths, so the integrity hashes stay valid).
+`scripts/lockfile.test.ts` fails the test run if a non-public URL slips
+through.
 
 ## Non-goals (do not implement)
 
 - Persistent saves between sessions
-- User accounts, matchmaking, lobby browser
+- User accounts or any visible sign-in (anonymous Firebase Auth stays invisible), matchmaking, lobby browser
 - Anti-cheat / verifiable randomness — *unless* the deck-order question forces option 3
 - Monetization, ads, telemetry
-- Server-side anything
+- Server code of our own (Cloud Functions, servers): Firebase is storage + security rules only
 
 ## Where to start next
 

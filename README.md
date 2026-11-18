@@ -1,12 +1,12 @@
 # chaotic-games
 
-A multi-game web app for **chaotic take-that card games** — the family where you sabotage, interrupt, and blow up your friends rather than quietly optimize your own tableau. Hosted on GitHub Pages, no backend, peer-to-peer multiplayer via WebRTC.
+A multi-game web app for **chaotic take-that card games** — the family where you sabotage, interrupt, and blow up your friends rather than quietly optimize your own tableau. Hosted on GitHub Pages, with online rooms in a Firebase Realtime Database (no server code of our own).
 
-Infrastructure is lifted from the sibling [card-collecting](../card-collecting) project — same `GameModule` contract, same P2P netcode, same shell.
+Infrastructure is lifted from the sibling [card-collecting](../card-collecting) project — same `GameModule` contract, same Firebase room netcode, same shell.
 
 ## Status
 
-**All 6 base games AND all 30 expansions are implemented and playable** — hot-seat, online over WebRTC, or against heuristic AIs, with home-page picker thumbnails, lobby expansion/edition/player settings, in-app rules books, and verified official card lists and frequencies (185 tests passing).
+**All 6 base games AND all 30 expansions are implemented and playable** — hot-seat, online with friends, or against heuristic AIs, with home-page picker thumbnails, lobby expansion/edition/player settings, in-app rules books, and verified official card lists and frequencies (239 tests passing).
 
 | Game | Players | Expansions modelled as toggles | State |
 |---|---|---|---|
@@ -90,7 +90,7 @@ Two calls we had to make, both documented in-app and in `cards.ts`:
 | Build | Vite + TypeScript |
 | UI | React 19 |
 | State | Zustand |
-| Multiplayer | Trystero (WebRTC over BitTorrent trackers — no backend) |
+| Multiplayer | Firebase Realtime Database + anonymous Auth (project `github-games-e7c7d`, shared; this app's data under `/chaotic-games`) |
 | Tests | Vitest |
 | Hosting | GitHub Pages (static) |
 
@@ -98,10 +98,10 @@ Two calls we had to make, both documented in-app and in `cards.ts`:
 
 ```
 src/
-  core/         GameModule contract, RNG, shared types. Game-agnostic.
-  net/          Trystero wrapper, stable identity, wire envelopes.
-  store/        Zustand stores (gameStore, networkStore).
-  ui/           Shell — App, GameLobby, GameHost, ChatPanel, RulesBook, theme.
+  core/         GameModule contract, RNG, shared types, seat helpers. Game-agnostic.
+  net/          Room transport (Firebase, lazy-loaded; in-memory fake for tests), identity, room links.
+  store/        Zustand stores (gameStore, networkStore) + actionSync (the online move log).
+  ui/           Shell — App, GameLobby, OnlineLobby, OnlineStatus, GameHost, ChatPanel, RulesBook, theme.
   games/
     registry.ts            List of all GameModules.
     _scaffold/             Temporary placeholder helpers for the outlines. Delete when done.
@@ -113,26 +113,30 @@ src/
     doomlings/             Outline.
 ```
 
+Outside `src/`: `database.rules.json` (this app's security rules), `firebase.json` / `.firebaserc`, and `scripts/` (`merge-db-rules.mjs` for rules deploys, `fix-lockfile.mjs` + `lockfile.test.ts` for the lockfile).
+
 Each game lives in its own folder behind the `GameModule<S, A, C>` contract from `src/core/module.ts`. To add a new game: create `src/games/<id>/`, export a module, add it to `src/games/registry.ts`. **No other file needs to change.**
 
 Every game currently exports a `module.ts` whose `applyAction` throws, and borrows a placeholder lobby form + board from `_scaffold/`. As each game gets a real implementation it stops importing `_scaffold/`; the folder gets deleted when the last one does.
 
 ## Multiplayer model
 
-- Full state replication: every peer holds the full `GameState` and runs the same pure `applyAction` reducer.
-- Actions (not diffs) are broadcast over Trystero channels. Randomness is decided by the acting player and folded into the action payload so peers reduce identically.
-- Lobby is host-authoritative. Host broadcasts the opening state at start; mid-game joiners get a snapshot addressed to their peer id.
-- Stable identity is a `localStorage` UUID exchanged over the `hello` channel. `?fresh` switches to `sessionStorage` for local two-window testing.
-- Channels: `hello` (uuid + name), `lobby` (host → all), `start` (host → all), `action` (peer → all), `snap` (host → newcomer), `chat`. Trystero loads as a separate chunk so the solo/hot-seat bundle stays small.
+Online play runs through a **Firebase Realtime Database** shared with Kyle's other game sites, ported from card-collecting (which ported it from Catan). It replaced peer-to-peer WebRTC (Trystero), which never connected reliably on strict NATs and phones. One WebSocket on port 443, so it works on cellular and locked-down networks.
+
+- **Everything is prefixed.** The database is shared, so every path this app touches is under `/chaotic-games`, and `database.rules.json` defines only that key. Deploy rules with `npm run deploy:rules`: a predeploy hook merges our key into the live rules so the other apps' rules are left alone.
+- **No sign-up.** Each device signs in anonymously and silently; a seat belongs to a `localStorage` UUID. `?fresh` switches to `sessionStorage` for two-window local testing.
+- **The action log is the source of truth.** The host writes a start record (config, seed, seats) once; every device builds the opening itself and applies the match's moves from a write-once log in order, so all devices reduce identically. When two devices move at once (two Nopes on the same play), the log keeps the first and the other device rolls back and replays.
+- **Solo play stays offline.** The Firebase SDK is its own lazily loaded chunk; hot-seat and vs-AI games never download it or open a connection.
 - No accounts, no matchmaking, no anti-cheat — friends-only.
 
 ### Online flow
 
-1. **Host online** mints a 6-character room code and joins a Trystero room (app id `chaotic-games-v1`, password = room code). The host configures options and assigns each seat to a connected peer via a dropdown.
-2. **Join** by entering the room code on the lobby screen. The host sees you appear in the peer list and can drop you into any open seat.
-3. **Start** broadcasts the opening `GameState` + the `seat → uuid` map. Each peer's reducer runs identically off that state; subsequent actions are envelopes `{ byUuid, actionJson }` applied through the same `applyAction`.
-4. **Mid-game join**: the host responds to a new arrival's `hello` with a targeted snapshot. If the joiner's uuid matches a seat they become a guest; otherwise they're a spectator.
-5. **AI in online**: only the host runs the AI driver, firing whenever `state.activePlayerId` resolves to an AI seat. If the host disconnects, AI seats freeze.
+1. **Host online** from a game's lobby (enter a name): opens a room with a 4-character code, carrying the lobby's options and AI seats over.
+2. **Join** by typing the code on the home screen, or open an invite link (`?room=ABCD`). Guests seat themselves while the lobby is open; the host picks the game and options, adds or removes AI seats, and starts.
+3. **Play**: every move goes into the room's log. Chat is stored in the room.
+4. **Rejoin / spectate**: reloading (or losing signal) rejoins the same seat from the log. Anyone else who joins mid-match watches as a spectator.
+5. **AI in online**: the host runs the AI seats; if the host drops, the first connected seated player takes over until the host returns.
+6. **Play again** starts a fresh deal for everyone; **Lobby** takes everyone back to change options. Rooms nobody is in are swept after a week.
 
 ## Commands
 
@@ -143,11 +147,14 @@ Every game currently exports a `module.ts` whose `applyAction` throws, and borro
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run test` | Vitest watch |
 | `npm run test:run` | Vitest single run |
+| `FIREBASE_LIVE=1 npx vitest run src/store/networkStore.live.test.ts` | Online play + security rules against the real Firebase project |
+| `npm run deploy:rules` | Deploy `database.rules.json`, merged into the shared database's live rules |
+| `npm run fix-lock` | After any `npm install`: point every lockfile URL at registry.npmjs.org |
 
 ## Project plan / roadmap
 
 ### Phase 0 — Infrastructure ✅
-Copied from card-collecting: `GameModule` contract, seeded RNG, Trystero P2P layer, Zustand stores, game-agnostic shell (picker / lobby / host / chat / rules modal), GitHub Pages deploy workflow.
+Copied from card-collecting: `GameModule` contract, seeded RNG, Zustand stores, game-agnostic shell (picker / lobby / host / chat / rules modal), GitHub Pages deploy workflow. The original Trystero P2P layer was replaced on 2026-11-18 by card-collecting's Firebase Realtime Database rooms.
 
 ### Phase 1 — Game outlines ✅
 All six games scaffolded: `types.ts` per game carrying the state machine, action union, config and expansion list, plus a `module.ts` registered in the picker whose reducer throws. Expansion lists researched and verified (except Doomlings). Design notes record what's confirmed and what's a guess.
@@ -188,11 +195,13 @@ Revisit only if the game ever leaves the friends-only setting.
 ## Non-goals
 
 - Persistent saves between sessions
-- User accounts, matchmaking, lobby browser
+- User accounts or any visible sign-in, matchmaking, lobby browser
 - Anti-cheat / verifiable randomness (unless the deck-order tension above forces it)
 - Monetization, ads, telemetry
-- Server-side anything
+- Server code of our own — Firebase is storage + security rules only
 
 ## Deployment
 
-`.github/workflows/deploy.yml` deploys `dist/` to GitHub Pages on push to `main`. Vite `base` is `/chaotic-games/` — update in `vite.config.ts` if the repo is renamed.
+`.github/workflows/deploy.yml` deploys `dist/` to GitHub Pages on push to `main` (`npm ci`, then `npm run build`). Vite `base` is `/chaotic-games/` — update in `vite.config.ts` if the repo is renamed. Firebase rules deploy separately with `npm run deploy:rules`.
+
+The lockfile must point only at the public npm registry: a local install through a corporate mirror records the mirror's URLs, which GitHub Actions can't reach. Run `npm run fix-lock` after any install; `scripts/lockfile.test.ts` fails the test run if a mirror URL slips through.

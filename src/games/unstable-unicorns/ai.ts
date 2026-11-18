@@ -188,9 +188,19 @@ export function chooseAIAction(state: UuState, playerId: PlayerId): UuAction | n
           return { type: 'resolvePrompt', playerId, decline: true };
         }
         if (prompt.mode === 'sacrifice') {
+          // Dark Angel may sacrifice itself and then bring itself straight back
+          // from the discard, re-triggering forever. Never feed it a Dark Angel:
+          // then Dark Angels only ever leave the discard during the chain, so
+          // it ends.
+          const pool = prompt.effectTag === 'darkAngelSacrifice'
+            ? valid.filter((v) => v.card.kind !== 'dark-angel-unicorn')
+            : valid;
+          if (pool.length === 0) {
+            return { type: 'resolvePrompt', playerId, decline: true };
+          }
           // Prefer sacrificing our own Downgrades first, then Baby/Basic Unicorns
-          const ownDowngrade = valid.find((v) => v.card.type === 'downgrade');
-          const picked = ownDowngrade ?? valid[0]!;
+          const ownDowngrade = pool.find((v) => v.card.type === 'downgrade');
+          const picked = ownDowngrade ?? pool[0]!;
           return { type: 'resolvePrompt', playerId, targetCardId: picked.card.id };
         }
         if (prompt.effectTag?.startsWith('sharkSacrifice:') && prompt.optional) {

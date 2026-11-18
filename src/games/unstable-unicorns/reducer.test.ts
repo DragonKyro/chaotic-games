@@ -186,6 +186,26 @@ describe('Unstable Unicorns — core mechanics & player decisions', () => {
       }
     }
   });
+
+  it('the AI never feeds Dark Angel Unicorn to its own sacrifice (it would bring itself back forever)', () => {
+    // This deal reaches a Dark Angel whose owner holds no other Unicorn. The AI
+    // used to sacrifice the Dark Angel itself, pull it straight back from the
+    // discard, re-trigger, and loop without end.
+    const seats: Seat[] = [
+      { id: 'host-uuid', name: 'Hana', color: '#e64a4a', isAI: false, isLocal: false },
+      { id: 'guest-uuid', name: 'Gus', color: '#3a6ec9', isAI: false, isLocal: false },
+      { id: 'ai-1', name: 'AI', color: '#f37025', isAI: true, isLocal: false },
+    ];
+    let s = createInitialState(unstableUnicornsModule.defaultConfig(seats), 304094739, seats);
+    let steps = 0;
+    while (s.phase !== 'gameOver' && steps < 2000) {
+      const action = chooseAIAction(s, s.activePlayerId!);
+      expect(action).toBeTruthy();
+      s = applyAction(s, action!);
+      steps++;
+    }
+    expect(s.phase).toBe('gameOver');
+  });
 });
 
 describe('Unstable Unicorns — all 8 Expansions & Editions', () => {
