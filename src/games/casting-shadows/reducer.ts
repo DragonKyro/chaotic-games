@@ -1,18 +1,22 @@
-// Casting Shadows — pure deterministic reducer for the Base Game.
+// Casting Shadows — pure deterministic reducer for Base Game + Ice Storm + Molten Rock.
 
 import { shuffle } from '@/core/rng';
 import type { PlayerId, Seat } from '@/core/types';
 import {
   areHexesAdjacent,
   buildCsDecks,
+  CS_ALL_CHARACTERS,
+  CS_ALL_HEX_DEFS,
   CS_CHARACTERS,
-  CS_HEX_DEFS,
+  getCharactersForExpansions,
+  getHexDefsForExpansions,
   isHexInSpellRange,
 } from './cards';
 import type {
   CsAction,
   CsCard,
   CsConfig,
+  CsExpansionId,
   CsHexId,
   CsHexTile,
   CsPlayerBoard,
@@ -24,6 +28,12 @@ import type {
 const LOG_CAP = 60;
 const SPELLBOOK_LIMIT = 5;
 
+export interface AttackEffects {
+  inflictStun?: boolean;
+  inflictFreeze?: boolean;
+  inflictBurn?: boolean;
+}
+
 // ============================================================================
 // Setup
 // ============================================================================
@@ -33,27 +43,51 @@ export function createInitialState(config: CsConfig, seed: number, seats: Seat[]
   const first = seats[0];
   if (!first) throw new Error('Casting Shadows needs at least one seat');
 
-  const { mainDeck, counterspellDeck, companionDeck } = buildCsDecks(rngState);
+  const effectiveExpansions: CsExpansionId[] = [...config.expansions];
+  // If any seat selected an expansion character, ensure its expansion hexes are on the map
+  for (const chosenId of Object.values(config.characterByPlayer)) {
+    const ch = CS_ALL_CHARACTERS.find((c) => c.id === chosenId);
+    if (ch?.expansion && !effectiveExpansions.includes(ch.expansion)) {
+      effectiveExpansions.push(ch.expansion);
+    }
+  }
+  if (seats.length > 4 && effectiveExpansions.length === 0) {
+    effectiveExpansions.push('ice-storm');
+  }
+
+  const { mainDeck, counterspellDeck, companionDeck } = buildCsDecks(rngState, effectiveExpansions);
   const companionPortal = companionDeck.splice(0, 3);
 
+  const hexDefs = getHexDefsForExpansions(effectiveExpansions);
   const hexes = {} as Record<CsHexId, CsHexTile>;
-  for (const h of CS_HEX_DEFS) {
+  for (const h of hexDefs) {
     hexes[h.id] = {
       ...h,
       faceUpCard: h.hasMainDeckSlot ? mainDeck.shift() ?? null : null,
     };
   }
 
+  const availableChars = getCharactersForExpansions(effectiveExpansions);
   const boards: Record<PlayerId, CsPlayerBoard> = {};
   seats.forEach((seat, idx) => {
     const chosenId = config.characterByPlayer[seat.id];
     const charDef =
-      CS_CHARACTERS.find((c) => c.id === chosenId) ??
+      CS_ALL_CHARACTERS.find((c) => c.id === chosenId) ??
+      availableChars[idx % availableChars.length] ??
       CS_CHARACTERS[idx % CS_CHARACTERS.length]!;
+    if (!hexes[charDef.homeHex]) {
+      const homeDef = CS_ALL_HEX_DEFS.find((h) => h.id === charDef.homeHex);
+      if (homeDef) {
+        hexes[homeDef.id] = {
+          ...homeDef,
+          faceUpCard: homeDef.hasMainDeckSlot ? mainDeck.shift() ?? null : null,
+        };
+      }
+    }
     boards[seat.id] = {
       characterId: charDef.id,
       form: 'light',
-      hexId: charDef.homeHex,
+      hexId: hexes[charDef.homeHex] ? charDef.homeHex : 'ancient-rune',
       hp: 18,
       maxHp: 18,
       shadowEnergy: 0,
@@ -61,6 +95,10 @@ export function createInitialState(config: CsConfig, seed: number, seats: Seat[]
       usedSpellIdsThisTurn: [],
       companion: null,
       usedShadowAbilityThisTurn: false,
+      stunned: false,
+      frozen: false,
+      fortified: 0,
+      burning: false,
     };
   });
 
@@ -98,6 +136,15 @@ export function createInitialState(config: CsConfig, seed: number, seats: Seat[]
 
   pushLog(state, null, `${seats.length} Shadow Casters enter the arena (18 HP each). Last player standing wins!`, 'normal');
   return state;
+}
+
+export function getShadowAbilityCost(b: CsPlayerBoard): number {
+  const charDef =
+    CS_ALL_CHARACTERS.find((c) => c.id === b.characterId) ?? CS_CHARACTERS[0]!;
+  if (b.companion?.kind === 'lil-shadow') {
+    return Math.max(1, charDef.shadowAbilityCost - 1);
+  }
+  return charDef.shadowAbilityCost;
 }
 
 // ============================================================================
@@ -249,13 +296,14 @@ function startAttackQueue(
   targetIds: PlayerId[],
   baseDamage: number,
   unreducible: boolean,
+  effects?: AttackEffects,
 ) {
   const validTargets = targetIds.filter((id) => isLive(s, id) && id !== attackerId);
   if (validTargets.length === 0) return;
 
   const first = validTargets[0]!;
   const rest = validTargets.slice(1);
-  beginSingleTargetAttack(s, attackerId, first, baseDamage, unreducible, rest);
+  beginSingleTargetAttack(s, attackerId, first, baseDamage, unreducible, rest, effects);
 }
 
 function beginSingleTargetAttack(
@@ -265,15 +313,28 @@ function beginSingleTargetAttack(
   baseDamage: number,
   unreducible: boolean,
   remainingTargetIds: PlayerId[],
+  effects?: AttackEffects,
 ) {
   const targetBoard = boardOf(s, targetId);
   let dmg = baseDamage;
 
-  // Lightning Bug deals 0 DMG if target is in Shadow Form
   // Protective Panda reduces Attack Spell damage by 1 unless on Crystal Crypt or unreducible
   const onCrystalCrypt = targetBoard.hexId === 'crystal-crypt';
   if (!unreducible && !onCrystalCrypt && targetBoard.companion?.kind === 'protective-panda') {
     dmg = Math.max(0, dmg - 1);
+  }
+
+  // Fortify shield reduces incoming DMG from an enemy unless on Crystal Crypt or unreducible, consuming the Fortify shield
+  if (!unreducible && !onCrystalCrypt && targetBoard.fortified > 0 && dmg > 0) {
+    const absorbed = Math.min(dmg, targetBoard.fortified);
+    dmg = Math.max(0, dmg - targetBoard.fortified);
+    targetBoard.fortified = 0;
+    pushLog(
+      s,
+      targetId,
+      `🛡️ ${seatName(s, targetId)}'s Fortify shield absorbed ${absorbed} DMG!`,
+      'good',
+    );
   }
 
   const hasCounterspell = targetBoard.spellBook.some((c) => c.type === 'counterspell');
@@ -284,13 +345,16 @@ function beginSingleTargetAttack(
       damage: dmg,
       unreducible: unreducible || onCrystalCrypt,
       remainingTargetIds,
+      inflictStun: effects?.inflictStun,
+      inflictFreeze: effects?.inflictFreeze,
+      inflictBurn: effects?.inflictBurn,
     };
     s.subPhase = 'awaitingCounterspell';
     s.activePlayerId = targetId;
     return;
   }
 
-  applyResolvedDamage(s, attackerId, targetId, dmg, remainingTargetIds);
+  applyResolvedDamage(s, attackerId, targetId, dmg, remainingTargetIds, effects);
 }
 
 function applyResolvedDamage(
@@ -299,9 +363,23 @@ function applyResolvedDamage(
   targetId: PlayerId,
   damage: number,
   remainingTargetIds: PlayerId[],
+  effects?: AttackEffects,
 ) {
   const targetBoard = boardOf(s, targetId);
   const attackerBoard = boardOf(s, attackerId);
+
+  if (effects?.inflictStun) {
+    targetBoard.stunned = true;
+    pushLog(s, attackerId, `💫 ${seatName(s, targetId)} is Stunned (-1 AP next turn)!`, 'danger');
+  }
+  if (effects?.inflictFreeze) {
+    targetBoard.frozen = true;
+    pushLog(s, attackerId, `❄️ ${seatName(s, targetId)} is Frozen (cannot Travel without unfreezing)!`, 'danger');
+  }
+  if (effects?.inflictBurn) {
+    targetBoard.burning = true;
+    pushLog(s, attackerId, `🔥 ${seatName(s, targetId)} is Burning (1 DMG at end of turn)!`, 'danger');
+  }
 
   if (damage > 0) {
     targetBoard.hp = Math.max(0, targetBoard.hp - damage);
@@ -311,6 +389,10 @@ function applyResolvedDamage(
     if (targetBoard.companion?.kind === 'sharp-hedge' && targetBoard.hexId === attackerBoard.hexId) {
       attackerBoard.hp = Math.max(0, attackerBoard.hp - 1);
       pushLog(s, targetId, `Sharp Hedge dealt 1 thorns DMG back to ${seatName(s, attackerId)}!`, 'normal');
+      checkElimination(s, attackerId);
+    } else if (targetBoard.companion?.kind === 'mirror-crab') {
+      attackerBoard.hp = Math.max(0, attackerBoard.hp - 1);
+      pushLog(s, targetId, `Mirror Crab reflected 1 DMG back to ${seatName(s, attackerId)}!`, 'normal');
       checkElimination(s, attackerId);
     }
 
@@ -323,8 +405,13 @@ function applyResolvedDamage(
     const rest = remainingTargetIds.slice(1);
     const dmg = s.pendingAttack.damage;
     const unred = s.pendingAttack.unreducible;
+    const nextEffects: AttackEffects = {
+      inflictStun: s.pendingAttack.inflictStun,
+      inflictFreeze: s.pendingAttack.inflictFreeze,
+      inflictBurn: s.pendingAttack.inflictBurn,
+    };
     s.pendingAttack = null;
-    beginSingleTargetAttack(s, attackerId, next, dmg, unred, rest);
+    beginSingleTargetAttack(s, attackerId, next, dmg, unred, rest, nextEffects);
     return;
   }
 
@@ -348,7 +435,7 @@ function handleRollResourceDice(s: CsState, a: Extract<CsAction, { type: 'rollRe
   s.dicePool = [...a.dice];
   s.bonusPool = [];
 
-  if (hex.startTurnResource) {
+  if (hex?.startTurnResource) {
     s.bonusPool.push(hex.startTurnResource);
   }
   for (const card of b.spellBook) {
@@ -363,15 +450,35 @@ function handleRollResourceDice(s: CsState, a: Extract<CsAction, { type: 'rollRe
   } else if (b.companion?.kind === 'swamp-monster') {
     const cap = b.form === 'shadow' ? 5 : 3;
     b.shadowEnergy = Math.min(cap, b.shadowEnergy + 1);
+  } else if (b.companion?.kind === 'undersea-healer') {
+    b.hp = Math.min(b.maxHp, b.hp + 1);
+  } else if (b.companion?.kind === 'dark-flutter') {
+    s.bonusPool.push('shadowFragment');
+  } else if (b.companion?.kind === 'scaled-alchemist') {
+    b.fortified += 1;
+  } else if (b.companion?.kind === 'hammerhead-harvester') {
+    s.bonusPool.push('redGem');
   }
 
-  s.actionPointsRemaining = b.hexId === 'ancient-rune' ? 5 : 4;
+  const baseAp = b.hexId === 'ancient-rune' ? 5 : 4;
+  if (b.stunned) {
+    s.actionPointsRemaining = Math.max(1, baseAp - 1);
+    b.stunned = false;
+    pushLog(
+      s,
+      a.playerId,
+      `💫 ${seatName(s, a.playerId)} started turn Stunned (-1 AP → ${s.actionPointsRemaining} AP) and shook off Stun.`,
+      'danger',
+    );
+  } else {
+    s.actionPointsRemaining = baseAp;
+    pushLog(s, a.playerId, `${seatName(s, a.playerId)} rolled Resource Dice (${s.actionPointsRemaining} AP).`, 'normal');
+  }
+
   b.usedSpellIdsThisTurn = [];
   b.usedShadowAbilityThisTurn = false;
   s.subPhase = 'awaitingAction';
   s.activePlayerId = a.playerId;
-
-  pushLog(s, a.playerId, `${seatName(s, a.playerId)} rolled Resource Dice (${s.actionPointsRemaining} AP).`, 'normal');
 }
 
 function requireActionPhase(s: CsState, playerId: PlayerId, apCost: number) {
@@ -383,6 +490,9 @@ function requireActionPhase(s: CsState, playerId: PlayerId, apCost: number) {
 function handleTravel(s: CsState, a: Extract<CsAction, { type: 'travel' }>) {
   requireActionPhase(s, a.playerId, 1);
   const b = boardOf(s, a.playerId);
+  if (b.frozen) {
+    throw new Error('cannot Travel while Frozen (spend 1 AP to break the ice first)');
+  }
   const fromHex = s.hexes[b.hexId];
   const toHex = s.hexes[a.toHexId];
   if (!toHex || !areHexesAdjacent(fromHex, toHex)) {
@@ -392,6 +502,16 @@ function handleTravel(s: CsState, a: Extract<CsAction, { type: 'travel' }>) {
   s.actionPointsRemaining -= 1;
   b.hexId = a.toHexId;
   pushLog(s, a.playerId, `${seatName(s, a.playerId)} traveled to ${toHex.name}.`, 'normal');
+}
+
+function handleUnfreeze(s: CsState, a: Extract<CsAction, { type: 'unfreeze' }>) {
+  requireActionPhase(s, a.playerId, 1);
+  const b = boardOf(s, a.playerId);
+  if (!b.frozen) throw new Error('not Frozen');
+
+  s.actionPointsRemaining -= 1;
+  b.frozen = false;
+  pushLog(s, a.playerId, `❄️ ${seatName(s, a.playerId)} spent 1 AP to break the ice and unfreeze!`, 'good');
 }
 
 function handleRerollDice(s: CsState, a: Extract<CsAction, { type: 'rerollDice' }>) {
@@ -415,16 +535,49 @@ function handleRerollDice(s: CsState, a: Extract<CsAction, { type: 'rerollDice' 
 
 function handleProtect(s: CsState, a: Extract<CsAction, { type: 'protect' }>) {
   requireActionPhase(s, a.playerId, 1);
+  const b = boardOf(s, a.playerId);
   const idx = s.dicePool.findIndex((r) => r === 'cursedCrystal');
   const bIdx = s.bonusPool.findIndex((r) => r === 'cursedCrystal');
-  if (idx < 0 && bIdx < 0) throw new Error('no Cursed Crystal in Resource Pool');
+  const hasCursed = idx >= 0 || bIdx >= 0;
 
-  s.actionPointsRemaining -= 1;
-  if (idx >= 0) s.dicePool.splice(idx, 1);
-  else s.bonusPool.splice(bIdx, 1);
-  pushLog(s, a.playerId, `${seatName(s, a.playerId)} used Protect to remove 1 Cursed Crystal.`, 'good');
+  if (a.clearStatus === 'burning') {
+    if (!b.burning) throw new Error('not Burning');
+    s.actionPointsRemaining -= 1;
+    b.burning = false;
+    pushLog(s, a.playerId, `🔥 ${seatName(s, a.playerId)} used Protect to extinguish Burn!`, 'good');
+  } else if (a.clearStatus === 'frozen') {
+    if (!b.frozen) throw new Error('not Frozen');
+    s.actionPointsRemaining -= 1;
+    b.frozen = false;
+    pushLog(s, a.playerId, `❄️ ${seatName(s, a.playerId)} used Protect to break the ice and unfreeze!`, 'good');
+  } else if (a.clearStatus === 'cursedCrystal') {
+    if (!hasCursed) throw new Error('no Cursed Crystal in Resource Pool');
+    s.actionPointsRemaining -= 1;
+    if (idx >= 0) s.dicePool.splice(idx, 1);
+    else s.bonusPool.splice(bIdx, 1);
+    pushLog(s, a.playerId, `${seatName(s, a.playerId)} used Protect to remove 1 Cursed Crystal.`, 'good');
+  } else if (hasCursed) {
+    s.actionPointsRemaining -= 1;
+    if (idx >= 0) s.dicePool.splice(idx, 1);
+    else s.bonusPool.splice(bIdx, 1);
+    pushLog(s, a.playerId, `${seatName(s, a.playerId)} used Protect to remove 1 Cursed Crystal.`, 'good');
+  } else if (b.burning) {
+    s.actionPointsRemaining -= 1;
+    b.burning = false;
+    pushLog(s, a.playerId, `🔥 ${seatName(s, a.playerId)} used Protect to extinguish Burn!`, 'good');
+  } else if (b.frozen) {
+    s.actionPointsRemaining -= 1;
+    b.frozen = false;
+    pushLog(s, a.playerId, `❄️ ${seatName(s, a.playerId)} used Protect to break the ice and unfreeze!`, 'good');
+  } else {
+    throw new Error('no Cursed Crystal, Burn, or Freeze to Protect against');
+  }
 
-  const b = boardOf(s, a.playerId);
+  if (b.companion?.kind === 'vital-shroom') {
+    b.hp = Math.min(b.maxHp, b.hp + 1);
+    b.fortified += 1;
+  }
+
   if (b.companion?.kind === 'occult-octo' && a.targetHexId) {
     const curHex = s.hexes[b.hexId];
     const tHex = s.hexes[a.targetHexId];
@@ -521,6 +674,13 @@ function handleCastSpell(s: CsState, a: Extract<CsAction, { type: 'castSpell' }>
   if (tier.produce) {
     s.bonusPool.push(...tier.produce);
   }
+  if (tier.gainFortify) {
+    b.fortified += tier.gainFortify;
+  }
+  if (tier.gainShadowEnergy) {
+    const cap = b.form === 'shadow' ? 5 : 3;
+    b.shadowEnergy = Math.min(cap, b.shadowEnergy + tier.gainShadowEnergy);
+  }
 
   if (spell.type === 'conversionSpell') {
     pushLog(s, a.playerId, `${seatName(s, a.playerId)} cast Conversion Spell ${spell.name}.`, 'good');
@@ -531,6 +691,12 @@ function handleCastSpell(s: CsState, a: Extract<CsAction, { type: 'castSpell' }>
   const range = spell.range ?? 'sameOrAdjacent';
   const stagBonus = b.companion?.kind === 'charging-stag' ? 1 : 0;
   let dmg = tier.damage + stagBonus;
+  const effects: AttackEffects = {
+    inflictStun: tier.inflictStun || spell.inflictStun,
+    inflictFreeze: tier.inflictFreeze || spell.inflictFreeze,
+    inflictBurn:
+      tier.inflictBurn || spell.inflictBurn || b.companion?.kind === 'ravaging-draco',
+  };
 
   if (spell.targetsAllOnHex) {
     const targetHexId = a.targetHexId ?? b.hexId;
@@ -539,7 +705,12 @@ function handleCastSpell(s: CsState, a: Extract<CsAction, { type: 'castSpell' }>
     }
     const targets = livePlayerIds(s).filter((id) => id !== a.playerId && boardOf(s, id).hexId === targetHexId);
     pushLog(s, a.playerId, `${seatName(s, a.playerId)} cast ${spell.name} on ${s.hexes[targetHexId].name}!`, 'danger');
-    startAttackQueue(s, a.playerId, targets, dmg, false);
+    for (const tId of targets) {
+      if (effects.inflictStun) boardOf(s, tId).stunned = true;
+      if (effects.inflictFreeze) boardOf(s, tId).frozen = true;
+      if (effects.inflictBurn) boardOf(s, tId).burning = true;
+    }
+    startAttackQueue(s, a.playerId, targets, dmg, false, effects);
     return;
   }
 
@@ -554,9 +725,12 @@ function handleCastSpell(s: CsState, a: Extract<CsAction, { type: 'castSpell' }>
   if (spell.kind === 'lightning-bug' && targetBoard.form === 'shadow') {
     dmg = 0;
   }
+  if (spell.kind === 'shadow-swarm' && targetBoard.form === 'shadow') {
+    dmg *= 2;
+  }
 
   pushLog(s, a.playerId, `${seatName(s, a.playerId)} cast ${spell.name} on ${seatName(s, targetId)}!`, 'danger');
-  startAttackQueue(s, a.playerId, [targetId], dmg, false);
+  startAttackQueue(s, a.playerId, [targetId], dmg, false, effects);
 }
 
 function handleUseShadowAbility(s: CsState, a: Extract<CsAction, { type: 'useShadowAbility' }>) {
@@ -566,12 +740,12 @@ function handleUseShadowAbility(s: CsState, a: Extract<CsAction, { type: 'useSha
   if (b.form !== 'shadow') throw new Error('must be in Shadow Form');
   if (b.usedShadowAbilityThisTurn) throw new Error('already used Shadow Ability this turn');
 
-  const charDef = CS_CHARACTERS.find((c) => c.id === b.characterId)!;
-  if (b.shadowEnergy < charDef.shadowAbilityCost) {
-    throw new Error(`need ${charDef.shadowAbilityCost} Shadow Energy`);
+  const cost = getShadowAbilityCost(b);
+  if (b.shadowEnergy < cost) {
+    throw new Error(`need ${cost} Shadow Energy`);
   }
 
-  b.shadowEnergy -= charDef.shadowAbilityCost;
+  b.shadowEnergy -= cost;
   b.usedShadowAbilityThisTurn = true;
 
   if (b.characterId === 'kit') {
@@ -604,6 +778,79 @@ function handleUseShadowAbility(s: CsState, a: Extract<CsAction, { type: 'useSha
     const enemies = livePlayerIds(s).filter((id) => id !== a.playerId && boardOf(s, id).hexId === targetHexId);
     pushLog(s, a.playerId, `🌑 Haze the Devastator blasted ${s.hexes[targetHexId].name} for 3 DMG!`, 'danger');
     startAttackQueue(s, a.playerId, enemies, 3, false);
+  } else if (b.characterId === 'talon') {
+    // Talon the Dark Storm: Spend 4 Shadow Energy to Stun each enemy on your current Hex tile.
+    const sameHexEnemies = livePlayerIds(s).filter(
+      (id) => id !== a.playerId && boardOf(s, id).hexId === b.hexId,
+    );
+    const targets =
+      sameHexEnemies.length > 0
+        ? sameHexEnemies
+        : a.targetPlayerId && a.targetPlayerId !== a.playerId && isLive(s, a.targetPlayerId)
+          ? [a.targetPlayerId]
+          : [];
+    for (const eId of targets) {
+      boardOf(s, eId).stunned = true;
+    }
+    pushLog(
+      s,
+      a.playerId,
+      `🌑 Talon the Dark Storm stunned ${targets.length} enemy/enemies!`,
+      'danger',
+    );
+  } else if (b.characterId === 'nyx') {
+    // Nyx the Blizzard: Spend 3 Shadow Energy to Freeze an enemy in range and deal 1 DMG to them.
+    const targetId =
+      (a.targetPlayerId &&
+      a.targetPlayerId !== a.playerId &&
+      isLive(s, a.targetPlayerId) &&
+      isHexInSpellRange(s.hexes, b.hexId, boardOf(s, a.targetPlayerId).hexId, 'sameOrAdjacent')
+        ? a.targetPlayerId
+        : livePlayerIds(s).find(
+            (id) =>
+              id !== a.playerId &&
+              isHexInSpellRange(s.hexes, b.hexId, boardOf(s, id).hexId, 'sameOrAdjacent'),
+          )) ?? a.targetPlayerId;
+    pushLog(s, a.playerId, `🌑 Nyx the Blizzard unleashed Freezing Blast (1 DMG + Freeze)!`, 'danger');
+    if (targetId && targetId !== a.playerId && isLive(s, targetId)) {
+      boardOf(s, targetId).frozen = true;
+      startAttackQueue(s, a.playerId, [targetId], 1, false, { inflictFreeze: true });
+    }
+  } else if (b.characterId === 'dread') {
+    // Dread the Ironclad: Spend 2 Shadow Energy to Fortify yourself (+2 Fortify shield) and deal 1 DMG to an enemy on your Hex.
+    b.fortified += 2;
+    const targetId =
+      (a.targetPlayerId &&
+      a.targetPlayerId !== a.playerId &&
+      isLive(s, a.targetPlayerId) &&
+      boardOf(s, a.targetPlayerId).hexId === b.hexId
+        ? a.targetPlayerId
+        : livePlayerIds(s).find((id) => id !== a.playerId && boardOf(s, id).hexId === b.hexId)) ??
+      a.targetPlayerId;
+    pushLog(s, a.playerId, `🌑 Dread the Ironclad gained +2 Fortify and struck for 1 DMG!`, 'good');
+    if (targetId && targetId !== a.playerId && isLive(s, targetId)) {
+      startAttackQueue(s, a.playerId, [targetId], 1, false);
+    }
+  } else if (b.characterId === 'ember') {
+    // Pyra the Inferno: Spend 3 Shadow Energy to inflict Burn on all enemies on your current or adjacent Hex tile and deal 1 DMG.
+    const targetHexId =
+      a.targetHexId && isHexInSpellRange(s.hexes, b.hexId, a.targetHexId, 'sameOrAdjacent')
+        ? a.targetHexId
+        : undefined;
+    const hexEnemies = targetHexId
+      ? livePlayerIds(s).filter((id) => id !== a.playerId && boardOf(s, id).hexId === targetHexId)
+      : [];
+    const rangeEnemies = livePlayerIds(s).filter(
+      (id) =>
+        id !== a.playerId &&
+        isHexInSpellRange(s.hexes, b.hexId, boardOf(s, id).hexId, 'sameOrAdjacent'),
+    );
+    const enemies = hexEnemies.length > 0 ? hexEnemies : rangeEnemies;
+    for (const eId of enemies) {
+      boardOf(s, eId).burning = true;
+    }
+    pushLog(s, a.playerId, `🌑 Pyra the Inferno scorched enemies in range for 1 DMG + Burn!`, 'danger');
+    startAttackQueue(s, a.playerId, enemies, 1, false, { inflictBurn: true });
   }
 }
 
@@ -663,7 +910,19 @@ function finishEndOfTurnCleanup(s: CsState) {
     if (s.phase === 'gameOver') return;
   }
 
-  // 2. End-of-turn Companion effects
+  // 2. Burn status damage (1 DMG at end of turn, then clear burning)
+  if (isLive(s, playerId) && b.burning) {
+    b.burning = false;
+    b.hp = Math.max(0, b.hp - 1);
+    pushLog(s, playerId, `🔥 ${seatName(s, playerId)} took 1 DMG from Burn (${b.hp} HP left).`, 'danger');
+    checkElimination(s, playerId);
+    if (s.phase === 'gameOver') return;
+  }
+
+  // 3. Frozen status clears at the end of turn
+  b.frozen = false;
+
+  // 4. End-of-turn Companion effects
   if (isLive(s, playerId)) {
     if (b.companion?.kind === 'recovery-raven') {
       b.hp = Math.min(b.maxHp, b.hp + 1);
@@ -702,7 +961,13 @@ function handleRespondCounterspell(s: CsState, a: Extract<CsAction, { type: 'res
   if (!atk || atk.targetId !== a.playerId) throw new Error('not the attack target');
 
   const targetBoard = boardOf(s, a.playerId);
+  const attackerBoard = boardOf(s, atk.attackerId);
   let dmg = atk.damage;
+  let effects: AttackEffects = {
+    inflictStun: atk.inflictStun,
+    inflictFreeze: atk.inflictFreeze,
+    inflictBurn: atk.inflictBurn,
+  };
 
   if (a.counterspellId !== undefined) {
     const idx = targetBoard.spellBook.findIndex(
@@ -716,7 +981,10 @@ function handleRespondCounterspell(s: CsState, a: Extract<CsAction, { type: 'res
         if (!atk.unreducible) dmg = Math.max(0, dmg - 2);
         pushLog(s, a.playerId, `🛡️ ${seatName(s, a.playerId)} revealed Pointed Shield!`, 'good');
       } else if (cs.kind === 'safety-dome') {
-        if (!atk.unreducible) dmg = 0;
+        if (!atk.unreducible) {
+          dmg = 0;
+          effects = {};
+        }
         pushLog(s, a.playerId, `🛡️ ${seatName(s, a.playerId)} revealed Safety Dome (0 DMG)!`, 'good');
       } else if (cs.kind === 'run-away') {
         if (!atk.unreducible) dmg = Math.max(0, dmg - 1);
@@ -730,16 +998,54 @@ function handleRespondCounterspell(s: CsState, a: Extract<CsAction, { type: 'res
         if (destHexId) targetBoard.hexId = destHexId;
         pushLog(s, a.playerId, `🏃 ${seatName(s, a.playerId)} revealed Run Away!`, 'good');
       } else if (cs.kind === 'bees-everywhere') {
-        const attackerBoard = boardOf(s, atk.attackerId);
         attackerBoard.hp = Math.max(0, attackerBoard.hp - 2);
         pushLog(s, a.playerId, `🐝 ${seatName(s, a.playerId)} revealed Bees Everywhere (2 DMG back to ${seatName(s, atk.attackerId)})!`, 'good');
+        checkElimination(s, atk.attackerId);
+        if (s.phase === 'gameOver') return;
+      } else if (cs.kind === 'ice-wall') {
+        if (!atk.unreducible) dmg = Math.max(0, dmg - 2);
+        attackerBoard.frozen = true;
+        pushLog(s, a.playerId, `❄️ ${seatName(s, a.playerId)} revealed Ice Wall (-2 DMG & Froze ${seatName(s, atk.attackerId)})!`, 'good');
+      } else if (cs.kind === 'frost-mirror') {
+        if (!atk.unreducible) dmg = Math.max(0, dmg - 1);
+        attackerBoard.frozen = true;
+        attackerBoard.hp = Math.max(0, attackerBoard.hp - 1);
+        pushLog(s, a.playerId, `❄️ ${seatName(s, a.playerId)} revealed Frost Mirror (-1 DMG, 1 DMG back & Froze ${seatName(s, atk.attackerId)})!`, 'good');
+        checkElimination(s, atk.attackerId);
+        if (s.phase === 'gameOver') return;
+      } else if (cs.kind === 'icy-fists') {
+        attackerBoard.frozen = true;
+        attackerBoard.hp = Math.max(0, attackerBoard.hp - 2);
+        pushLog(s, a.playerId, `❄️ ${seatName(s, a.playerId)} revealed Icy Fists (2 DMG back & Froze ${seatName(s, atk.attackerId)})!`, 'good');
+        checkElimination(s, atk.attackerId);
+        if (s.phase === 'gameOver') return;
+      } else if (cs.kind === 'shocking-waves') {
+        if (!atk.unreducible) dmg = Math.max(0, dmg - 1);
+        attackerBoard.stunned = true;
+        pushLog(s, a.playerId, `💫 ${seatName(s, a.playerId)} revealed Shocking Waves (-1 DMG & Stunned ${seatName(s, atk.attackerId)})!`, 'good');
+      } else if (cs.kind === 'magma-shield') {
+        if (!atk.unreducible) dmg = Math.max(0, dmg - 2);
+        attackerBoard.burning = true;
+        pushLog(s, a.playerId, `🔥 ${seatName(s, a.playerId)} revealed Magma Shield (-2 DMG & Burned ${seatName(s, atk.attackerId)})!`, 'good');
+      } else if (cs.kind === 'smoke-screen') {
+        if (!atk.unreducible) {
+          dmg = 0;
+          effects = {};
+        }
+        targetBoard.fortified += 1;
+        pushLog(s, a.playerId, `💨 ${seatName(s, a.playerId)} revealed Smoke Screen (0 DMG & +1 Fortify)!`, 'good');
+      } else if (cs.kind === 'molten-retaliation') {
+        targetBoard.fortified += 1;
+        attackerBoard.burning = true;
+        attackerBoard.hp = Math.max(0, attackerBoard.hp - 1);
+        pushLog(s, a.playerId, `🔥 ${seatName(s, a.playerId)} revealed Molten Retaliation (+1 Fortify, 1 DMG & Burn to ${seatName(s, atk.attackerId)})!`, 'good');
         checkElimination(s, atk.attackerId);
         if (s.phase === 'gameOver') return;
       }
     }
   }
 
-  applyResolvedDamage(s, atk.attackerId, atk.targetId, dmg, atk.remainingTargetIds);
+  applyResolvedDamage(s, atk.attackerId, atk.targetId, dmg, atk.remainingTargetIds, effects);
 }
 
 // ============================================================================
@@ -756,6 +1062,9 @@ export function applyAction(state: CsState, action: CsAction): CsState {
       break;
     case 'travel':
       handleTravel(s, action);
+      break;
+    case 'unfreeze':
+      handleUnfreeze(s, action);
       break;
     case 'rerollDice':
       handleRerollDice(s, action);

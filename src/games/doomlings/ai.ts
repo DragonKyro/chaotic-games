@@ -1,4 +1,4 @@
-// Doomlings — deterministic heuristic AI.
+// Doomlings — deterministic heuristic AI supporting Base Game and all 7 expansions.
 
 import type { PlayerId } from '@/core/types';
 import {
@@ -28,9 +28,12 @@ export function chooseAIAction(state: DmState, playerId: PlayerId): DmAction | n
           }
           return { type: 'resolvePrompt', playerId, decline: true };
         }
-        // Discard lowest-point cards
+        // For suppress, discardToDraw3, discard, stabilizeDiscard, giveToOpponent: pick lowest-point cards
         const sorted = [...hand].sort((a, b) => a.points - b.points);
         const count = Math.min(prompt.count, sorted.length);
+        if (count === 0) {
+          return { type: 'resolvePrompt', playerId, decline: true };
+        }
         return {
           type: 'resolvePrompt',
           playerId,
@@ -43,9 +46,21 @@ export function chooseAIAction(state: DmState, playerId: PlayerId): DmAction | n
         if (valid.length === 0) {
           return { type: 'resolvePrompt', playerId, decline: true };
         }
+        if (prompt.mode === 'suppress') {
+          valid.sort((a, b) => a.card.points - b.card.points);
+          if (prompt.optional && valid[0]!.card.points > 1) {
+            return { type: 'resolvePrompt', playerId, decline: true };
+          }
+          return {
+            type: 'resolvePrompt',
+            playerId,
+            targetCardId: valid[0]!.card.id,
+          };
+        }
         if (prompt.mode === 'sacrifice') {
           valid.sort((a, b) => a.card.points - b.card.points);
         } else {
+          // 'attach', 'steal', 'destroy': target highest-value trait
           valid.sort((a, b) => b.card.points - a.card.points);
         }
         return {
@@ -65,7 +80,11 @@ export function chooseAIAction(state: DmState, playerId: PlayerId): DmAction | n
       }
 
       case 'chooseFromDiscard': {
-        const sorted = [...state.traitDiscard].sort((a, b) => b.points - a.points);
+        const candidates =
+          prompt.mode === 'playDirectly'
+            ? state.traitDiscard.filter((c) => !c.dominant && canPlayTrait(state, playerId, c))
+            : state.traitDiscard;
+        const sorted = [...candidates].sort((a, b) => b.points - a.points);
         const pick = sorted[0];
         if (!pick) return { type: 'resolvePrompt', playerId, decline: true };
         return { type: 'resolvePrompt', playerId, targetCardId: pick.id };
@@ -78,13 +97,19 @@ export function chooseAIAction(state: DmState, playerId: PlayerId): DmAction | n
     if (playable.length === 0) {
       return { type: 'passTurn', playerId };
     }
-    // Prefer Dominants first, then highest points + Gene Pool delta
+    // Prefer Dominants first, then highest points + Gene Pool delta + multi-color/attachment value
     playable.sort(
       (a, b) =>
         (b.dominant ? 6 : 0) +
         b.points +
-        b.genePoolDelta * 2 -
-        ((a.dominant ? 6 : 0) + a.points + a.genePoolDelta * 2),
+        b.genePoolDelta * 2 +
+        (b.secondaryColor ? 1 : 0) +
+        (b.isAttachment ? 1 : 0) -
+        ((a.dominant ? 6 : 0) +
+          a.points +
+          a.genePoolDelta * 2 +
+          (a.secondaryColor ? 1 : 0) +
+          (a.isAttachment ? 1 : 0)),
     );
     return { type: 'playTrait', playerId, cardId: playable[0]!.id };
   }

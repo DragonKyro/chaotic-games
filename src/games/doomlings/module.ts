@@ -1,12 +1,15 @@
-// Doomlings — GameModule (Base Game implemented).
+// Doomlings — GameModule (Base Game + all 7 official Expansions implemented).
 
 import type { GameModule } from '@/core/module';
 import type { Seat } from '@/core/types';
 import { chooseAIAction } from './ai';
 import { applyAction, createInitialState } from './reducer';
+import { DM_EXPANSIONS } from './types';
 import type { DmAction, DmConfig, DmState } from './types';
+import { DmThumbnail } from './Thumbnail';
 
 const NAME = 'Doomlings';
+const VALID_EXPANSION_IDS = new Set(DM_EXPANSIONS.map((e) => e.id));
 
 export const doomlingsModule: GameModule<DmState, DmAction, DmConfig> = {
   id: 'doomlings',
@@ -19,8 +22,10 @@ export const doomlingsModule: GameModule<DmState, DmAction, DmConfig> = {
 
   validateConfig: (config) => {
     const errors: string[] = [];
-    if (config.expansions.length > 0) {
-      errors.push('Expansions are not implemented yet — play the base game.');
+    for (const id of config.expansions ?? []) {
+      if (!VALID_EXPANSION_IDS.has(id)) {
+        errors.push(`Unknown Doomlings expansion: ${id}`);
+      }
     }
     return errors;
   },
@@ -28,6 +33,7 @@ export const doomlingsModule: GameModule<DmState, DmAction, DmConfig> = {
   createInitialState,
   applyAction,
   chooseAIAction,
+  Thumbnail: DmThumbnail,
 
   ui: async () => {
     const [{ GameView, LobbyConfig }, { Rules }] = await Promise.all([

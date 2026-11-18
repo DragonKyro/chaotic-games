@@ -19,7 +19,24 @@ import type { UuAction, UuCard, UuState } from './types';
 
 function cardPriority(c: UuCard): number {
   if (c.kind === 'super-neigh') return 10;
-  if (c.kind === 'neigh') return 8;
+  if (
+    c.kind === 'absorb-and-reflect' ||
+    c.kind === 'unicorn-net' ||
+    c.kind === 'redirect' ||
+    c.kind === 'flare-gun' ||
+    c.kind === 'jingle-all-the-neigh'
+  ) {
+    return 8.5;
+  }
+  if (c.type === 'instant') return 8;
+  if (
+    c.kind === 'ginormous-unicorn' ||
+    c.kind === 'bahamuticorn' ||
+    c.kind === 'twin-dragoncorns' ||
+    c.kind === 'diamond-unicorn'
+  ) {
+    return 7.8;
+  }
   if (c.type === 'magicalUnicorn') return 7;
   if (c.type === 'upgrade') return 6;
   if (c.type === 'magic') return 5.5;
@@ -55,10 +72,10 @@ export function chooseAIAction(state: UuState, playerId: PlayerId): UuAction | n
       if (neigh) return { type: 'playNeigh', playerId, cardId: neigh.id };
     }
 
-    // Neigh an opponent's play if it isn't already cancelled and either:
+    // Respond with an Instant card to an opponent's play if it isn't already cancelled and either:
     // - they are within 2 unicorns of winning and playing a unicorn/magic, or
     // - they are playing a Downgrade on us, or
-    // - they are playing a high-impact Magic/Upgrade card
+    // - they are playing a high-impact Magic/Unicorn/Upgrade card
     if (!isMyPlay && !currentlyCancelled && canPlayNeigh(state, playerId)) {
       const oppUnicorns = unicornCount(state, p.byPlayerId);
       const aboutToWin = isUnicornType(p.card.type) && oppUnicorns + 1 >= state.unicornsToWin - 1;
@@ -68,12 +85,28 @@ export function chooseAIAction(state: UuState, playerId: PlayerId): UuAction | n
         downgradeOnMe ||
         p.card.kind === 'two-for-one' ||
         p.card.kind === 'unicorn-poison' ||
-        p.card.kind === 'seductive-unicorn';
+        p.card.kind === 'seductive-unicorn' ||
+        p.card.kind === 'catastrophe' ||
+        p.card.kind === 'rainbow-apocalypse-magic' ||
+        p.card.kind === 'plague-of-death' ||
+        p.card.kind === 'dragons-breath' ||
+        p.card.kind === 'raze-the-stables' ||
+        p.card.kind === 'fireball' ||
+        p.card.kind === 'black-hole' ||
+        p.card.kind === 'nightmare-pact' ||
+        p.card.kind === 'humbug' ||
+        p.card.kind === 'ghosted' ||
+        p.card.kind === 'unicorn-shrinkray' ||
+        p.card.kind === 'chaos-storm' ||
+        p.card.kind === 'bahamuticorn' ||
+        p.card.kind === 'twin-dragoncorns' ||
+        p.card.kind === 'diamond-unicorn' ||
+        p.card.kind === 'cutthroat-captain-unicorn';
 
       if (dangerousPlay) {
         const neigh =
-          handOf(state, playerId).find((c) => c.kind === 'neigh') ??
-          handOf(state, playerId).find((c) => c.kind === 'super-neigh');
+          handOf(state, playerId).find((c) => isNeighCard(c) && c.kind !== 'super-neigh') ??
+          handOf(state, playerId).find((c) => isNeighCard(c));
         if (neigh) return { type: 'playNeigh', playerId, cardId: neigh.id };
       }
     }
@@ -91,14 +124,36 @@ export function chooseAIAction(state: UuState, playerId: PlayerId): UuAction | n
           return { type: 'resolvePrompt', playerId };
         }
         const kind = prompt.sourceCard.kind;
-        // Activate beneficial triggers when we have good fodder
+        // Always activate free value triggers
+        if (
+          kind === 'apocalypse-bunker' ||
+          kind === 'dragons-fortune' ||
+          kind === 'dwarven-forge' ||
+          kind === 'saved-by-the-sigil' ||
+          kind === 'gingerbread-stable' ||
+          kind === 'gift-inspector' ||
+          kind === 'vip-lounge' ||
+          kind === 'extra-tail' ||
+          kind === 'rainbow-mane' ||
+          kind === 'unicorn-lasso' ||
+          kind === 'aura-of-order' ||
+          kind === 'angel-unicorn' ||
+          kind === 'extremely-fertile-unicorn' ||
+          kind === 'zombie-unicorn' ||
+          kind === 'summoning-ritual'
+        ) {
+          return { type: 'resolvePrompt', playerId };
+        }
+        if (kind === 'jack-the-reapercorn' && handOf(state, playerId).length >= 2) {
+          return { type: 'resolvePrompt', playerId };
+        }
         if (kind === 'claw-machine' && handOf(state, playerId).length >= 3) {
           return { type: 'resolvePrompt', playerId };
         }
-        if (kind === 'caffeine-overload' && stableOf(state, playerId).downgrades.length > 0) {
-          return { type: 'resolvePrompt', playerId };
-        }
-        if (kind === 'glitter-bomb' && stableOf(state, playerId).downgrades.length > 0) {
+        if (
+          (kind === 'caffeine-overload' || kind === 'glitter-bomb' || kind === 'altar-of-chaos') &&
+          stableOf(state, playerId).downgrades.length > 0
+        ) {
           return { type: 'resolvePrompt', playerId };
         }
         if (kind === 'stable-artillery' && handOf(state, playerId).length >= 4) {
@@ -205,10 +260,13 @@ export function chooseAIAction(state: UuState, playerId: PlayerId): UuAction | n
 
     // 1. Prefer playing a Magical Unicorn or Basic Unicorn into our own Stable (unless Queen Bee belongs to someone else)
     const qb = queenBeeOwner(state);
+    const myCount = unicornCount(state, playerId);
+    const oppCount = leader ? unicornCount(state, leader) : 0;
     const playableUnicorns = hand.filter(
       (c) =>
         isUnicornType(c.type) &&
         !(c.type === 'basicUnicorn' && qb && qb !== playerId) &&
+        !(c.kind === 'extremely-destructive-unicorn' && myCount > oppCount) &&
         canPlayCardFromHand(state, playerId, c, playerId),
     );
     if (playableUnicorns.length > 0) {
@@ -255,6 +313,8 @@ export function chooseAIAction(state: UuState, playerId: PlayerId): UuAction | n
         c.type === 'magic' &&
         c.kind !== 'reset-button' &&
         c.kind !== 'glitter-tornado' &&
+        !((c.kind === 'catastrophe' || c.kind === 'chaos-storm') && myCount >= oppCount) &&
+        !(c.kind === 'gift-receipt' && stableOf(state, playerId).downgrades.length === 0) &&
         canPlayCardFromHand(state, playerId, c),
     );
     if (playableMagic.length > 0) {

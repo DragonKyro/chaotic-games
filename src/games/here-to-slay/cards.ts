@@ -4,7 +4,7 @@
 import type { RngState } from '@/core/rng';
 import { shuffle } from '@/core/rng';
 import type { Seat } from '@/core/types';
-import type { HtsBaseClass, HtsCard, HtsCardType, HtsMonster } from './types';
+import type { HtsBaseClass, HtsCard, HtsCardType, HtsExpansionId, HtsMonster } from './types';
 
 export interface HtsCardDef {
   kind: string;
@@ -13,8 +13,11 @@ export interface HtsCardDef {
   class: HtsBaseClass | null;
   count: number;
   abilityThreshold: number | null;
+  rollLow?: boolean;
+  maxItems?: number;
   modifierChoices: number[] | null;
   text: string;
+  expansion?: HtsExpansionId;
 }
 
 export const HTS_PARTY_LEADERS: readonly HtsCardDef[] = [
@@ -360,16 +363,299 @@ export const HTS_MAIN_DECK_DEFS: readonly HtsCardDef[] = [
   { kind: 'challenge', name: 'Challenge', type: 'challenge', class: null, count: 14, abilityThreshold: null, modifierChoices: null, text: 'You may play this card when another player attempts to play a Hero, Item, or Magic card. CHALLENGE that card.' },
 ];
 
-export function dealHtsSetup(seats: Seat[], rng: RngState): {
+// ============================================================================
+// Expansion 1: Warriors & Druids (`warriors-druids`)
+// ============================================================================
+
+export const HTS_WARRIORS_DRUIDS_LEADERS: readonly HtsCardDef[] = [
+  {
+    kind: 'leader-piercing-howl',
+    name: 'The Piercing Howl',
+    type: 'partyLeader',
+    class: 'warrior',
+    count: 1,
+    abilityThreshold: null,
+    modifierChoices: null,
+    expansion: 'warriors-druids',
+    text: "Each time you roll to use a Hero card's effect, +1 to your roll for each Item card equipped to a Hero card in your Party.",
+  },
+  {
+    kind: 'leader-noble-shaman',
+    name: 'The Noble Shaman',
+    type: 'partyLeader',
+    class: 'druid',
+    count: 1,
+    abilityThreshold: null,
+    modifierChoices: null,
+    expansion: 'warriors-druids',
+    text: "Once per turn on your turn, you may choose any player's roll and add +1 or -1 to that roll.",
+  },
+];
+
+export const HTS_WARRIORS_DRUIDS_MONSTERS: readonly HtsMonsterDef[] = [
+  {
+    kind: 'monster-feral-dragon',
+    name: 'Feral Dragon',
+    requiredHeroes: 2,
+    requiredClass: null,
+    requirementText: '2 Heroes',
+    slayThreshold: 9,
+    failThreshold: 6,
+    failPenalty: 'sacrificeHero',
+    text: 'Each time you roll for a Challenge card, +2 to your roll.',
+  },
+  {
+    kind: 'monster-muscipula',
+    name: 'Muscipula',
+    requiredHeroes: 2,
+    requiredClass: 'druid',
+    requirementText: '1 Druid + 1 Hero',
+    slayThreshold: 8,
+    failThreshold: 4,
+    failPenalty: 'discard2',
+    text: "Each time you unsuccessfully roll to use a Hero card's effect, you may DRAW a card.",
+  },
+];
+
+export const HTS_WARRIORS_DRUIDS_DECK_DEFS: readonly HtsCardDef[] = [
+  // Warrior Heroes (8)
+  { kind: 'hardened-hunter', name: 'Hardened Hunter', type: 'hero', class: 'warrior', count: 1, abilityThreshold: 8, modifierChoices: null, expansion: 'warriors-druids', text: 'DESTROY a Hero card. +1 to this roll for each Item card equipped to a Hero card in your Party.' },
+  { kind: 'blinding-blade', name: 'Blinding Blade', type: 'hero', class: 'warrior', count: 1, abilityThreshold: 8, modifierChoices: null, expansion: 'warriors-druids', text: "Choose a player. Return all equipped Item cards in that player's Party to your hand." },
+  { kind: 'tenacious-timber', name: 'Tenacious Timber', type: 'hero', class: 'warrior', count: 1, abilityThreshold: 7, modifierChoices: null, expansion: 'warriors-druids', text: 'STEAL an equipped Item card from any Hero card and add it to your hand (or equip it).' },
+  { kind: 'agile-dagger', name: 'Agile Dagger', type: 'hero', class: 'warrior', count: 1, abilityThreshold: 6, maxItems: 2, modifierChoices: null, expansion: 'warriors-druids', text: 'You may play up to 2 Item cards from your hand immediately. (May equip up to 2 Items.)' },
+  { kind: 'looting-lupo', name: 'Looting Lupo', type: 'hero', class: 'warrior', count: 1, abilityThreshold: 5, modifierChoices: null, expansion: 'warriors-druids', text: 'DRAW a card for each Item card equipped to a Hero card in your Party (minimum 1).' },
+  { kind: 'mightyvis', name: 'Mightyvis', type: 'hero', class: 'warrior', count: 1, abilityThreshold: 8, maxItems: 2, modifierChoices: null, expansion: 'warriors-druids', text: 'Search the discard pile for an Item card and add it to your hand, then DRAW a card. (May equip up to 2 Items.)' },
+  { kind: 'valiant-valor', name: 'Valiant Valor', type: 'hero', class: 'warrior', count: 1, abilityThreshold: 7, modifierChoices: null, expansion: 'warriors-druids', text: '+2 to all of your rolls until the end of your turn, and DRAW a card.' },
+  { kind: 'wild-buck', name: 'Wild Buck', type: 'hero', class: 'warrior', count: 1, abilityThreshold: 6, modifierChoices: null, expansion: 'warriors-druids', text: "Pull a card from another player's hand. If that card is an Item or Modifier card, pull a second card." },
+
+  // Druid Heroes (8 — LOW roll thresholds: roll <= threshold!)
+  { kind: 'big-buckley', name: 'Big Buckley', type: 'hero', class: 'druid', count: 1, abilityThreshold: 6, rollLow: true, modifierChoices: null, expansion: 'warriors-druids', text: 'Roll ≤6: Search the discard pile for a Hero card or Item card and add it to your hand.' },
+  { kind: 'buck-omens', name: 'Buck Omens', type: 'hero', class: 'druid', count: 1, abilityThreshold: 6, rollLow: true, modifierChoices: null, expansion: 'warriors-druids', text: "Roll ≤6: Look at another player's hand, choose a Hero card (or any card) from it, and add it to your hand." },
+  { kind: 'dose-of-dette', name: 'Dose of Dette', type: 'hero', class: 'druid', count: 1, abilityThreshold: 7, rollLow: true, modifierChoices: null, expansion: 'warriors-druids', text: 'Roll ≤7: DRAW 2 cards. Each other player draws 1 card.' },
+  { kind: 'glowing-antler', name: 'Glowing Antler', type: 'hero', class: 'druid', count: 1, abilityThreshold: 7, rollLow: true, modifierChoices: null, expansion: 'warriors-druids', text: 'Roll ≤7: Return an equipped Item card from any Hero to its owner and DRAW 2 cards.' },
+  { kind: 'magus-moose', name: 'Magus Moose', type: 'hero', class: 'druid', count: 1, abilityThreshold: 5, rollLow: true, modifierChoices: null, expansion: 'warriors-druids', text: 'Roll ≤5: Search the discard pile for a Magic card and play it immediately (or DRAW 2 cards).' },
+  { kind: 'maegisty', name: 'Maegisty', type: 'hero', class: 'druid', count: 1, abilityThreshold: 7, rollLow: true, modifierChoices: null, expansion: 'warriors-druids', text: 'Roll ≤7: STEAL a Hero card.' },
+  { kind: 'stagguard', name: 'Stagguard', type: 'hero', class: 'druid', count: 1, abilityThreshold: 8, rollLow: true, modifierChoices: null, expansion: 'warriors-druids', text: 'Roll ≤8: No other player can play Modifier cards until the end of your turn, and DRAW a card.' },
+  { kind: 'wishing-wing', name: 'Wishing Wing', type: 'hero', class: 'druid', count: 1, abilityThreshold: 7, rollLow: true, modifierChoices: null, expansion: 'warriors-druids', text: 'Roll ≤7: DRAW 2 cards and play a Hero card from your hand immediately.' },
+
+  // Warriors & Druids Items & Cursed Items (6)
+  { kind: 'warrior-mask', name: 'Warrior Mask', type: 'item', class: 'warrior', count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'warriors-druids', text: 'The equipped Hero card is considered a Warrior instead of its original class.' },
+  { kind: 'druid-mask', name: 'Druid Mask', type: 'item', class: 'druid', count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'warriors-druids', text: 'The equipped Hero card is considered a Druid instead of its original class.' },
+  { kind: 'bottomless-bag', name: 'Bottomless Bag', type: 'item', class: null, count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'warriors-druids', text: 'The equipped Hero card may hold up to 3 Item cards and gains +1 to its ability rolls.' },
+  { kind: 'even-bigger-ring', name: 'Even Bigger Ring', type: 'item', class: null, count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'warriors-druids', text: "Each time you roll to use the equipped Hero card's effect, +4 to your roll." },
+  { kind: 'temporal-hourglass', name: 'Temporal Hourglass', type: 'item', class: null, count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'warriors-druids', text: "If you unsuccessfully roll to use the equipped Hero card's effect, you may spend an extra action point this turn." },
+  { kind: 'cursed-glove', name: 'Cursed Glove', type: 'cursedItem', class: null, count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'warriors-druids', text: "Each time you roll to use the equipped Hero card's effect, -2 to your roll." },
+
+  // Warriors & Druids Magic (2)
+  { kind: 'beast-call', name: 'Beast Call', type: 'magic', class: null, count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'warriors-druids', text: 'Search the discard pile for a Hero card and add it to your hand, then DRAW a card.' },
+  { kind: 'rapid-refresh', name: 'Rapid Refresh', type: 'magic', class: null, count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'warriors-druids', text: 'Discard your hand and DRAW 5 cards.' },
+
+  // Warriors & Druids Modifiers (4) & Challenges (2)
+  { kind: 'mod-plus-1-minus-3', name: 'Modifier +1/-3', type: 'modifier', class: null, count: 1, abilityThreshold: null, modifierChoices: [1, -3], expansion: 'warriors-druids', text: 'Play this card after any player rolls the dice. +1 or -3 to that roll.' },
+  { kind: 'mod-plus-2-minus-2', name: 'Modifier +2/-2', type: 'modifier', class: null, count: 1, abilityThreshold: null, modifierChoices: [2, -2], expansion: 'warriors-druids', text: 'Play this card after any player rolls the dice. +2 or -2 to that roll.' },
+  { kind: 'mod-plus-4', name: 'Modifier +4', type: 'modifier', class: null, count: 1, abilityThreshold: null, modifierChoices: [4], expansion: 'warriors-druids', text: 'Play this card after any player rolls the dice. +4 to that roll.' },
+  { kind: 'mod-minus-4', name: 'Modifier -4', type: 'modifier', class: null, count: 1, abilityThreshold: null, modifierChoices: [-4], expansion: 'warriors-druids', text: 'Play this card after any player rolls the dice. -4 to that roll.' },
+  { kind: 'challenge', name: 'Challenge', type: 'challenge', class: null, count: 2, abilityThreshold: null, modifierChoices: null, expansion: 'warriors-druids', text: 'CHALLENGE a Hero, Item, or Magic card.' },
+];
+
+// ============================================================================
+// Expansion 2: Berserkers & Necromancers (`berserkers-necromancers`)
+// ============================================================================
+
+export const HTS_BERSERKERS_NECROMANCERS_LEADERS: readonly HtsCardDef[] = [
+  {
+    kind: 'leader-raging-manticore',
+    name: 'The Raging Manticore',
+    type: 'partyLeader',
+    class: 'berserker',
+    count: 1,
+    abilityThreshold: null,
+    modifierChoices: null,
+    expansion: 'berserkers-necromancers',
+    text: 'Each time you DESTROY a Hero card, DRAW 2 cards.',
+  },
+  {
+    kind: 'leader-gnawing-dread',
+    name: 'The Gnawing Dread',
+    type: 'partyLeader',
+    class: 'necromancer',
+    count: 1,
+    abilityThreshold: null,
+    modifierChoices: null,
+    expansion: 'berserkers-necromancers',
+    text: 'Once per turn on your turn, you may spend 2 action points to search the discard pile for any card and add it to your hand.',
+  },
+];
+
+export const HTS_BERSERKERS_NECROMANCERS_MONSTERS: readonly HtsMonsterDef[] = [
+  {
+    kind: 'monster-clawed-nightmare',
+    name: 'Clawed Nightmare',
+    requiredHeroes: 2,
+    requiredClass: 'necromancer',
+    requirementText: '1 Necromancer + 1 Hero',
+    slayThreshold: 8,
+    failThreshold: 4,
+    failPenalty: 'discard2',
+    text: 'Each time a Hero card enters your Party from the discard pile, you may roll to use its effect immediately.',
+  },
+  {
+    kind: 'monster-venomous-gemini',
+    name: 'Venomous Gemini',
+    requiredHeroes: 2,
+    requiredClass: 'berserker',
+    requirementText: '1 Berserker + 1 Hero',
+    slayThreshold: 8,
+    failThreshold: 4,
+    failPenalty: 'discard2',
+    text: 'Each time you DESTROY a Hero card, you may DRAW a card.',
+  },
+];
+
+export const HTS_BERSERKERS_NECROMANCERS_DECK_DEFS: readonly HtsCardDef[] = [
+  // Berserker Heroes (8)
+  { kind: 'annihilator', name: 'Annihilator', type: 'hero', class: 'berserker', count: 1, abilityThreshold: 9, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'DESTROY a Hero card and DRAW a card.' },
+  { kind: 'brawling-spirit', name: 'Brawling Spirit', type: 'hero', class: 'berserker', count: 1, abilityThreshold: 8, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'SACRIFICE a Hero card, then DESTROY 2 Hero cards.' },
+  { kind: 'gruesome-gladiator', name: 'Gruesome Gladiator', type: 'hero', class: 'berserker', count: 1, abilityThreshold: 7, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'Each other player must SACRIFICE a Hero card.' },
+  { kind: 'meowntain', name: 'Meowntain', type: 'hero', class: 'berserker', count: 1, abilityThreshold: 8, maxItems: 2, modifierChoices: null, expansion: 'berserkers-necromancers', text: '+4 to all of your rolls until the end of your turn. (May equip up to 2 Items.)' },
+  { kind: 'rabid-beast', name: 'Rabid Beast', type: 'hero', class: 'berserker', count: 1, abilityThreshold: 6, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'DESTROY a Hero card. If you have 3 or fewer cards in your hand, DRAW 2 cards.' },
+  { kind: 'roaryal-guard', name: 'Roaryal Guard', type: 'hero', class: 'berserker', count: 1, abilityThreshold: 7, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'Hero cards in your Party cannot be destroyed or stolen until your next turn.' },
+  { kind: 'unbridled-fury', name: 'Unbridled Fury', type: 'hero', class: 'berserker', count: 1, abilityThreshold: 8, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'DESTROY a Hero card and spend 1 extra action point this turn.' },
+  { kind: 'vicious-wildcat', name: 'Vicious Wildcat', type: 'hero', class: 'berserker', count: 1, abilityThreshold: 10, maxItems: 2, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'DESTROY 2 Hero cards and DRAW a card. (May equip up to 2 Items.)' },
+
+  // Necromancer Heroes (8)
+  { kind: 'bark-hexer', name: 'Bark Hexer', type: 'hero', class: 'necromancer', count: 1, abilityThreshold: 6, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'DISCARD a card. Each other player must DISCARD 2 cards.' },
+  { kind: 'beholden-retriever', name: 'Beholden Retriever', type: 'hero', class: 'necromancer', count: 1, abilityThreshold: 6, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'Search the discard pile for a Hero card and add it to your hand.' },
+  { kind: 'bone-collector', name: 'Bone Collector', type: 'hero', class: 'necromancer', count: 1, abilityThreshold: 8, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'Search the discard pile for a Hero card and bring it directly into your Party.' },
+  { kind: 'boston-terror', name: 'Boston Terror', type: 'hero', class: 'necromancer', count: 1, abilityThreshold: 7, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'Search the discard pile for a Magic or Modifier card and add it to your hand, then DRAW a card.' },
+  { kind: 'grim-pupper', name: 'Grim Pupper', type: 'hero', class: 'necromancer', count: 1, abilityThreshold: 8, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'Search the discard pile for up to 2 Hero cards and add them to your hand.' },
+  { kind: 'hollow-husk', name: 'Hollow Husk', type: 'hero', class: 'necromancer', count: 1, abilityThreshold: 7, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'Search the discard pile for any card and add it to your hand.' },
+  { kind: 'perfect-vessel', name: 'Perfect Vessel', type: 'hero', class: 'necromancer', count: 1, abilityThreshold: 9, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'Search the discard pile for a Hero card, bring it directly into your Party, and roll to use its effect immediately.' },
+  { kind: 'shadow-saint', name: 'Shadow Saint', type: 'hero', class: 'necromancer', count: 1, abilityThreshold: 7, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'Search the discard pile for an Item or Magic card and add it to your hand, then DRAW a card.' },
+
+  // Berserkers & Necromancers Items (4)
+  { kind: 'berserker-mask', name: 'Berserker Mask', type: 'item', class: 'berserker', count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'The equipped Hero card is considered a Berserker instead of its original class.' },
+  { kind: 'necromancer-mask', name: 'Necromancer Mask', type: 'item', class: 'necromancer', count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'The equipped Hero card is considered a Necromancer instead of its original class.' },
+  { kind: 'soul-tether', name: 'Soul Tether', type: 'item', class: null, count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'If the equipped Hero card is destroyed or sacrificed, return that Hero card to your hand instead of the discard pile.' },
+  { kind: 'bloodstone', name: 'Bloodstone', type: 'item', class: null, count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'berserkers-necromancers', text: "Each time you roll to use the equipped Hero card's effect, +3 to your roll." },
+
+  // Berserkers & Necromancers Magic (2), Modifiers (2), Challenges (2)
+  { kind: 'mass-sacrifice', name: 'Mass Sacrifice', type: 'magic', class: null, count: 2, abilityThreshold: null, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'Each other player must SACRIFICE a Hero card, then you DRAW 2 cards.' },
+  { kind: 'mod-plus-2-minus-2', name: 'Modifier +2/-2', type: 'modifier', class: null, count: 1, abilityThreshold: null, modifierChoices: [2, -2], expansion: 'berserkers-necromancers', text: 'Play this card after any player rolls the dice. +2 or -2 to that roll.' },
+  { kind: 'mod-plus-4', name: 'Modifier +4', type: 'modifier', class: null, count: 1, abilityThreshold: null, modifierChoices: [4], expansion: 'berserkers-necromancers', text: 'Play this card after any player rolls the dice. +4 to that roll.' },
+  { kind: 'challenge', name: 'Challenge', type: 'challenge', class: null, count: 2, abilityThreshold: null, modifierChoices: null, expansion: 'berserkers-necromancers', text: 'CHALLENGE a Hero, Item, or Magic card.' },
+];
+
+// ============================================================================
+// Expansion 3: Here to Sleigh (`here-to-sleigh`)
+// ============================================================================
+
+export const HTS_SLEIGH_LEADERS: readonly HtsCardDef[] = [
+  {
+    kind: 'leader-festive-noel',
+    name: 'The Festive Noel',
+    type: 'partyLeader',
+    class: 'bard',
+    count: 1,
+    abilityThreshold: null,
+    modifierChoices: null,
+    expansion: 'here-to-sleigh',
+    text: "Each time you roll 10+ for a Hero card's effect, claim a Nice Gift from the Holiday pile!",
+  },
+  {
+    kind: 'leader-holly-spirit',
+    name: 'The Holly Spirit',
+    type: 'partyLeader',
+    class: 'guardian',
+    count: 1,
+    abilityThreshold: null,
+    modifierChoices: null,
+    expansion: 'here-to-sleigh',
+    text: 'Each time you roll to use a Hero ability or attack a Monster, +1 to your roll.',
+  },
+];
+
+export const HTS_SLEIGH_MONSTERS: readonly HtsMonsterDef[] = [
+  {
+    kind: 'monster-frostbite-krampus',
+    name: 'Frostbite Krampus',
+    requiredHeroes: 2,
+    requiredClass: null,
+    requirementText: '2 Heroes',
+    slayThreshold: 8,
+    failThreshold: 5,
+    failPenalty: 'discard2',
+    text: 'When slain, also claim a Nice Gift! Each time you roll for a Hero ability, +1 to your roll.',
+  },
+  {
+    kind: 'monster-abominable-snowbeast',
+    name: 'Abominable Snowbeast',
+    requiredHeroes: 2,
+    requiredClass: null,
+    requirementText: '2 Heroes',
+    slayThreshold: 9,
+    failThreshold: 6,
+    failPenalty: 'sacrificeHero',
+    text: 'Each time you roll to ATTACK a Monster card, +2 to your roll.',
+  },
+];
+
+export const HTS_SLEIGH_DECK_DEFS: readonly HtsCardDef[] = [
+  // Holiday Heroes (6)
+  { kind: 'santa-claws', name: 'Santa Claws', type: 'hero', class: 'fighter', count: 1, abilityThreshold: 7, modifierChoices: null, expansion: 'here-to-sleigh', text: 'Claim a Nice Gift and DESTROY a Hero card.' },
+  { kind: 'lil-drummer-bard', name: "Lil' Drummer Bard", type: 'hero', class: 'bard', count: 1, abilityThreshold: 6, modifierChoices: null, expansion: 'here-to-sleigh', text: 'Claim a Nice Gift and DRAW 2 cards.' },
+  { kind: 'holly-jolly', name: 'Holly Jolly', type: 'hero', class: 'guardian', count: 1, abilityThreshold: 6, modifierChoices: null, expansion: 'here-to-sleigh', text: 'Claim a Nice Gift and Hero cards in your Party cannot be destroyed until your next turn.' },
+  { kind: 'prancer', name: 'Prancer', type: 'hero', class: 'ranger', count: 1, abilityThreshold: 7, modifierChoices: null, expansion: 'here-to-sleigh', text: 'Claim a Nice Gift and +2 to all of your rolls until the end of your turn.' },
+  { kind: 'gift-bag-bandit', name: 'Gift Bag Bandit', type: 'hero', class: 'thief', count: 1, abilityThreshold: 7, modifierChoices: null, expansion: 'here-to-sleigh', text: "Steal a Nice Gift from another player (or claim one from the Gift pile) and pull a card from another player's hand." },
+  { kind: 'snow-slinger', name: 'Snow Slinger', type: 'hero', class: 'wizard', count: 1, abilityThreshold: 7, modifierChoices: null, expansion: 'here-to-sleigh', text: 'Claim a Nice Gift and search the discard pile for any card and add it to your hand.' },
+
+  // Holiday Items (2), Magic (2), Challenges (2)
+  { kind: 'milk-and-cookies', name: 'Milk and Cookies', type: 'item', class: null, count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'here-to-sleigh', text: "If you successfully roll to use the equipped Hero card's effect, claim a Nice Gift!" },
+  { kind: 'freshly-sharpened-skates', name: 'Freshly Sharpened Skates', type: 'item', class: null, count: 1, abilityThreshold: null, modifierChoices: null, expansion: 'here-to-sleigh', text: "Each time you roll to use the equipped Hero card's effect, +2 to your roll." },
+  { kind: 'holiday-cheer', name: 'Holiday Cheer', type: 'magic', class: null, count: 2, abilityThreshold: null, modifierChoices: null, expansion: 'here-to-sleigh', text: 'Claim a Nice Gift and DRAW 2 cards.' },
+  { kind: 'challenge', name: 'Good Gift Challenge', type: 'challenge', class: null, count: 2, abilityThreshold: null, modifierChoices: null, expansion: 'here-to-sleigh', text: 'CHALLENGE a Hero, Item, or Magic card.' },
+];
+
+export const HTS_SLEIGH_GIFTS: readonly HtsCardDef[] = [
+  { kind: 'gift-warm-socks', name: 'Warm Socks', type: 'gift', class: null, count: 2, abilityThreshold: null, modifierChoices: null, expansion: 'here-to-sleigh', text: 'Nice List Gift — Collect 3 Nice Gifts to win the game!' },
+  { kind: 'gift-bag-of-holding', name: 'Bag of Holding Gifts', type: 'gift', class: null, count: 2, abilityThreshold: null, modifierChoices: null, expansion: 'here-to-sleigh', text: 'Nice List Gift — When claimed, DRAW a card.' },
+  { kind: 'gift-rudolphs-nose', name: "Rudolph's Nose", type: 'gift', class: null, count: 2, abilityThreshold: null, modifierChoices: null, expansion: 'here-to-sleigh', text: 'Nice List Gift — +1 to rolls this turn when claimed.' },
+  { kind: 'gift-mint-mittens', name: 'Mint Condition Mittens', type: 'gift', class: null, count: 2, abilityThreshold: null, modifierChoices: null, expansion: 'here-to-sleigh', text: 'Nice List Gift — Collect 3 Nice Gifts to win the game!' },
+  { kind: 'gift-snows-of-time', name: 'Snows of Time', type: 'gift', class: null, count: 2, abilityThreshold: null, modifierChoices: null, expansion: 'here-to-sleigh', text: 'Nice List Gift — Collect 3 Nice Gifts to win the game!' },
+  { kind: 'gift-mythical-mystery', name: 'Mythical Mystery', type: 'gift', class: null, count: 2, abilityThreshold: null, modifierChoices: null, expansion: 'here-to-sleigh', text: 'Nice List Gift — Collect 3 Nice Gifts to win the game!' },
+];
+
+export const HTS_ALL_PARTY_LEADERS: readonly HtsCardDef[] = [
+  ...HTS_PARTY_LEADERS,
+  ...HTS_WARRIORS_DRUIDS_LEADERS,
+  ...HTS_BERSERKERS_NECROMANCERS_LEADERS,
+  ...HTS_SLEIGH_LEADERS,
+];
+
+export function getPartyLeadersForExpansions(expansions: readonly HtsExpansionId[] = []): readonly HtsCardDef[] {
+  const result: HtsCardDef[] = [...HTS_PARTY_LEADERS];
+  if (expansions.includes('warriors-druids')) result.push(...HTS_WARRIORS_DRUIDS_LEADERS);
+  if (expansions.includes('berserkers-necromancers')) result.push(...HTS_BERSERKERS_NECROMANCERS_LEADERS);
+  if (expansions.includes('here-to-sleigh')) result.push(...HTS_SLEIGH_LEADERS);
+  return result;
+}
+
+export function dealHtsSetup(
+  seats: Seat[],
+  rng: RngState,
+  expansions: readonly HtsExpansionId[] = [],
+): {
   deck: HtsCard[];
   monsterRow: HtsMonster[];
   monsterDeck: HtsMonster[];
   hands: Record<string, HtsCard[]>;
   partyLeaders: Record<string, HtsCard>;
+  giftDeck: HtsCard[];
 } {
   let nextId = 1;
 
-  const leaders: HtsCard[] = HTS_PARTY_LEADERS.map((d) => ({
+  const leaderDefs = getPartyLeadersForExpansions(expansions);
+  const leaders: HtsCard[] = leaderDefs.map((d) => ({
     id: nextId++,
     kind: d.kind,
     name: d.name,
@@ -378,6 +664,7 @@ export function dealHtsSetup(seats: Seat[], rng: RngState): {
     text: d.text,
     abilityThreshold: null,
     modifierChoices: null,
+    expansion: d.expansion,
   }));
   const shuffledLeaders = shuffle(rng, leaders);
   const partyLeaders: Record<string, HtsCard> = {};
@@ -385,7 +672,12 @@ export function dealHtsSetup(seats: Seat[], rng: RngState): {
     partyLeaders[seat.id] = shuffledLeaders[idx % shuffledLeaders.length]!;
   });
 
-  const monsters: HtsMonster[] = HTS_MONSTER_DEFS.map((m) => ({
+  const monsterDefs: HtsMonsterDef[] = [...HTS_MONSTER_DEFS];
+  if (expansions.includes('warriors-druids')) monsterDefs.push(...HTS_WARRIORS_DRUIDS_MONSTERS);
+  if (expansions.includes('berserkers-necromancers')) monsterDefs.push(...HTS_BERSERKERS_NECROMANCERS_MONSTERS);
+  if (expansions.includes('here-to-sleigh')) monsterDefs.push(...HTS_SLEIGH_MONSTERS);
+
+  const monsters: HtsMonster[] = monsterDefs.map((m) => ({
     card: {
       id: nextId++,
       kind: m.kind,
@@ -408,8 +700,13 @@ export function dealHtsSetup(seats: Seat[], rng: RngState): {
   const monsterRow = shuffledMonsters.slice(0, 3);
   const monsterDeck = shuffledMonsters.slice(3);
 
+  const deckDefs: HtsCardDef[] = [...HTS_MAIN_DECK_DEFS];
+  if (expansions.includes('warriors-druids')) deckDefs.push(...HTS_WARRIORS_DRUIDS_DECK_DEFS);
+  if (expansions.includes('berserkers-necromancers')) deckDefs.push(...HTS_BERSERKERS_NECROMANCERS_DECK_DEFS);
+  if (expansions.includes('here-to-sleigh')) deckDefs.push(...HTS_SLEIGH_DECK_DEFS);
+
   const pool: HtsCard[] = [];
-  for (const def of HTS_MAIN_DECK_DEFS) {
+  for (const def of deckDefs) {
     for (let i = 0; i < def.count; i++) {
       pool.push({
         id: nextId++,
@@ -419,7 +716,10 @@ export function dealHtsSetup(seats: Seat[], rng: RngState): {
         class: def.class,
         text: def.text,
         abilityThreshold: def.abilityThreshold,
+        rollLow: def.rollLow,
+        maxItems: def.maxItems,
         modifierChoices: def.modifierChoices,
+        expansion: def.expansion,
       });
     }
   }
@@ -432,5 +732,25 @@ export function dealHtsSetup(seats: Seat[], rng: RngState): {
   }
   const deck = shuffledPool.slice(cursor);
 
-  return { deck, monsterRow, monsterDeck, hands, partyLeaders };
+  const giftPool: HtsCard[] = [];
+  if (expansions.includes('here-to-sleigh')) {
+    for (const g of HTS_SLEIGH_GIFTS) {
+      for (let i = 0; i < g.count; i++) {
+        giftPool.push({
+          id: nextId++,
+          kind: g.kind,
+          name: g.name,
+          type: 'gift',
+          class: null,
+          text: g.text,
+          abilityThreshold: null,
+          modifierChoices: null,
+          expansion: 'here-to-sleigh',
+        });
+      }
+    }
+  }
+  const giftDeck = giftPool.length > 0 ? shuffle(rng, giftPool) : [];
+
+  return { deck, monsterRow, monsterDeck, hands, partyLeaders, giftDeck };
 }

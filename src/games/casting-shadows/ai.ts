@@ -3,7 +3,7 @@
 import type { PlayerId } from '@/core/types';
 import {
   areHexesAdjacent,
-  CS_CHARACTERS,
+  hexDistance,
   isHexInSpellRange,
   rollFiveResourceDice,
 } from './cards';
@@ -11,6 +11,7 @@ import {
   boardOf,
   canAffordCost,
   canCollectCard,
+  getShadowAbilityCost,
   livePlayerIds,
 } from './reducer';
 import type { CsAction, CsHexId, CsState } from './types';
@@ -48,17 +49,40 @@ export function chooseAIAction(state: CsState, playerId: PlayerId): CsAction | n
     const enemies = livePlayerIds(state).filter((id) => id !== playerId);
 
     // 1. Use Shadow Ability if available and ready
-    const charDef = CS_CHARACTERS.find((c) => c.id === b.characterId)!;
+    const saCost = getShadowAbilityCost(b);
     if (
       b.form === 'shadow' &&
       !b.usedShadowAbilityThisTurn &&
-      b.shadowEnergy >= charDef.shadowAbilityCost
+      b.shadowEnergy >= saCost
     ) {
-      return {
-        type: 'useShadowAbility',
-        playerId,
-        targetPlayerId: enemies[0],
-      };
+      const sameHexEnemy = enemies.find((eId) => boardOf(state, eId).hexId === b.hexId);
+      const rangeEnemy = enemies.find((eId) =>
+        isHexInSpellRange(state.hexes, b.hexId, boardOf(state, eId).hexId, 'sameOrAdjacent'),
+      );
+      const adjEnemy = enemies.find((eId) =>
+        areHexesAdjacent(state.hexes[b.hexId], state.hexes[boardOf(state, eId).hexId]),
+      );
+      const canUse =
+        b.characterId === 'kit' ||
+        b.characterId === 'frill' ||
+        b.characterId === 'dread' ||
+        (b.characterId === 'nuzzle' && !!sameHexEnemy) ||
+        (b.characterId === 'talon' && !!sameHexEnemy) ||
+        (b.characterId === 'nyx' && !!rangeEnemy) ||
+        (b.characterId === 'ember' && !!rangeEnemy) ||
+        (b.characterId === 'haze' && !!adjEnemy);
+      if (canUse) {
+        return {
+          type: 'useShadowAbility',
+          playerId,
+          targetPlayerId: sameHexEnemy ?? rangeEnemy ?? enemies[0],
+          targetHexId: adjEnemy
+            ? boardOf(state, adjEnemy).hexId
+            : rangeEnemy
+              ? boardOf(state, rangeEnemy).hexId
+              : undefined,
+        };
+      }
     }
 
     if (state.actionPointsRemaining <= 0) {
@@ -105,7 +129,7 @@ export function chooseAIAction(state: CsState, playerId: PlayerId): CsAction | n
       }
     }
 
-    // 3. Collect the face-up card on our current Hex if we have < 3 Attack Spells and can afford it
+    // 3. Collect the face-up card on our current Hex if we have < 4 cards and can afford it
     const curHex = state.hexes[b.hexId];
     if (
       curHex.faceUpCard &&
@@ -115,30 +139,49 @@ export function chooseAIAction(state: CsState, playerId: PlayerId): CsAction | n
       return { type: 'collectCard', playerId };
     }
 
-    // 4. Protect if we rolled Cursed Crystals and are low on HP
+    // 4. Protect if we are Burning or rolled Cursed Crystals and are low on HP
+    if (b.burning && b.hp <= 12) {
+      return { type: 'protect', playerId, clearStatus: 'burning' };
+    }
     if (b.hp <= 8 && state.dicePool.includes('cursedCrystal')) {
-      return { type: 'protect', playerId };
+      return { type: 'protect', playerId, clearStatus: 'cursedCrystal' };
     }
 
     // 5. Travel toward the nearest enemy (or toward a Hex with an Attack Spell if we have no Attack Spell yet)
+    const adjacentHexIds = (Object.keys(state.hexes) as CsHexId[]).filter((hId) =>
+      areHexesAdjacent(curHex, state.hexes[hId]),
+    );
+
+    const tryTravelTo = (destHexId: CsHexId): CsAction => {
+      if (b.frozen) {
+        return { type: 'unfreeze', playerId };
+      }
+      return { type: 'travel', playerId, toHexId: destHexId };
+    };
+
     const hasAttackSpell = b.spellBook.some((c) => c.type === 'attackSpell');
     if (!hasAttackSpell) {
-      const hexWithSpell = (Object.keys(state.hexes) as CsHexId[]).find(
-        (hId) =>
-          areHexesAdjacent(curHex, state.hexes[hId]) &&
-          state.hexes[hId].faceUpCard?.type === 'attackSpell',
+      const hexWithSpell = adjacentHexIds.find(
+        (hId) => state.hexes[hId].faceUpCard?.type === 'attackSpell',
       );
-      if (hexWithSpell) {
-        return { type: 'travel', playerId, toHexId: hexWithSpell };
+      if (hexWithSpell && (!b.frozen || state.actionPointsRemaining >= 2)) {
+        return tryTravelTo(hexWithSpell);
       }
     }
 
     const enemyHex = enemies[0] ? boardOf(state, enemies[0]).hexId : null;
-    if (enemyHex && enemyHex !== b.hexId) {
-      if (areHexesAdjacent(curHex, state.hexes[enemyHex])) {
-        return { type: 'travel', playerId, toHexId: enemyHex };
+    if (enemyHex && enemyHex !== b.hexId && (!b.frozen || state.actionPointsRemaining >= 2)) {
+      if (adjacentHexIds.includes(enemyHex)) {
+        return tryTravelTo(enemyHex);
       }
-      return { type: 'travel', playerId, toHexId: 'ancient-rune' };
+      const bestStep = [...adjacentHexIds].sort(
+        (aId, bId) =>
+          hexDistance(state.hexes[aId], state.hexes[enemyHex]) -
+          hexDistance(state.hexes[bId], state.hexes[enemyHex]),
+      )[0];
+      if (bestStep) {
+        return tryTravelTo(bestStep);
+      }
     }
 
     return { type: 'transformAndEndTurn', playerId, transform: true };

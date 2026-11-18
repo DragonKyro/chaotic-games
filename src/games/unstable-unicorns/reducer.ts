@@ -25,7 +25,7 @@ export function createInitialState(config: UuConfig, seed: number, seats: Seat[]
   const first = seats[0];
   if (!first) throw new Error('Unstable Unicorns needs at least one seat');
 
-  const { deck, nursery, hands, startingBabies } = dealUuSetup(seats, rngState);
+  const { deck, nursery, hands, startingBabies } = dealUuSetup(seats, rngState, config);
   const stables: Record<PlayerId, UuStable> = {};
   for (const s of seats) {
     const baby = startingBabies[s.id];
@@ -105,40 +105,125 @@ export function handOf(s: UuState, id: PlayerId): UuCard[] {
   return h;
 }
 
+/** Dragon's Blessing Upgrade: "Effects of your Downgrade cards do not affect you." */
+export function hasDragonsBlessing(s: UuState, playerId: PlayerId): boolean {
+  return stableOf(s, playerId).upgrades.some((c) => c.kind === 'dragons-blessing');
+}
+
+/** Dragon's Curse Downgrade: "Effects of your Upgrade cards do not affect you." (Overridden by Dragon's Blessing) */
+export function hasDragonsCurse(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsBlessing(s, playerId)) return false;
+  return stableOf(s, playerId).downgrades.some((c) => c.kind === 'dragons-curse');
+}
+
 export function isBlinded(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'blinding-light');
 }
 
 export function hasPandamonium(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'pandamonium');
 }
 
 export function hasRainbowAura(s: UuState, playerId: PlayerId): boolean {
-  return stableOf(s, playerId).upgrades.some((c) => c.kind === 'rainbow-aura');
+  if (hasDragonsCurse(s, playerId)) return false;
+  return stableOf(s, playerId).upgrades.some((c) => c.kind === 'rainbow-aura' || c.kind === 'prismatic-shield');
+}
+
+export function hasPrismaticShield(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsCurse(s, playerId)) return false;
+  return stableOf(s, playerId).upgrades.some((c) => c.kind === 'prismatic-shield');
 }
 
 export function hasBrokenStable(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'broken-stable');
 }
 
 export function hasSlowdown(s: UuState, playerId: PlayerId): boolean {
-  return stableOf(s, playerId).downgrades.some((c) => c.kind === 'slowdown');
+  if (hasDragonsBlessing(s, playerId)) return false;
+  return stableOf(s, playerId).downgrades.some((c) => c.kind === 'slowdown' || c.kind === 'the-black-spot');
 }
 
 export function hasYay(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsCurse(s, playerId)) return false;
   return stableOf(s, playerId).upgrades.some((c) => c.kind === 'yay');
 }
 
 export function hasNannyCam(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'nanny-cam');
 }
 
 export function hasBarbedWire(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'barbed-wire');
 }
 
 export function hasTinyStable(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'tiny-stable');
+}
+
+export function hasDragonSkies(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsBlessing(s, playerId)) return false;
+  return stableOf(s, playerId).downgrades.some((c) => c.kind === 'dragon-skies');
+}
+
+export function hasHex(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsBlessing(s, playerId)) return false;
+  return stableOf(s, playerId).downgrades.some((c) => c.kind === 'hex');
+}
+
+export function hasStageFright(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsBlessing(s, playerId)) return false;
+  return stableOf(s, playerId).downgrades.some((c) => c.kind === 'stage-fright');
+}
+
+export function hasBallAndChain(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsBlessing(s, playerId)) return false;
+  return stableOf(s, playerId).downgrades.some((c) => c.kind === 'ball-and-chain');
+}
+
+export function hasUglySweater(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsCurse(s, playerId)) return false;
+  return stableOf(s, playerId).upgrades.some((c) => c.kind === 'ugly-holiday-sweater');
+}
+
+export function hasRoyalHooves(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsCurse(s, playerId)) return false;
+  return stableOf(s, playerId).upgrades.some((c) => c.kind === 'royal-hooves');
+}
+
+export function hasLeatherHarness(s: UuState, playerId: PlayerId): boolean {
+  if (hasDragonsCurse(s, playerId)) return false;
+  return stableOf(s, playerId).upgrades.some((c) => c.kind === 'leather-harness');
+}
+
+/** Dynamic hand limit accounting for Uncut Unicorn (+1), opponent Unicorn of Famine (-1), and Lump of Coal (-2). */
+export function handLimitOf(s: UuState, playerId: PlayerId): number {
+  let limit = HAND_LIMIT;
+  const st = stableOf(s, playerId);
+  if (!isBlinded(s, playerId) && !hasPandamonium(s, playerId)) {
+    for (const u of st.unicorns) {
+      if (u.kind === 'uncut-unicorn') limit += 1;
+    }
+  }
+  for (const seat of s.seats) {
+    if (seat.id === playerId) continue;
+    if (!isBlinded(s, seat.id) && !hasPandamonium(s, seat.id)) {
+      for (const u of stableOf(s, seat.id).unicorns) {
+        if (u.kind === 'unicorn-of-famine') limit -= 1;
+      }
+    }
+  }
+  if (!hasDragonsBlessing(s, playerId)) {
+    for (const d of st.downgrades) {
+      if (d.kind === 'lump-of-coal') limit -= 2;
+    }
+  }
+  return Math.max(0, limit);
 }
 
 export function queenBeeOwner(s: UuState): PlayerId | null {
@@ -156,7 +241,13 @@ export function unicornCount(s: UuState, playerId: PlayerId): number {
   const blinded = isBlinded(s, playerId);
   let total = 0;
   for (const u of stableOf(s, playerId).unicorns) {
-    if (!blinded && u.kind === 'ginormous-unicorn') {
+    if (
+      !blinded &&
+      (u.kind === 'ginormous-unicorn' ||
+        u.kind === 'bahamuticorn' ||
+        u.kind === 'twin-dragoncorns' ||
+        u.kind === 'diamond-unicorn')
+    ) {
       total += 2;
     } else {
       total += 1;
@@ -213,6 +304,12 @@ export function validStableTargets(s: UuState, prompt: Extract<UuPrompt, { kind:
         if (card.type !== 'downgrade') continue;
       } else if (prompt.filter === 'upgradeOrDowngrade') {
         if (card.type !== 'upgrade' && card.type !== 'downgrade') continue;
+      } else if (prompt.filter === 'unicornOrUpgrade') {
+        if (isUnicornType(card.type)) {
+          if (hasPandamonium(s, ownerId)) continue;
+        } else if (card.type !== 'upgrade') {
+          continue;
+        }
       } else if (prompt.filter === 'destroyUpgradeOrSacrificeDowngrade') {
         const isDestroyOtherUpgrade = ownerId !== prompt.playerId && card.type === 'upgrade';
         const isSacrificeOwnDowngrade = ownerId === prompt.playerId && card.type === 'downgrade';
@@ -221,13 +318,40 @@ export function validStableTargets(s: UuState, prompt: Extract<UuPrompt, { kind:
         if (isUnicornType(card.type) && hasPandamonium(s, ownerId)) continue;
       }
 
+      // Puppicorn cannot be sacrificed or destroyed unless blinded
+      if ((prompt.mode === 'sacrifice' || prompt.mode === 'destroy') && card.kind === 'puppicorn' && !isBlinded(s, ownerId)) {
+        continue;
+      }
+
+      // Ugly Holiday Sweater prevents other players from stealing or bouncing your Unicorns
+      if (
+        (prompt.mode === 'steal' || prompt.mode === 'swapSteal' || prompt.mode === 'bounce') &&
+        ownerId !== prompt.playerId &&
+        isUnicornType(card.type) &&
+        hasUglySweater(s, ownerId)
+      ) {
+        continue;
+      }
+
+      // Ball and Chain prevents Unicorns from returning to hand
+      if (prompt.mode === 'bounce' && isUnicornType(card.type) && hasBallAndChain(s, ownerId)) {
+        continue;
+      }
+
       // Destroy protection checks
       const isDestroy =
         prompt.mode === 'destroy' ||
         (prompt.filter === 'destroyUpgradeOrSacrificeDowngrade' && ownerId !== prompt.playerId);
+      if (isDestroy && card.type === 'upgrade' && hasPrismaticShield(s, ownerId)) {
+        continue;
+      }
       if (isDestroy && isUnicornType(card.type)) {
         if (hasRainbowAura(s, ownerId)) continue;
-        if (prompt.sourceType === 'magic' && card.kind === 'magical-kittencorn' && !isBlinded(s, ownerId)) {
+        if (
+          prompt.sourceType === 'magic' &&
+          (card.kind === 'magical-kittencorn' || card.kind === 'diamond-unicorn') &&
+          !isBlinded(s, ownerId)
+        ) {
           continue;
         }
       }
@@ -251,6 +375,8 @@ export function validPileCards(s: UuState, prompt: Extract<UuPrompt, { kind: 'ch
     if (prompt.filter === 'neigh') return isNeighCard(c);
     if (prompt.filter === 'narwhal') return isNarwhalCard(c);
     if (prompt.filter === 'baby') return c.type === 'babyUnicorn';
+    if (prompt.filter === 'unicornOrUpgrade') return isUnicornType(c.type) || c.type === 'upgrade';
+    if (prompt.filter === 'magicOrUpgrade') return c.type === 'magic' || c.type === 'upgrade';
     return true;
   });
 }
@@ -267,17 +393,30 @@ export function validHandCards(s: UuState, prompt: Extract<UuPrompt, { kind: 'ch
   });
 }
 
+function hasBasicUnicornInStable(s: UuState, playerId: PlayerId): boolean {
+  if (hasPandamonium(s, playerId)) return false;
+  const blinded = isBlinded(s, playerId);
+  return stableOf(s, playerId).unicorns.some((u) => u.type === 'basicUnicorn' || blinded);
+}
+
 /**
  * Check whether a card in `playerId`'s hand can legally be played during the Action phase.
  */
 export function canPlayCardFromHand(s: UuState, playerId: PlayerId, card: UuCard, targetPlayerId?: PlayerId): boolean {
   if (card.type === 'instant') return false;
   if (card.type === 'upgrade' && hasBrokenStable(s, playerId)) return false;
+  if (card.type === 'magic' && hasHex(s, playerId)) return false;
+  if (card.type === 'magicalUnicorn' && hasStageFright(s, playerId) && unicornCount(s, playerId) >= 5) {
+    return false;
+  }
 
+  const dest = targetPlayerId ?? playerId;
   if (card.type === 'basicUnicorn') {
     const qb = queenBeeOwner(s);
-    const dest = targetPlayerId ?? playerId;
     if (qb && qb !== dest) return false;
+  }
+  if (card.kind === 'extra-tail' || card.kind === 'rainbow-mane') {
+    if (!hasBasicUnicornInStable(s, dest)) return false;
   }
 
   // Magic cards with play requirements per official rules:
@@ -285,43 +424,134 @@ export function canPlayCardFromHand(s: UuState, playerId: PlayerId, card: UuCard
     return s.seats.some((seat) => seat.id !== playerId && allCardsInStable(stableOf(s, seat.id)).length > 0);
   }
   if (card.kind === 'change-of-luck') {
-    // Must have at least 1 other card in hand so after drawing 2 you have 3 cards to discard
     return handOf(s, playerId).length - 1 + Math.min(2, s.deck.length) >= 3;
   }
-  if (card.kind === 'glitter-tornado') {
+  if (card.kind === 'glitter-tornado' || card.kind === 'two-for-one' || card.kind === 'nightmare-pact' || card.kind === 'gift-receipt') {
     return allCardsInStable(stableOf(s, playerId)).length > 0;
   }
   if (card.kind === 'kiss-of-life') {
     return s.discard.some((c) => isUnicornType(c.type));
   }
-  if (card.kind === 're-target') {
-    return s.seats.some((seat) => {
-      const st = stableOf(s, seat.id);
-      return st.upgrades.length > 0 || st.downgrades.length > 0;
-    });
+  if (card.kind === 'time-shift') {
+    return s.discard.some((c) => isUnicornType(c.type) || c.type === 'upgrade');
   }
-  if (card.kind === 'reset-button') {
+  if (card.kind === 're-target' || card.kind === 'reset-button') {
     return s.seats.some((seat) => {
       const st = stableOf(s, seat.id);
       return st.upgrades.length > 0 || st.downgrades.length > 0;
     });
   }
   if (card.kind === 'targeted-destruction') {
-    const hasOtherUpgrade = s.seats.some((seat) => seat.id !== playerId && stableOf(s, seat.id).upgrades.length > 0);
+    const hasOtherUpgrade = s.seats.some(
+      (seat) => seat.id !== playerId && !hasPrismaticShield(s, seat.id) && stableOf(s, seat.id).upgrades.length > 0,
+    );
     const hasOwnDowngrade = stableOf(s, playerId).downgrades.length > 0;
     return hasOtherUpgrade || hasOwnDowngrade;
   }
-  if (card.kind === 'two-for-one') {
-    return allCardsInStable(stableOf(s, playerId)).length > 0;
+  if (
+    card.kind === 'unicorn-poison' ||
+    card.kind === 'plague-of-death' ||
+    card.kind === 'fireball' ||
+    card.kind === 'black-hole' ||
+    card.kind === 'ghosted'
+  ) {
+    return (
+      validStableTargets(s, {
+        kind: 'chooseStableCard',
+        playerId,
+        reason: '',
+        optional: false,
+        scope: 'others',
+        filter: 'unicorn',
+        mode: 'destroy',
+        sourceType: 'magic',
+      }).length > 0
+    );
   }
-  if (card.kind === 'unicorn-poison') {
-    return s.seats.some((seat) => {
-      if (seat.id === playerId) return false;
-      if (hasPandamonium(s, seat.id) || hasRainbowAura(s, seat.id)) return false;
-      return stableOf(s, seat.id).unicorns.some(
-        (u) => !(u.kind === 'magical-kittencorn' && !isBlinded(s, seat.id)),
-      );
-    });
+  if (card.kind === 'dragons-breath' || card.kind === 'humbug') {
+    return (
+      validStableTargets(s, {
+        kind: 'chooseStableCard',
+        playerId,
+        reason: '',
+        optional: false,
+        scope: 'others',
+        filter: 'unicornOrUpgrade',
+        mode: 'destroy',
+        sourceType: 'magic',
+      }).length > 0
+    );
+  }
+  if (card.kind === 'walk-of-shame') {
+    return (
+      validStableTargets(s, {
+        kind: 'chooseStableCard',
+        playerId,
+        reason: '',
+        optional: false,
+        scope: 'others',
+        filter: 'unicorn',
+        mode: 'bounce',
+        sourceType: 'magic',
+      }).length > 0
+    );
+  }
+  if (card.kind === 'catastrophe') {
+    return s.seats.some(
+      (seat) =>
+        validStableTargets(s, {
+          kind: 'chooseStableCard',
+          playerId: seat.id,
+          reason: '',
+          optional: false,
+          scope: 'own',
+          filter: 'unicorn',
+          mode: 'sacrifice',
+          sourceType: 'magic',
+        }).length > 0,
+    );
+  }
+  if (card.kind === 'rainbow-apocalypse-magic' || card.kind === 'chaos-storm') {
+    return (
+      validStableTargets(s, {
+        kind: 'chooseStableCard',
+        playerId,
+        reason: '',
+        optional: false,
+        scope: 'own',
+        filter: 'unicorn',
+        mode: 'sacrifice',
+        sourceType: 'magic',
+      }).length > 0
+    );
+  }
+  if (card.kind === 'raze-the-stables') {
+    return s.seats.some(
+      (seat) =>
+        seat.id !== playerId &&
+        validStableTargets(s, {
+          kind: 'chooseStableCard',
+          playerId: seat.id,
+          reason: '',
+          optional: false,
+          scope: 'own',
+          filter: 'unicorn',
+          mode: 'sacrifice',
+          sourceType: 'magic',
+        }).length > 0,
+    );
+  }
+  if (card.kind === 'the-great-baby-heist') {
+    return s.nursery.length > 0;
+  }
+  if (card.kind === 'mysterious-compass' || card.kind === 'booty-call') {
+    return s.deck.length > 0;
+  }
+  if (card.kind === 'unicorn-shrinkray') {
+    return (
+      s.nursery.length > 0 &&
+      s.seats.some((seat) => seat.id !== playerId && !hasPandamonium(s, seat.id) && stableOf(s, seat.id).unicorns.length > 0)
+    );
   }
   if (card.kind === 'unicorn-swap') {
     if (hasPandamonium(s, playerId) || stableOf(s, playerId).unicorns.length === 0) return false;
@@ -403,7 +633,8 @@ function checkWinCondition(s: UuState): boolean {
 
 function startTurn(s: UuState, playerId: PlayerId) {
   s.turnPlayerId = playerId;
-  s.playsRemaining = stableOf(s, playerId).upgrades.some((c) => c.kind === 'double-dutch') ? 2 : 1;
+  s.playsRemaining =
+    !hasDragonsCurse(s, playerId) && stableOf(s, playerId).upgrades.some((c) => c.kind === 'double-dutch') ? 2 : 1;
   s.actedInActionPhase = false;
   s.extraTurnPending = false;
   s.skipToEndOfTurn = false;
@@ -412,21 +643,44 @@ function startTurn(s: UuState, playerId: PlayerId) {
 
   // Queue Beginning-of-Turn triggers in the player's Stable:
   const st = stableOf(s, playerId);
-  // 1. Sadistic Ritual (mandatory if player has a Unicorn)
-  for (const d of st.downgrades) {
-    if (d.kind === 'sadistic-ritual' && !hasPandamonium(s, playerId) && st.unicorns.length > 0) {
-      s.promptQueue.push({
-        kind: 'beginningTrigger',
-        playerId,
-        sourceCard: d,
-        mandatory: true,
-      });
+  // 1. Downgrade beginning triggers (unless overridden by Dragon's Blessing)
+  if (!hasDragonsBlessing(s, playerId)) {
+    for (const d of st.downgrades) {
+      if (d.kind === 'sadistic-ritual' && !hasPandamonium(s, playerId) && st.unicorns.length > 0) {
+        s.promptQueue.push({
+          kind: 'beginningTrigger',
+          playerId,
+          sourceCard: d,
+          mandatory: true,
+        });
+      } else if ((d.kind === 'all-out-of-rainbows' || d.kind === 'medieval-sanitation') && handOf(s, playerId).length > 0) {
+        s.promptQueue.push({
+          kind: 'beginningTrigger',
+          playerId,
+          sourceCard: d,
+          mandatory: true,
+        });
+      } else if (d.kind === 'the-black-spot' && !hasPandamonium(s, playerId) && st.unicorns.length > 0) {
+        s.promptQueue.push({
+          kind: 'beginningTrigger',
+          playerId,
+          sourceCard: d,
+          mandatory: false,
+        });
+      }
     }
   }
-  // 2. Rhinocorn (if not blinded)
-  if (!isBlinded(s, playerId)) {
+  // 2. Magical Unicorn beginning triggers (if not blinded and not Pandas)
+  if (!isBlinded(s, playerId) && !hasPandamonium(s, playerId)) {
     for (const u of st.unicorns) {
-      if (u.kind === 'rhinocorn') {
+      if (
+        u.kind === 'rhinocorn' ||
+        u.kind === 'unicorn-of-death' ||
+        u.kind === 'jack-the-reapercorn' ||
+        u.kind === 'extremely-fertile-unicorn' ||
+        u.kind === 'zombie-unicorn' ||
+        u.kind === 'angel-unicorn'
+      ) {
         s.promptQueue.push({
           kind: 'beginningTrigger',
           playerId,
@@ -436,21 +690,36 @@ function startTurn(s: UuState, playerId: PlayerId) {
       }
     }
   }
-  // 3. Beginning-of-turn Upgrades
-  for (const up of st.upgrades) {
-    if (
-      up.kind === 'caffeine-overload' ||
-      up.kind === 'claw-machine' ||
-      up.kind === 'glitter-bomb' ||
-      up.kind === 'rainbow-lasso' ||
-      up.kind === 'stable-artillery'
-    ) {
-      s.promptQueue.push({
-        kind: 'beginningTrigger',
-        playerId,
-        sourceCard: up,
-        mandatory: false,
-      });
+  // 3. Beginning-of-turn Upgrades (unless suppressed by Dragon's Curse)
+  if (!hasDragonsCurse(s, playerId)) {
+    for (const up of st.upgrades) {
+      if (
+        up.kind === 'caffeine-overload' ||
+        up.kind === 'claw-machine' ||
+        up.kind === 'glitter-bomb' ||
+        up.kind === 'rainbow-lasso' ||
+        up.kind === 'stable-artillery' ||
+        up.kind === 'apocalypse-bunker' ||
+        up.kind === 'dragons-fortune' ||
+        up.kind === 'dwarven-forge' ||
+        up.kind === 'saved-by-the-sigil' ||
+        up.kind === 'gingerbread-stable' ||
+        up.kind === 'gift-inspector' ||
+        up.kind === 'vip-lounge' ||
+        up.kind === 'extra-tail' ||
+        up.kind === 'rainbow-mane' ||
+        up.kind === 'summoning-ritual' ||
+        up.kind === 'unicorn-lasso' ||
+        up.kind === 'aura-of-order' ||
+        up.kind === 'altar-of-chaos'
+      ) {
+        s.promptQueue.push({
+          kind: 'beginningTrigger',
+          playerId,
+          sourceCard: up,
+          mandatory: false,
+        });
+      }
     }
   }
 
@@ -501,12 +770,13 @@ function advanceFlow(s: UuState) {
 
   if (s.resumePhase === 'endOfTurn') {
     const hand = handOf(s, s.turnPlayerId);
-    if (hand.length > HAND_LIMIT) {
+    const limit = handLimitOf(s, s.turnPlayerId);
+    if (hand.length > limit) {
       s.promptQueue.push({
         kind: 'chooseCardsFromHand',
         playerId: s.turnPlayerId,
-        reason: `Discard down to ${HAND_LIMIT} cards to end your turn.`,
-        count: hand.length - HAND_LIMIT,
+        reason: `Discard down to ${limit} cards to end your turn.`,
+        count: hand.length - limit,
         optional: false,
         filter: 'any',
         effectTag: 'endOfTurnLimit',
@@ -522,10 +792,25 @@ function advanceFlow(s: UuState) {
 function isPromptImpossible(s: UuState, p: UuPrompt): boolean {
   if (p.kind === 'beginningTrigger') {
     const c = p.sourceCard;
-    if (c.kind === 'sadistic-ritual') {
-      return hasPandamonium(s, p.playerId) || stableOf(s, p.playerId).unicorns.length === 0;
+    if (c.kind === 'sadistic-ritual' || c.kind === 'the-black-spot') {
+      return (
+        hasDragonsBlessing(s, p.playerId) ||
+        validStableTargets(s, {
+          kind: 'chooseStableCard',
+          playerId: p.playerId,
+          reason: '',
+          optional: false,
+          scope: 'own',
+          filter: 'unicorn',
+          mode: 'sacrifice',
+          sourceType: 'downgrade',
+        }).length === 0
+      );
     }
-    if (c.kind === 'rhinocorn') {
+    if (c.kind === 'all-out-of-rainbows' || c.kind === 'medieval-sanitation') {
+      return hasDragonsBlessing(s, p.playerId) || handOf(s, p.playerId).length === 0;
+    }
+    if (c.kind === 'rhinocorn' || c.kind === 'jack-the-reapercorn') {
       return validStableTargets(s, {
         kind: 'chooseStableCard',
         playerId: p.playerId,
@@ -537,14 +822,44 @@ function isPromptImpossible(s: UuState, p: UuPrompt): boolean {
         sourceType: 'unicorn',
       }).length === 0;
     }
-    if (c.kind === 'caffeine-overload') {
+    if (c.kind === 'unicorn-of-death') {
+      const hasSac = validStableTargets(s, {
+        kind: 'chooseStableCard',
+        playerId: p.playerId,
+        reason: '',
+        optional: true,
+        scope: 'own',
+        filter: 'unicorn',
+        mode: 'sacrifice',
+        sourceType: 'unicorn',
+      }).length > 0;
+      const hasDes = validStableTargets(s, {
+        kind: 'chooseStableCard',
+        playerId: p.playerId,
+        reason: '',
+        optional: true,
+        scope: 'others',
+        filter: 'unicorn',
+        mode: 'destroy',
+        sourceType: 'unicorn',
+      }).length > 0;
+      return !hasSac || !hasDes;
+    }
+    if (c.kind === 'extremely-fertile-unicorn') {
+      return handOf(s, p.playerId).length === 0 || s.nursery.length === 0;
+    }
+    if (c.kind === 'zombie-unicorn') {
+      const hasUniInHand = handOf(s, p.playerId).some((x) => isUnicornType(x.type));
+      return !hasUniInHand || !s.discard.some((x) => isUnicornType(x.type));
+    }
+    if (c.kind === 'angel-unicorn') {
+      return !s.discard.some((x) => isUnicornType(x.type));
+    }
+    if (c.kind === 'caffeine-overload' || c.kind === 'glitter-bomb' || c.kind === 'altar-of-chaos') {
       return allCardsInStable(stableOf(s, p.playerId)).length === 0;
     }
     if (c.kind === 'claw-machine') {
       return handOf(s, p.playerId).length === 0;
-    }
-    if (c.kind === 'glitter-bomb') {
-      return allCardsInStable(stableOf(s, p.playerId)).length === 0;
     }
     if (c.kind === 'rainbow-lasso') {
       const hasStealTargets = validStableTargets(s, {
@@ -559,6 +874,20 @@ function isPromptImpossible(s: UuState, p: UuPrompt): boolean {
       }).length > 0;
       return handOf(s, p.playerId).length < 3 || !hasStealTargets;
     }
+    if (c.kind === 'unicorn-lasso') {
+      return (
+        validStableTargets(s, {
+          kind: 'chooseStableCard',
+          playerId: p.playerId,
+          reason: '',
+          optional: true,
+          scope: 'others',
+          filter: 'unicorn',
+          mode: 'steal',
+          sourceType: 'upgrade',
+        }).length === 0
+      );
+    }
     if (c.kind === 'stable-artillery') {
       const hasDestroyTargets = validStableTargets(s, {
         kind: 'chooseStableCard',
@@ -571,6 +900,27 @@ function isPromptImpossible(s: UuState, p: UuPrompt): boolean {
         sourceType: 'upgrade',
       }).length > 0;
       return handOf(s, p.playerId).length < 2 || !hasDestroyTargets;
+    }
+    if (c.kind === 'dwarven-forge') {
+      return !s.discard.some((x) => x.type === 'magic');
+    }
+    if (c.kind === 'saved-by-the-sigil') {
+      return !s.discard.some((x) => isUnicornType(x.type));
+    }
+    if (c.kind === 'gift-inspector') {
+      return !s.seats.some((st) => st.id !== p.playerId && handOf(s, st.id).length > 0);
+    }
+    if (c.kind === 'extra-tail') {
+      return !hasBasicUnicornInStable(s, p.playerId);
+    }
+    if (c.kind === 'rainbow-mane') {
+      return !hasBasicUnicornInStable(s, p.playerId) || !handOf(s, p.playerId).some((x) => x.type === 'basicUnicorn');
+    }
+    if (c.kind === 'summoning-ritual') {
+      return (
+        handOf(s, p.playerId).filter((x) => isUnicornType(x.type)).length < 2 ||
+        !s.discard.some((x) => isUnicornType(x.type))
+      );
     }
     return false;
   }
@@ -600,14 +950,25 @@ function isPromptImpossible(s: UuState, p: UuPrompt): boolean {
 
 function finishTurn(s: UuState) {
   if (checkWinCondition(s)) return;
+  const idx = s.seats.findIndex((x) => x.id === s.turnPlayerId);
+  const nextSeat = s.seats[(idx + 1) % s.seats.length]!;
+
+  // Puppicorn moves to the next player's Stable at the end of turn (if not blinded)
+  if (!isBlinded(s, s.turnPlayerId) && !hasPandamonium(s, s.turnPlayerId)) {
+    const puppies = stableOf(s, s.turnPlayerId).unicorns.filter((u) => u.kind === 'puppicorn');
+    for (const pup of puppies) {
+      removeFromStable(s, s.turnPlayerId, pup.id, 'move', { toPlayerId: nextSeat.id, sourceType: 'unicorn' });
+      pushLog(s, s.turnPlayerId, `Puppicorn wandered over to ${nextSeat.name}'s Stable!`, 'normal');
+    }
+  }
+  if (checkWinCondition(s)) return;
+
   if (s.extraTurnPending) {
     s.extraTurnPending = false;
     pushLog(s, s.turnPlayerId, `${seatName(s, s.turnPlayerId)} takes another turn from Change of Luck!`, 'good');
     startTurn(s, s.turnPlayerId);
     return;
   }
-  const idx = s.seats.findIndex((x) => x.id === s.turnPlayerId);
-  const nextSeat = s.seats[(idx + 1) % s.seats.length]!;
   startTurn(s, nextSeat.id);
 }
 
@@ -653,8 +1014,20 @@ function enterStable(s: UuState, playerId: PlayerId, card: UuCard, triggerEnterE
     });
   }
 
-  // Enter-Stable effects on Magical Unicorns (unless blinded by Blinding Light)
-  if (triggerEnterEffects && card.type === 'magicalUnicorn' && !isBlinded(s, playerId)) {
+  // Royal Hooves Upgrade: each time a Unicorn enters your Stable, DRAW a card
+  if (isUnicornType(card.type) && hasRoyalHooves(s, playerId)) {
+    drawCards(s, playerId, 1);
+    pushLog(s, playerId, `${seatName(s, playerId)} drew a card from Royal Hooves.`, 'good');
+  }
+
+  // Enter-Stable effects on Magical Unicorns (unless blinded or suppressed by Dragon Skies / Hex)
+  if (
+    triggerEnterEffects &&
+    card.type === 'magicalUnicorn' &&
+    !isBlinded(s, playerId) &&
+    !hasDragonSkies(s, playerId) &&
+    !hasHex(s, playerId)
+  ) {
     queueMagicalUnicornEnterEffect(s, playerId, card);
   }
 
@@ -679,20 +1052,23 @@ function removeFromStable(
 
   const blinded = isBlinded(s, ownerId);
 
-  // 1. Black Knight Unicorn intercept on destroy of another Unicorn in the same Stable
+  // 1. Black Knight Unicorn / Unicorn Survival Kit intercept on destroy of another Unicorn in the same Stable
   if (
     reason === 'destroy' &&
     isUnicornType(card.type) &&
     card.kind !== 'black-knight-unicorn' &&
-    !blinded &&
     !opts?.skipBlackKnightCheck
   ) {
-    const bk = st.unicorns.find((u) => u.kind === 'black-knight-unicorn');
-    if (bk) {
+    const bk = !blinded ? st.unicorns.find((u) => u.kind === 'black-knight-unicorn') : undefined;
+    const kit = !hasDragonsCurse(s, ownerId)
+      ? st.upgrades.find((u) => u.kind === 'unicorn-survival-kit')
+      : undefined;
+    const protector = bk ?? kit;
+    if (protector) {
       s.promptQueue.unshift({
         kind: 'blackKnightSave',
         playerId: ownerId,
-        blackKnightCardId: bk.id,
+        blackKnightCardId: protector.id,
         targetUnicornId: card.id,
         sourceType: opts?.sourceType ?? 'magic',
       });
@@ -755,9 +1131,25 @@ function removeFromStable(
     return;
   }
 
-  if ((reason === 'sacrifice' || reason === 'destroy') && isFlyerKind(card.kind) && !blinded) {
+  if (
+    (reason === 'sacrifice' || reason === 'destroy') &&
+    isFlyerKind(card.kind) &&
+    !blinded &&
+    !hasBallAndChain(s, ownerId)
+  ) {
     handOf(s, ownerId).push(card);
     pushLog(s, ownerId, `${card.name} flew back to ${seatName(s, ownerId)}'s hand.`, 'normal');
+    return;
+  }
+
+  if (
+    reason === 'destroy' &&
+    (card.kind === 'twin-dragoncorns' || card.kind === 'phantom-steedicorn') &&
+    !blinded &&
+    !hasBallAndChain(s, ownerId)
+  ) {
+    handOf(s, ownerId).push(card);
+    pushLog(s, ownerId, `${card.name} returned to ${seatName(s, ownerId)}'s hand instead of being destroyed.`, 'good');
     return;
   }
 
@@ -799,10 +1191,11 @@ function queueMagicalUnicornEnterEffect(s: UuState, playerId: PlayerId, card: Uu
       });
       break;
     case 'americorn':
+    case 'pillaging-pirate-unicorn':
       s.promptQueue.push({
         kind: 'choosePlayer',
         playerId,
-        reason: "Americorn: you may pull a card at random from another player's hand.",
+        reason: `${card.name}: you may pull a card at random from another player's hand.`,
         optional: true,
         allowSelf: false,
         effectTag: 'americornPull',
@@ -819,10 +1212,11 @@ function queueMagicalUnicornEnterEffect(s: UuState, playerId: PlayerId, card: Uu
       });
       break;
     case 'chainsaw-unicorn':
+    case 'bahamuticorn':
       s.promptQueue.push({
         kind: 'chooseStableCard',
         playerId,
-        reason: 'Chainsaw Unicorn: you may DESTROY an Upgrade card or SACRIFICE a Downgrade card.',
+        reason: `${card.name}: you may DESTROY an Upgrade card or SACRIFICE a Downgrade card.`,
         optional: true,
         scope: 'any',
         filter: 'destroyUpgradeOrSacrificeDowngrade',
@@ -830,11 +1224,27 @@ function queueMagicalUnicornEnterEffect(s: UuState, playerId: PlayerId, card: Uu
         sourceType: 'unicorn',
       });
       break;
+    case 'chainsaw-massicorn':
+      drawCards(s, playerId, 1);
+      if (s.phase !== 'gameOver') {
+        s.promptQueue.push({
+          kind: 'chooseStableCard',
+          playerId,
+          reason: 'Chainsaw Massicorn: you may DESTROY an Upgrade card or SACRIFICE a Downgrade card.',
+          optional: true,
+          scope: 'any',
+          filter: 'destroyUpgradeOrSacrificeDowngrade',
+          mode: 'destroy',
+          sourceType: 'unicorn',
+        });
+      }
+      break;
     case 'classy-narwhal':
+    case 'unicorn-of-order':
       s.promptQueue.push({
         kind: 'chooseFromPile',
         playerId,
-        reason: 'Classy Narwhal: you may search the deck for an Upgrade card and add it to your hand.',
+        reason: `${card.name}: you may search the deck for an Upgrade card and add it to your hand.`,
         optional: true,
         pile: 'deck',
         filter: 'upgrade',
@@ -870,8 +1280,9 @@ function queueMagicalUnicornEnterEffect(s: UuState, playerId: PlayerId, card: Uu
       }
       break;
     case 'greedy-flying-unicorn':
+    case 'uncut-unicorn':
       drawCards(s, playerId, 1);
-      pushLog(s, playerId, `${seatName(s, playerId)} drew a card from Greedy Flying Unicorn.`, 'normal');
+      pushLog(s, playerId, `${seatName(s, playerId)} drew a card from ${card.name}.`, 'normal');
       break;
     case 'llamacorn':
       for (const seat of s.seats) {
@@ -910,6 +1321,17 @@ function queueMagicalUnicornEnterEffect(s: UuState, playerId: PlayerId, card: Uu
         destination: 'hand',
       });
       break;
+    case 'scaled-flying-unicorn':
+      s.promptQueue.push({
+        kind: 'chooseFromPile',
+        playerId,
+        reason: 'Scaled Flying Unicorn: you may add an Upgrade card from the discard pile to your hand.',
+        optional: true,
+        pile: 'discard',
+        filter: 'upgrade',
+        destination: 'hand',
+      });
+      break;
     case 'mermaid-unicorn':
       s.promptQueue.push({
         kind: 'chooseStableCard',
@@ -933,13 +1355,18 @@ function queueMagicalUnicornEnterEffect(s: UuState, playerId: PlayerId, card: Uu
         destination: 'stable',
       });
       break;
-    case 'narwhal-torpedo': {
+    case 'narwhal-torpedo':
+    case 'paladincorn':
+    case 'travel-unicorn': {
       const downgrades = [...stableOf(s, playerId).downgrades];
       for (const d of downgrades) {
         removeFromStable(s, playerId, d.id, 'sacrifice', { sourceType: 'unicorn' });
       }
       if (downgrades.length > 0) {
-        pushLog(s, playerId, `Narwhal Torpedo sacrificed ${downgrades.length} Downgrade card(s).`, 'good');
+        pushLog(s, playerId, `${card.name} sacrificed ${downgrades.length} Downgrade card(s).`, 'good');
+      }
+      if (card.kind === 'paladincorn' || card.kind === 'travel-unicorn') {
+        drawCards(s, playerId, 1);
       }
       break;
     }
@@ -957,14 +1384,26 @@ function queueMagicalUnicornEnterEffect(s: UuState, playerId: PlayerId, card: Uu
       }
       break;
     case 'rainbow-unicorn':
+    case 'reindeercorn':
       s.promptQueue.push({
         kind: 'chooseCardsFromHand',
         playerId,
-        reason: 'Rainbow Unicorn: you may bring a Basic Unicorn card from your hand into your Stable.',
+        reason: `${card.name}: you may bring a Basic Unicorn card from your hand into your Stable.`,
         count: 1,
         optional: true,
         filter: 'basicUnicorn',
         effectTag: 'rainbowUnicornBring',
+      });
+      break;
+    case 'polyamorous-unicorn':
+      s.promptQueue.push({
+        kind: 'chooseCardsFromHand',
+        playerId,
+        reason: 'Polyamorous Unicorn: you may bring a Unicorn card from your hand into your Stable.',
+        count: 1,
+        optional: true,
+        filter: 'unicorn',
+        effectTag: 'unicornBring',
       });
       break;
     case 'seductive-unicorn':
@@ -1042,7 +1481,8 @@ function queueMagicalUnicornEnterEffect(s: UuState, playerId: PlayerId, card: Uu
         });
       }
       break;
-    case 'unicorn-oracle': {
+    case 'unicorn-oracle':
+    case 'chronocorn': {
       const top3 = s.deck.splice(0, 3);
       if (top3.length > 0) {
         s.promptQueue.push({
@@ -1053,6 +1493,214 @@ function queueMagicalUnicornEnterEffect(s: UuState, playerId: PlayerId, card: Uu
       }
       break;
     }
+    // Rainbow Apocalypse Magical Unicorns
+    case 'four-horsecorn':
+      s.promptQueue.push({
+        kind: 'chooseFromPile',
+        playerId,
+        reason: 'Four Horsecorn: you may search the deck for a Unicorn card and add it to your hand.',
+        optional: true,
+        pile: 'deck',
+        filter: 'unicorn',
+        destination: 'hand',
+        shuffleDeckAfter: true,
+      });
+      break;
+    case 'unicorn-of-pestilence':
+      for (const seat of s.seats) {
+        if (seat.id !== playerId && handOf(s, seat.id).length > 0) {
+          s.promptQueue.push({
+            kind: 'chooseCardsFromHand',
+            playerId: seat.id,
+            reason: 'Unicorn of Pestilence: you must DISCARD a card.',
+            count: 1,
+            optional: false,
+            filter: 'any',
+            effectTag: 'discard',
+          });
+        }
+      }
+      break;
+    case 'unicorn-of-war':
+    case 'dragon-slayer-unicorn':
+    case 'flying-krampuscorn':
+      s.promptQueue.push({
+        kind: 'chooseStableCard',
+        playerId,
+        reason: `${card.name}: you may DESTROY a Unicorn card.`,
+        optional: true,
+        scope: 'others',
+        filter: 'unicorn',
+        mode: 'destroy',
+        sourceType: 'unicorn',
+      });
+      break;
+    case 'vampirellacorn':
+    case 'unicorn-of-chaos':
+      drawCards(s, playerId, 1);
+      if (s.phase !== 'gameOver') {
+        s.promptQueue.push({
+          kind: 'chooseStableCard',
+          playerId,
+          reason: `${card.name}: you may DESTROY a Unicorn card.`,
+          optional: true,
+          scope: 'others',
+          filter: 'unicorn',
+          mode: 'destroy',
+          sourceType: 'unicorn',
+        });
+      }
+      break;
+    case 'unicorn-rainbow-princess':
+      drawCards(s, playerId, 2);
+      for (const seat of s.seats) {
+        if (seat.id !== playerId && s.phase !== 'gameOver') {
+          drawCards(s, seat.id, 1);
+        }
+      }
+      pushLog(s, playerId, `${seatName(s, playerId)} played Unicorn Rainbow Princess — everyone drew cards!`, 'good');
+      break;
+    // Dragons Magical Unicorns
+    case 'dragon-riders':
+      s.promptQueue.push({
+        kind: 'chooseFromPile',
+        playerId,
+        reason: 'Dragon Riders: you may search the deck for a Unicorn or Upgrade card and add it to your hand.',
+        optional: true,
+        pile: 'deck',
+        filter: 'unicornOrUpgrade',
+        destination: 'hand',
+        shuffleDeckAfter: true,
+      });
+      break;
+    // Unicorns of Legend Magical Unicorns
+    case 'archangel-unicorn':
+    case 'phantom-steedicorn':
+      s.promptQueue.push({
+        kind: 'chooseFromPile',
+        playerId,
+        reason: `${card.name}: you may bring a Unicorn card from the discard pile into your Stable.`,
+        optional: true,
+        pile: 'discard',
+        filter: 'unicorn',
+        destination: 'stable',
+      });
+      break;
+    case 'nine-tailed-foxicorn':
+    case 'sugar-daddy-unicorn':
+      drawCards(s, playerId, 2);
+      if (s.phase !== 'gameOver') {
+        s.promptQueue.push({
+          kind: 'chooseStableCard',
+          playerId,
+          reason: `${card.name}: you may STEAL an Upgrade card.`,
+          optional: true,
+          scope: 'others',
+          filter: 'upgrade',
+          mode: 'steal',
+          sourceType: 'unicorn',
+        });
+      }
+      break;
+    case 'mage-unicorn':
+      s.promptQueue.push({
+        kind: 'chooseFromPile',
+        playerId,
+        reason: 'Mage Unicorn: you may search the deck for a Magic card and add it to your hand.',
+        optional: true,
+        pile: 'deck',
+        filter: 'magic',
+        destination: 'hand',
+        shuffleDeckAfter: true,
+      });
+      break;
+    case 'bardicorn':
+      drawCards(s, playerId, 1);
+      if (s.phase !== 'gameOver') {
+        s.promptQueue.push({
+          kind: 'chooseStableCard',
+          playerId,
+          reason: 'Bardicorn: you may STEAL an Upgrade card.',
+          optional: true,
+          scope: 'others',
+          filter: 'upgrade',
+          mode: 'steal',
+          sourceType: 'unicorn',
+        });
+      }
+      break;
+    // Adventures Magical Unicorns
+    case 'cutthroat-captain-unicorn':
+      s.promptQueue.push({
+        kind: 'chooseStableCard',
+        playerId,
+        reason: 'Cutthroat Captain Unicorn: you may STEAL a Unicorn card (that player will then DRAW a card).',
+        optional: true,
+        scope: 'others',
+        filter: 'unicorn',
+        mode: 'steal',
+        sourceType: 'unicorn',
+        effectTag: 'cutthroatSteal',
+      });
+      break;
+    case 'extreme-adventurer-unicorn':
+    case 'santaicorn':
+    case 'hangover-unicorn':
+    case 'crystal-narwhal':
+      drawCards(s, playerId, 2);
+      pushLog(s, playerId, `${seatName(s, playerId)} drew 2 cards from ${card.name}.`, 'good');
+      break;
+    case 'treasure-hunter-unicorn':
+      s.promptQueue.push({
+        kind: 'chooseFromPile',
+        playerId,
+        reason: 'Treasure Hunter Unicorn: you may add a Magic or Upgrade card from the discard pile to your hand.',
+        optional: true,
+        pile: 'discard',
+        filter: 'magicOrUpgrade',
+        destination: 'hand',
+      });
+      break;
+    // Uncut & NSFW & Chaos Magical Unicorns
+    case 'stripper-unicorn':
+      drawCards(s, playerId, 1);
+      if (s.phase !== 'gameOver') {
+        s.promptQueue.push({
+          kind: 'choosePlayer',
+          playerId,
+          reason: 'Burlesque Unicorn: you may force another player to DISCARD a card.',
+          optional: true,
+          allowSelf: false,
+          effectTag: 'annoyingDiscard',
+        });
+      }
+      break;
+    case 'dominatrix-unicorn':
+      drawCards(s, playerId, 1);
+      if (s.phase !== 'gameOver') {
+        s.promptQueue.push({
+          kind: 'choosePlayer',
+          playerId,
+          reason: 'Dominatrix Unicorn: you may force another player to SACRIFICE a Unicorn card.',
+          optional: true,
+          allowSelf: false,
+          effectTag: 'dominatrixForceSacrifice',
+        });
+      }
+      break;
+    case 'hells-steedicorn':
+      s.promptQueue.push({
+        kind: 'chooseStableCard',
+        playerId,
+        reason: "Hell's Steedicorn: you may SACRIFICE a card in your Stable to DESTROY a Unicorn card.",
+        optional: true,
+        scope: 'own',
+        filter: 'any',
+        mode: 'sacrifice',
+        sourceType: 'unicorn',
+        effectTag: 'glitterBombSacrifice',
+      });
+      break;
     default:
       break;
   }
@@ -1185,7 +1833,6 @@ function resolveMagicEffect(s: UuState, byPlayerId: PlayerId, card: UuCard) {
       break;
     }
     case 'shake-up': {
-      // Remove Shake Up from discard (it was just placed there on resolution)
       const idx = s.discard.findIndex((c) => c.id === card.id);
       if (idx >= 0) s.discard.splice(idx, 1);
       const hand = handOf(s, byPlayerId);
@@ -1233,10 +1880,11 @@ function resolveMagicEffect(s: UuState, byPlayerId: PlayerId, card: UuCard) {
       });
       break;
     case 'unicorn-poison':
+    case 'ghosted':
       s.promptQueue.push({
         kind: 'chooseStableCard',
         playerId: byPlayerId,
-        reason: 'Unicorn Poison: choose a Unicorn card to DESTROY.',
+        reason: `${card.name}: choose a Unicorn card to DESTROY.`,
         optional: false,
         scope: 'others',
         filter: 'unicorn',
@@ -1256,13 +1904,258 @@ function resolveMagicEffect(s: UuState, byPlayerId: PlayerId, card: UuCard) {
         sourceType: 'magic',
       });
       break;
+    // Expansion & Edition Magic Cards
+    case 'catastrophe':
+      for (const seat of s.seats) {
+        s.promptQueue.push({
+          kind: 'chooseStableCard',
+          playerId: seat.id,
+          reason: 'Catastrophe: you must SACRIFICE a Unicorn card.',
+          optional: false,
+          scope: 'own',
+          filter: 'unicorn',
+          mode: 'sacrifice',
+          sourceType: 'magic',
+        });
+      }
+      break;
+    case 'chaos-storm':
+      drawCards(s, byPlayerId, 1);
+      for (const seat of s.seats) {
+        s.promptQueue.push({
+          kind: 'chooseStableCard',
+          playerId: seat.id,
+          reason: 'Chaos Storm: you must SACRIFICE a Unicorn card.',
+          optional: false,
+          scope: 'own',
+          filter: 'unicorn',
+          mode: 'sacrifice',
+          sourceType: 'magic',
+        });
+      }
+      break;
+    case 'rainbow-apocalypse-magic':
+      s.promptQueue.push({
+        kind: 'chooseStableCard',
+        playerId: byPlayerId,
+        reason: 'Rainbow Apocalypse: SACRIFICE a Unicorn card, then bring up to 2 Unicorns from the discard pile into your Stable.',
+        optional: false,
+        scope: 'own',
+        filter: 'unicorn',
+        mode: 'sacrifice',
+        sourceType: 'magic',
+        effectTag: 'rainbowApocalypseSacrifice',
+      });
+      break;
+    case 'plague-of-death':
+    case 'fireball':
+      drawCards(s, byPlayerId, 1);
+      if (s.phase !== 'gameOver') {
+        s.promptQueue.push({
+          kind: 'chooseStableCard',
+          playerId: byPlayerId,
+          reason: `${card.name}: choose a Unicorn card to DESTROY.`,
+          optional: false,
+          scope: 'others',
+          filter: 'unicorn',
+          mode: 'destroy',
+          sourceType: 'magic',
+        });
+      }
+      break;
+    case 'dragons-breath':
+    case 'humbug':
+      s.promptQueue.push({
+        kind: 'chooseStableCard',
+        playerId: byPlayerId,
+        reason: `${card.name}: choose a Unicorn or Upgrade card in another player's Stable to DESTROY.`,
+        optional: false,
+        scope: 'others',
+        filter: 'unicornOrUpgrade',
+        mode: 'destroy',
+        sourceType: 'magic',
+      });
+      break;
+    case 'dragons-fire':
+      drawCards(s, byPlayerId, 1);
+      for (const seat of s.seats) {
+        if (seat.id !== byPlayerId && handOf(s, seat.id).length > 0 && s.phase !== 'gameOver') {
+          s.promptQueue.push({
+            kind: 'chooseCardsFromHand',
+            playerId: seat.id,
+            reason: "Dragon's Fire: you must DISCARD a card.",
+            count: 1,
+            optional: false,
+            filter: 'any',
+            effectTag: 'discard',
+          });
+        }
+      }
+      break;
+    case 'raze-the-stables':
+      for (const seat of s.seats) {
+        if (seat.id !== byPlayerId) {
+          s.promptQueue.push({
+            kind: 'chooseStableCard',
+            playerId: seat.id,
+            reason: 'Raze the Stables: you must SACRIFICE a Unicorn card.',
+            optional: false,
+            scope: 'own',
+            filter: 'unicorn',
+            mode: 'sacrifice',
+            sourceType: 'magic',
+          });
+        }
+      }
+      break;
+    case 'the-great-baby-heist':
+      drawCards(s, byPlayerId, 1);
+      if (s.phase !== 'gameOver') {
+        s.promptQueue.push({
+          kind: 'chooseFromPile',
+          playerId: byPlayerId,
+          reason: 'The Great Baby Heist: choose a Baby Unicorn from the Nursery to bring into your Stable.',
+          optional: false,
+          pile: 'nursery',
+          filter: 'baby',
+          destination: 'stable',
+        });
+      }
+      break;
+    case 'mysterious-compass': {
+      const top3 = s.deck.splice(0, 3);
+      if (top3.length > 0) {
+        s.promptQueue.push({
+          kind: 'oraclePeek',
+          playerId: byPlayerId,
+          cards: top3,
+        });
+      }
+      break;
+    }
+    case 'nightmare-pact':
+      s.promptQueue.push({
+        kind: 'chooseStableCard',
+        playerId: byPlayerId,
+        reason: 'Nightmare Pact: choose a card in your Stable to SACRIFICE (then DRAW 2 cards and bring a Unicorn from the discard pile into your Stable).',
+        optional: false,
+        scope: 'own',
+        filter: 'any',
+        mode: 'sacrifice',
+        sourceType: 'magic',
+        effectTag: 'nightmarePactSacrifice',
+      });
+      break;
+    case 'black-hole':
+      s.promptQueue.push({
+        kind: 'chooseStableCard',
+        playerId: byPlayerId,
+        reason: "Black Hole: choose a Unicorn card in another player's Stable to DESTROY (that player will then DISCARD a card).",
+        optional: false,
+        scope: 'others',
+        filter: 'unicorn',
+        mode: 'destroy',
+        sourceType: 'magic',
+        effectTag: 'blackHoleDestroy',
+      });
+      break;
+    case 'gift-receipt':
+      s.promptQueue.push({
+        kind: 'chooseStableCard',
+        playerId: byPlayerId,
+        reason: 'Gift Receipt: choose a card in your Stable to return to your hand (then DRAW 2 cards).',
+        optional: false,
+        scope: 'own',
+        filter: 'any',
+        mode: 'bounce',
+        sourceType: 'magic',
+        effectTag: 'giftReceiptBounce',
+      });
+      break;
+    case 'liquid-courage':
+      drawCards(s, byPlayerId, 2);
+      if (s.phase !== 'gameOver') {
+        s.promptQueue.push({
+          kind: 'chooseStableCard',
+          playerId: byPlayerId,
+          reason: 'Liquid Courage: you may DESTROY an Upgrade card or SACRIFICE a Downgrade card.',
+          optional: true,
+          scope: 'any',
+          filter: 'destroyUpgradeOrSacrificeDowngrade',
+          mode: 'destroy',
+          sourceType: 'magic',
+        });
+      }
+      break;
+    case 'walk-of-shame':
+      s.promptQueue.push({
+        kind: 'chooseStableCard',
+        playerId: byPlayerId,
+        reason: "Walk of Shame: choose a Unicorn card in another player's Stable to return to their hand.",
+        optional: false,
+        scope: 'others',
+        filter: 'unicorn',
+        mode: 'bounce',
+        sourceType: 'magic',
+      });
+      break;
+    case 'booty-call':
+      s.promptQueue.push({
+        kind: 'chooseFromPile',
+        playerId: byPlayerId,
+        reason: 'Midnight Summons: search the deck for a Unicorn card and add it to your hand.',
+        optional: false,
+        pile: 'deck',
+        filter: 'unicorn',
+        destination: 'hand',
+        shuffleDeckAfter: true,
+      });
+      break;
+    case 'unicorn-shrinkray':
+      s.promptQueue.push({
+        kind: 'choosePlayer',
+        playerId: byPlayerId,
+        reason: "Unicorn Shrinkray: choose another player to replace all of their Unicorns with Baby Unicorns from the Nursery.",
+        optional: false,
+        allowSelf: false,
+        effectTag: 'shrinkrayTarget',
+      });
+      break;
+    case 'time-shift':
+      drawCards(s, byPlayerId, 1);
+      if (s.phase !== 'gameOver') {
+        s.promptQueue.push({
+          kind: 'chooseFromPile',
+          playerId: byPlayerId,
+          reason: 'Time Shift: choose a Unicorn or Upgrade card from the discard pile to add to your hand.',
+          optional: false,
+          pile: 'discard',
+          filter: 'unicornOrUpgrade',
+          destination: 'hand',
+        });
+      }
+      break;
+    case 'diamond-dust':
+      drawCards(s, byPlayerId, 2);
+      if (s.phase !== 'gameOver') {
+        s.promptQueue.push({
+          kind: 'chooseFromPile',
+          playerId: byPlayerId,
+          reason: 'Diamond Dust: you may bring a Unicorn card from the discard pile into your Stable.',
+          optional: true,
+          pile: 'discard',
+          filter: 'unicorn',
+          destination: 'stable',
+        });
+      }
+      break;
     default:
       break;
   }
 }
 
 // ============================================================================
-// Neigh Reaction Window
+// Neigh & Instant Reaction Window
 // ============================================================================
 
 function buildNeighResponderQueue(s: UuState, justPlayedBy: PlayerId): PlayerId[] {
@@ -1299,6 +2192,56 @@ function resolvePendingPlay(s: UuState) {
   s.discard.push(...p.neighCards);
   const cancelled = p.neighCards.length % 2 === 1;
   if (cancelled) {
+    const lastInstant = p.instantPlays?.[p.instantPlays.length - 1];
+    const instantKind = lastInstant?.card.kind ?? p.neighCards[p.neighCards.length - 1]?.kind ?? 'neigh';
+    const instantBy = lastInstant?.byPlayerId ?? null;
+
+    if (instantKind === 'redirect' && instantBy) {
+      pushLog(
+        s,
+        instantBy,
+        `${seatName(s, instantBy)} redirected ${p.card.name} with Redirect!`,
+        'good',
+      );
+      if (p.card.type === 'magic') {
+        s.discard.push(p.card);
+        resolveMagicEffect(s, instantBy, p.card);
+      } else if (p.card.type === 'downgrade') {
+        enterStable(s, p.byPlayerId, p.card, true);
+      } else {
+        enterStable(s, instantBy, p.card, true);
+      }
+      advanceFlow(s);
+      return;
+    }
+
+    if ((instantKind === 'unicorn-net' || instantKind === 'absorb-and-reflect') && instantBy) {
+      if (p.card.type === 'babyUnicorn') {
+        s.nursery.push(p.card);
+      } else {
+        handOf(s, instantBy).push(p.card);
+      }
+      pushLog(
+        s,
+        instantBy,
+        `${seatName(s, instantBy)} captured ${p.card.name} into their hand with ${lastInstant?.card.name ?? 'Instant'}!`,
+        'good',
+      );
+      if (instantKind === 'absorb-and-reflect' && handOf(s, p.byPlayerId).length > 0) {
+        s.promptQueue.push({
+          kind: 'chooseCardsFromHand',
+          playerId: p.byPlayerId,
+          reason: 'Absorb and Reflect: your play was reflected — you must DISCARD a card.',
+          count: 1,
+          optional: false,
+          filter: 'any',
+          effectTag: 'discard',
+        });
+      }
+      advanceFlow(s);
+      return;
+    }
+
     s.discard.push(p.card);
     pushLog(
       s,
@@ -1306,6 +2249,25 @@ function resolvePendingPlay(s: UuState) {
       `${p.card.name} was Neighed${p.superNeighed ? ' (Super Neigh!)' : p.neighCards.length > 1 ? ` (${p.neighCards.length} Neighs deep)` : ''}!`,
       'danger',
     );
+
+    if ((instantKind === 'flare-gun' || instantKind === 'jingle-all-the-neigh') && instantBy) {
+      drawCards(s, instantBy, 1);
+    } else if (instantKind === 'neigh-thank-you') {
+      for (const seat of s.seats) {
+        if (s.phase !== 'gameOver') drawCards(s, seat.id, 1);
+      }
+    } else if (instantKind === 'trapped-chest' && handOf(s, p.byPlayerId).length > 0) {
+      s.promptQueue.push({
+        kind: 'chooseCardsFromHand',
+        playerId: p.byPlayerId,
+        reason: 'Trapped Chest: your play was stopped — you must DISCARD a card.',
+        count: 1,
+        optional: false,
+        filter: 'any',
+        effectTag: 'discard',
+      });
+    }
+
     advanceFlow(s);
     return;
   }
@@ -1398,6 +2360,7 @@ function handlePlayCard(s: UuState, a: Extract<UuAction, { type: 'playCard' }>) 
     card,
     targetPlayerId,
     neighCards: [],
+    instantPlays: [],
     superNeighed: false,
     responderQueue: [],
   };
@@ -1415,15 +2378,18 @@ function handlePlayNeigh(s: UuState, a: Extract<UuAction, { type: 'playNeigh' }>
   const idx = hand.findIndex((c) => c.id === a.cardId);
   if (idx < 0) throw new Error('Neigh card not in hand');
   const card = hand[idx]!;
-  if (!isNeighCard(card)) throw new Error('that card is not a Neigh');
+  if (!isNeighCard(card)) throw new Error('that card is not an Instant response card');
 
   hand.splice(idx, 1);
   p.neighCards.push(card);
+  if (!p.instantPlays) p.instantPlays = [];
+  p.instantPlays.push({ byPlayerId: a.playerId, card });
+
   if (card.kind === 'super-neigh') {
     p.superNeighed = true;
     pushLog(s, a.playerId, `${seatName(s, a.playerId)} played SUPER NEIGH!`, 'danger');
   } else {
-    pushLog(s, a.playerId, `${seatName(s, a.playerId)} played Neigh!`, 'danger');
+    pushLog(s, a.playerId, `${seatName(s, a.playerId)} responded with ${card.name}!`, 'danger');
   }
 
   openOrResolveNeigh(s, a.playerId);
@@ -1472,6 +2438,28 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
           sourceType: 'downgrade',
           effectTag: 'sadisticRitualSacrifice',
         });
+      } else if (c.kind === 'all-out-of-rainbows' || c.kind === 'medieval-sanitation') {
+        s.promptQueue.unshift({
+          kind: 'chooseCardsFromHand',
+          playerId: prompt.playerId,
+          reason: `${c.name}: you must DISCARD a card.`,
+          count: 1,
+          optional: false,
+          filter: 'any',
+          effectTag: 'discard',
+        });
+      } else if (c.kind === 'the-black-spot') {
+        s.promptQueue.unshift({
+          kind: 'chooseStableCard',
+          playerId: prompt.playerId,
+          reason: 'The Black Spot: choose a Unicorn card in your Stable to SACRIFICE (to remove The Black Spot).',
+          optional: true,
+          scope: 'own',
+          filter: 'unicorn',
+          mode: 'sacrifice',
+          sourceType: 'downgrade',
+          effectTag: `blackSpotSacrifice:${c.id}`,
+        });
       } else if (c.kind === 'rhinocorn') {
         s.promptQueue.unshift({
           kind: 'chooseStableCard',
@@ -1483,6 +2471,131 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
           mode: 'destroy',
           sourceType: 'unicorn',
           effectTag: 'rhinocornDestroy',
+        });
+      } else if (c.kind === 'unicorn-of-death') {
+        s.promptQueue.unshift({
+          kind: 'chooseStableCard',
+          playerId: prompt.playerId,
+          reason: 'Unicorn of Death: choose a Unicorn card in your Stable to SACRIFICE (then DESTROY a Unicorn card).',
+          optional: true,
+          scope: 'own',
+          filter: 'unicorn',
+          mode: 'sacrifice',
+          sourceType: 'unicorn',
+          effectTag: 'unicornOfDeathSacrifice',
+        });
+      } else if (c.kind === 'jack-the-reapercorn') {
+        s.promptQueue.unshift({
+          kind: 'chooseStableCard',
+          playerId: prompt.playerId,
+          reason: 'Jack the Reapercorn: choose a Unicorn card to DESTROY (then DISCARD a card).',
+          optional: true,
+          scope: 'others',
+          filter: 'unicorn',
+          mode: 'destroy',
+          sourceType: 'unicorn',
+          effectTag: 'jackReapercornDestroy',
+        });
+      } else if (c.kind === 'extremely-fertile-unicorn') {
+        s.promptQueue.unshift({
+          kind: 'chooseCardsFromHand',
+          playerId: prompt.playerId,
+          reason: 'Extremely Fertile Unicorn: choose a card from your hand to DISCARD (then bring a Baby Unicorn from the Nursery into your Stable).',
+          count: 1,
+          optional: true,
+          filter: 'any',
+          effectTag: 'fertileDiscard',
+        });
+      } else if (c.kind === 'zombie-unicorn') {
+        s.promptQueue.unshift({
+          kind: 'chooseCardsFromHand',
+          playerId: prompt.playerId,
+          reason: 'Zombie Unicorn: choose a Unicorn card from your hand to DISCARD (then bring a Unicorn from the discard pile into your Stable).',
+          count: 1,
+          optional: true,
+          filter: 'unicorn',
+          effectTag: 'zombieDiscard',
+        });
+      } else if (c.kind === 'angel-unicorn') {
+        removeFromStable(s, prompt.playerId, c.id, 'sacrifice', { sourceType: 'unicorn' });
+        s.promptQueue.unshift({
+          kind: 'chooseFromPile',
+          playerId: prompt.playerId,
+          reason: 'Angel Unicorn: choose a Unicorn card from the discard pile to bring into your Stable.',
+          optional: false,
+          pile: 'discard',
+          filter: 'unicorn',
+          destination: 'stable',
+        });
+      } else if (
+        c.kind === 'apocalypse-bunker' ||
+        c.kind === 'dragons-fortune' ||
+        c.kind === 'gingerbread-stable' ||
+        c.kind === 'vip-lounge' ||
+        c.kind === 'extra-tail' ||
+        c.kind === 'aura-of-order'
+      ) {
+        drawCards(s, prompt.playerId, 1);
+        pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} drew a card from ${c.name}.`, 'good');
+      } else if (c.kind === 'dwarven-forge') {
+        s.promptQueue.unshift({
+          kind: 'chooseFromPile',
+          playerId: prompt.playerId,
+          reason: 'Dwarven Armory: choose a Magic card from the discard pile to add to your hand.',
+          optional: true,
+          pile: 'discard',
+          filter: 'magic',
+          destination: 'hand',
+        });
+      } else if (c.kind === 'saved-by-the-sigil') {
+        s.promptQueue.unshift({
+          kind: 'chooseFromPile',
+          playerId: prompt.playerId,
+          reason: 'Saved by the Sigil: choose a Unicorn card from the discard pile to add to your hand.',
+          optional: true,
+          pile: 'discard',
+          filter: 'unicorn',
+          destination: 'hand',
+        });
+      } else if (c.kind === 'gift-inspector') {
+        s.promptQueue.unshift({
+          kind: 'choosePlayer',
+          playerId: prompt.playerId,
+          reason: "Gift Inspector: choose another player to pull a card at random from their hand.",
+          optional: true,
+          allowSelf: false,
+          effectTag: 'americornPull',
+        });
+      } else if (c.kind === 'rainbow-mane') {
+        s.promptQueue.unshift({
+          kind: 'chooseCardsFromHand',
+          playerId: prompt.playerId,
+          reason: 'Rainbow Mane: choose a Basic Unicorn card from your hand to bring into your Stable.',
+          count: 1,
+          optional: true,
+          filter: 'basicUnicorn',
+          effectTag: 'rainbowUnicornBring',
+        });
+      } else if (c.kind === 'summoning-ritual') {
+        s.promptQueue.unshift({
+          kind: 'chooseCardsFromHand',
+          playerId: prompt.playerId,
+          reason: 'Summoning Ritual: choose 2 Unicorn cards from your hand to DISCARD (then bring a Unicorn from the discard pile into your Stable).',
+          count: 2,
+          optional: true,
+          filter: 'unicorn',
+          effectTag: 'summoningRitualDiscard',
+        });
+      } else if (c.kind === 'unicorn-lasso') {
+        s.promptQueue.unshift({
+          kind: 'chooseStableCard',
+          playerId: prompt.playerId,
+          reason: 'Unicorn Lasso: choose a Unicorn card to STEAL.',
+          optional: true,
+          scope: 'others',
+          filter: 'unicorn',
+          mode: 'steal',
+          sourceType: 'upgrade',
         });
       } else if (c.kind === 'caffeine-overload') {
         s.promptQueue.unshift({
@@ -1506,11 +2619,11 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
           filter: 'any',
           effectTag: 'clawMachineDiscard',
         });
-      } else if (c.kind === 'glitter-bomb') {
+      } else if (c.kind === 'glitter-bomb' || c.kind === 'altar-of-chaos') {
         s.promptQueue.unshift({
           kind: 'chooseStableCard',
           playerId: prompt.playerId,
-          reason: 'Glitter Bomb: choose a card in your Stable to SACRIFICE (then DESTROY a card).',
+          reason: `${c.name}: choose a card in your Stable to SACRIFICE (then DESTROY a card).`,
           optional: true,
           scope: 'own',
           filter: 'any',
@@ -1574,24 +2687,38 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
         chosen.push(hand.splice(idx, 1)[0]!);
       }
 
-      if (prompt.effectTag === 'rainbowUnicornBring') {
+      if (prompt.effectTag === 'rainbowUnicornBring' || prompt.effectTag === 'unicornBring') {
         const u = chosen[0]!;
-        const qb = queenBeeOwner(s);
+        const qb = u.type === 'basicUnicorn' ? queenBeeOwner(s) : null;
         const dest = qb ?? prompt.playerId;
         enterStable(s, dest, u, true);
-        pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} brought ${u.name} into Stable with Rainbow Unicorn.`, 'good');
+        pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} brought ${u.name} into Stable.`, 'good');
       } else {
         s.discard.push(...chosen);
         pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} discarded ${chosen.map((c) => c.name).join(', ')}.`, 'normal');
 
-        if (prompt.effectTag === 'necromancerDiscard') {
+        if (
+          prompt.effectTag === 'necromancerDiscard' ||
+          prompt.effectTag === 'zombieDiscard' ||
+          prompt.effectTag === 'summoningRitualDiscard'
+        ) {
           s.promptQueue.unshift({
             kind: 'chooseFromPile',
             playerId: prompt.playerId,
-            reason: 'Necromancer Unicorn: choose a Unicorn card from the discard pile to bring into your Stable.',
+            reason: 'Choose a Unicorn card from the discard pile to bring into your Stable.',
             optional: false,
             pile: 'discard',
             filter: 'unicorn',
+            destination: 'stable',
+          });
+        } else if (prompt.effectTag === 'fertileDiscard') {
+          s.promptQueue.unshift({
+            kind: 'chooseFromPile',
+            playerId: prompt.playerId,
+            reason: 'Extremely Fertile Unicorn: choose a Baby Unicorn from the Nursery to bring into your Stable.',
+            optional: false,
+            pile: 'nursery',
+            filter: 'baby',
             destination: 'stable',
           });
         } else if (prompt.effectTag === 'seductiveDiscard') {
@@ -1717,12 +2844,24 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
         return;
       }
 
+      if (prompt.effectTag?.startsWith('blackSpotSacrifice:')) {
+        const spotId = Number(prompt.effectTag.split(':')[1]);
+        removeFromStable(s, prompt.playerId, target.card.id, 'sacrifice', { sourceType: 'downgrade' });
+        removeFromStable(s, prompt.playerId, spotId, 'sacrifice', { sourceType: 'downgrade' });
+        pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} sacrificed ${target.card.name} to remove The Black Spot.`, 'good');
+        advanceFlow(s);
+        return;
+      }
+
       if (prompt.mode === 'steal') {
         removeFromStable(s, target.ownerId, target.card.id, 'steal', {
           toPlayerId: prompt.playerId,
           sourceType: prompt.sourceType,
         });
         pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} stole ${target.card.name} from ${seatName(s, target.ownerId)}!`, 'good');
+        if (prompt.effectTag === 'cutthroatSteal') {
+          drawCards(s, target.ownerId, 1);
+        }
       } else if (prompt.mode === 'bounce') {
         removeFromStable(s, target.ownerId, target.card.id, 'bounce', { sourceType: prompt.sourceType });
         pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} returned ${target.card.name} to ${seatName(s, target.ownerId)}'s hand.`, 'normal');
@@ -1736,6 +2875,8 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
             filter: 'any',
             effectTag: 'discard',
           });
+        } else if (prompt.effectTag === 'giftReceiptBounce') {
+          drawCards(s, prompt.playerId, 2);
         }
       } else if (prompt.mode === 'sacrifice') {
         removeFromStable(s, target.ownerId, target.card.id, 'sacrifice', { sourceType: prompt.sourceType });
@@ -1750,6 +2891,51 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
             filter: 'unicorn',
             destination: 'stable',
           });
+        } else if (prompt.effectTag === 'rainbowApocalypseSacrifice') {
+          s.promptQueue.unshift(
+            {
+              kind: 'chooseFromPile',
+              playerId: prompt.playerId,
+              reason: 'Rainbow Apocalypse (1 of 2): choose a Unicorn card from the discard pile to bring into your Stable.',
+              optional: true,
+              pile: 'discard',
+              filter: 'unicorn',
+              destination: 'stable',
+            },
+            {
+              kind: 'chooseFromPile',
+              playerId: prompt.playerId,
+              reason: 'Rainbow Apocalypse (2 of 2): choose a second Unicorn card from the discard pile to bring into your Stable.',
+              optional: true,
+              pile: 'discard',
+              filter: 'unicorn',
+              destination: 'stable',
+            },
+          );
+        } else if (prompt.effectTag === 'nightmarePactSacrifice') {
+          drawCards(s, prompt.playerId, 2);
+          if (s.phase !== 'gameOver') {
+            s.promptQueue.unshift({
+              kind: 'chooseFromPile',
+              playerId: prompt.playerId,
+              reason: 'Nightmare Pact: choose a Unicorn card from the discard pile to bring into your Stable.',
+              optional: true,
+              pile: 'discard',
+              filter: 'unicorn',
+              destination: 'stable',
+            });
+          }
+        } else if (prompt.effectTag === 'unicornOfDeathSacrifice') {
+          s.promptQueue.unshift({
+            kind: 'chooseStableCard',
+            playerId: prompt.playerId,
+            reason: 'Unicorn of Death: choose a Unicorn card in another Stable to DESTROY.',
+            optional: false,
+            scope: 'others',
+            filter: 'unicorn',
+            mode: 'destroy',
+            sourceType: 'unicorn',
+          });
         } else if (prompt.effectTag === 'sadisticRitualSacrifice') {
           drawCards(s, prompt.playerId, 1);
         } else if (prompt.effectTag === 'caffeineOverloadSacrifice') {
@@ -1758,7 +2944,7 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
           s.promptQueue.unshift({
             kind: 'chooseStableCard',
             playerId: prompt.playerId,
-            reason: 'Glitter Bomb: choose a card in another Stable to DESTROY.',
+            reason: 'Choose a card in another Stable to DESTROY.',
             optional: false,
             scope: 'others',
             filter: 'any',
@@ -1790,11 +2976,46 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
           );
         }
       } else if (prompt.mode === 'destroy') {
+        const hadHarness =
+          target.ownerId !== prompt.playerId &&
+          isUnicornType(target.card.type) &&
+          hasLeatherHarness(s, target.ownerId);
         removeFromStable(s, target.ownerId, target.card.id, 'destroy', { sourceType: prompt.sourceType });
         pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} destroyed ${target.card.name} in ${seatName(s, target.ownerId)}'s Stable!`, 'danger');
         if (prompt.effectTag === 'rhinocornDestroy') {
           s.skipToEndOfTurn = true;
           pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)}'s turn ends immediately after Rhinocorn's charge.`, 'normal');
+        } else if (prompt.effectTag === 'jackReapercornDestroy' && handOf(s, prompt.playerId).length > 0) {
+          s.promptQueue.unshift({
+            kind: 'chooseCardsFromHand',
+            playerId: prompt.playerId,
+            reason: 'Jack the Reapercorn: you must DISCARD a card.',
+            count: 1,
+            optional: false,
+            filter: 'any',
+            effectTag: 'discard',
+          });
+        } else if (prompt.effectTag === 'blackHoleDestroy' && handOf(s, target.ownerId).length > 0) {
+          s.promptQueue.unshift({
+            kind: 'chooseCardsFromHand',
+            playerId: target.ownerId,
+            reason: 'Black Hole: you must DISCARD a card.',
+            count: 1,
+            optional: false,
+            filter: 'any',
+            effectTag: 'discard',
+          });
+        }
+        if (hadHarness && handOf(s, prompt.playerId).length > 0) {
+          s.promptQueue.unshift({
+            kind: 'chooseCardsFromHand',
+            playerId: prompt.playerId,
+            reason: `Spiked Harness: you destroyed ${seatName(s, target.ownerId)}'s Unicorn and must DISCARD a card.`,
+            count: 1,
+            optional: false,
+            filter: 'any',
+            effectTag: 'discard',
+          });
         }
       }
 
@@ -1824,7 +3045,7 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
               kind: 'chooseFromOpponentHand',
               playerId: prompt.playerId,
               targetPlayerId: targetId,
-              reason: `Americorn (Nanny Cam active): choose a card from ${seatName(s, targetId)}'s visible hand.`,
+              reason: `Nanny Cam active: choose a card from ${seatName(s, targetId)}'s visible hand.`,
             });
           } else {
             const idx = rngInt(s.rngState, victimHand.length);
@@ -1838,12 +3059,41 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
           s.promptQueue.unshift({
             kind: 'chooseCardsFromHand',
             playerId: targetId,
-            reason: `Annoying Flying Unicorn: ${seatName(s, prompt.playerId)} forced you to DISCARD a card.`,
+            reason: `${seatName(s, prompt.playerId)} forced you to DISCARD a card.`,
             count: 1,
             optional: false,
             filter: 'any',
             effectTag: 'discard',
           });
+        }
+      } else if (prompt.effectTag === 'dominatrixForceSacrifice') {
+        s.promptQueue.unshift({
+          kind: 'chooseStableCard',
+          playerId: targetId,
+          reason: `Dominatrix Unicorn: ${seatName(s, prompt.playerId)} forced you to SACRIFICE a Unicorn card.`,
+          optional: false,
+          scope: 'own',
+          filter: 'unicorn',
+          mode: 'sacrifice',
+          sourceType: 'unicorn',
+        });
+      } else if (prompt.effectTag === 'shrinkrayTarget') {
+        const st = stableOf(s, targetId);
+        if (!hasPandamonium(s, targetId)) {
+          const toShrink = st.unicorns.filter((u) => !(u.kind === 'puppicorn' && !isBlinded(s, targetId)));
+          for (const u of toShrink) {
+            st.unicorns = st.unicorns.filter((x) => x.id !== u.id);
+            if (u.type === 'babyUnicorn') {
+              s.nursery.push(u);
+            } else {
+              s.discard.push(u);
+            }
+            const baby = s.nursery.shift();
+            if (baby) {
+              st.unicorns.push(baby);
+            }
+          }
+          pushLog(s, prompt.playerId, `Unicorn Shrinkray shrank ${seatName(s, targetId)}'s Stable into Baby Unicorns!`, 'danger');
         }
       } else if (prompt.effectTag === 'blatantThieveryLook') {
         if (handOf(s, targetId).length > 0) {

@@ -1,9 +1,10 @@
-// Unstable Unicorns — GameModule (2nd Edition Base Game implemented).
+// Unstable Unicorns — GameModule (all Base Editions + all 8 Expansions implemented).
 
 import type { GameModule } from '@/core/module';
 import type { Seat } from '@/core/types';
 import { chooseAIAction } from './ai';
 import { applyAction, createInitialState } from './reducer';
+import { Thumbnail } from './Thumbnail';
 import type { UuAction, UuConfig, UuState } from './types';
 
 const NAME = 'Unstable Unicorns';
@@ -15,14 +16,13 @@ export const unstableUnicornsModule: GameModule<UuState, UuAction, UuConfig> = {
   minPlayers: 2,
   maxPlayers: 8,
 
+  Thumbnail,
+
   defaultConfig: (_seats: Seat[]): UuConfig => ({ expansions: [], edition: 'base-2nd' }),
 
   validateConfig: (config) => {
     const errors: string[] = [];
     if (!config.edition) errors.push('Pick a base edition.');
-    if (config.expansions.length > 0) {
-      errors.push('Expansions are not implemented yet — play the 2nd Edition base game.');
-    }
     return errors;
   },
 

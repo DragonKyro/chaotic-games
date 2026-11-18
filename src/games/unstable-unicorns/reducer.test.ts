@@ -1,9 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import type { Seat } from '@/core/types';
-import { UU_BABY_DEFS, UU_MAIN_DECK_DEFS } from './cards';
+import { UU_BABY_DEFS, UU_EXPANSION_DEFS, UU_MAIN_DECK_DEFS } from './cards';
 import { chooseAIAction } from './ai';
-import { applyAction, createInitialState, unicornCount } from './reducer';
-import type { UuCard, UuConfig } from './types';
+import { unstableUnicornsModule } from './module';
+import {
+  applyAction,
+  canPlayCardFromHand,
+  canPlayNeigh,
+  createInitialState,
+  handLimitOf,
+  hasBrokenStable,
+  hasPandamonium,
+  isBlinded,
+  unicornCount,
+} from './reducer';
+import { UU_EXPANSIONS } from './types';
+import type { UuCard, UuConfig, UuEdition, UuExpansionId } from './types';
 
 function makeSeats(n: number): Seat[] {
   return Array.from({ length: n }, (_, i) => ({
@@ -173,5 +185,236 @@ describe('Unstable Unicorns — core mechanics & player decisions', () => {
         expect(s.winnerId).toBeTruthy();
       }
     }
+  });
+});
+
+describe('Unstable Unicorns — all 8 Expansions & Editions', () => {
+  it('registers Thumbnail and validates configs with expansions enabled', () => {
+    expect(unstableUnicornsModule.Thumbnail).toBeDefined();
+    const allExpIds = UU_EXPANSIONS.map((e) => e.id as UuExpansionId);
+    expect(unstableUnicornsModule.validateConfig({ edition: 'base-2nd', expansions: allExpIds })).toEqual([]);
+  });
+
+  it('includes expansion cards in Nursery and Main Deck for each of the 8 expansions', () => {
+    const seats = makeSeats(3);
+    for (const exp of UU_EXPANSIONS) {
+      const expId = exp.id as UuExpansionId;
+      const defs = UU_EXPANSION_DEFS.filter((d) => d.source === expId);
+      expect(defs.length).toBeGreaterThanOrEqual(8);
+
+      const s = createInitialState({ edition: 'base-2nd', expansions: [expId] }, 77, seats);
+      const allDealt = [
+        ...s.deck,
+        ...s.nursery,
+        ...Object.values(s.hands).flat(),
+        ...Object.values(s.stables).flatMap((st) => [...st.unicorns, ...st.upgrades, ...st.downgrades]),
+      ];
+      expect(allDealt.some((c) => c.source === expId)).toBe(true);
+    }
+  });
+
+  it("Dragon's Blessing overrides Pandamonium, Blinding Light, Slowdown, Broken Stable, and Lump of Coal", () => {
+    const seats = makeSeats(2);
+    const s = createInitialState({ edition: 'base-2nd', expansions: ['dragons', 'christmas'] }, 19, seats);
+    s.stables.p1!.unicorns.push({
+      id: 1001,
+      kind: 'bahamuticorn',
+      name: 'Bahamuticorn',
+      type: 'magicalUnicorn',
+      text: '',
+      source: 'dragons',
+    });
+    s.stables.p1!.downgrades.push(
+      { id: 1002, kind: 'pandamonium', name: 'Pandamonium', type: 'downgrade', text: '' },
+      { id: 1003, kind: 'blinding-light', name: 'Blinding Light', type: 'downgrade', text: '' },
+      { id: 1004, kind: 'slowdown', name: 'Slowdown', type: 'downgrade', text: '' },
+      { id: 1005, kind: 'broken-stable', name: 'Broken Stable', type: 'downgrade', text: '' },
+      { id: 1006, kind: 'lump-of-coal', name: 'Lump of Coal', type: 'downgrade', text: '', source: 'christmas' },
+    );
+    s.hands.p1 = [{ id: 1007, kind: 'neigh', name: 'Neigh', type: 'instant', text: '' }];
+
+    expect(hasPandamonium(s, 'p1')).toBe(true);
+    expect(isBlinded(s, 'p1')).toBe(true);
+    expect(hasBrokenStable(s, 'p1')).toBe(true);
+    expect(canPlayNeigh(s, 'p1')).toBe(false);
+    expect(unicornCount(s, 'p1')).toBe(0);
+    expect(handLimitOf(s, 'p1')).toBe(5);
+
+    // Add Dragon's Blessing -> all Downgrades on p1's Stable are ignored!
+    s.stables.p1!.upgrades.push({
+      id: 1008,
+      kind: 'dragons-blessing',
+      name: "Dragon's Blessing",
+      type: 'upgrade',
+      text: 'Effects of your Downgrade cards do not affect you.',
+      source: 'dragons',
+    });
+
+    expect(hasPandamonium(s, 'p1')).toBe(false);
+    expect(isBlinded(s, 'p1')).toBe(false);
+    expect(hasBrokenStable(s, 'p1')).toBe(false);
+    expect(canPlayNeigh(s, 'p1')).toBe(true);
+    // 1 baby + 1 Bahamuticorn (worth 2) = 3
+    expect(unicornCount(s, 'p1')).toBe(3);
+    expect(handLimitOf(s, 'p1')).toBe(7);
+  });
+
+  it('supports Adventure Instant cards (Unicorn Net, Absorb and Reflect, Redirect, Flare Gun)', () => {
+    const seats = makeSeats(2);
+    let s = createInitialState({ edition: 'base-2nd', expansions: ['adventures'] }, 33, seats);
+    s = applyAction(s, { type: 'drawForTurn', playerId: 'p1' });
+
+    const playedUnicorn: UuCard = {
+      id: 1101,
+      kind: 'extreme-adventurer-unicorn',
+      name: 'Extreme Adventurer Unicorn',
+      type: 'magicalUnicorn',
+      text: '',
+      source: 'adventures',
+    };
+    const unicornNet: UuCard = {
+      id: 1102,
+      kind: 'unicorn-net',
+      name: 'Unicorn Net',
+      type: 'instant',
+      text: '',
+      source: 'adventures',
+    };
+
+    s.hands.p1 = [playedUnicorn];
+    s.hands.p2 = [unicornNet];
+
+    s = applyAction(s, { type: 'playCard', playerId: 'p1', cardId: 1101 });
+    expect(s.subPhase).toBe('awaitingNeigh');
+    expect(s.activePlayerId).toBe('p2');
+
+    // p2 plays Unicorn Net -> captures Extreme Adventurer Unicorn into p2's hand!
+    s = applyAction(s, { type: 'playNeigh', playerId: 'p2', cardId: 1102 });
+    expect(s.pending).toBeNull();
+    expect(s.hands.p2?.some((c) => c.id === 1101)).toBe(true);
+    expect(s.stables.p1?.unicorns.some((c) => c.id === 1101)).toBe(false);
+  });
+
+  it('supports Redirect Instant card stealing an opponent Unicorn play into responder Stable', () => {
+    const seats = makeSeats(2);
+    let s = createInitialState({ edition: 'base-2nd', expansions: ['adventures'] }, 34, seats);
+    s = applyAction(s, { type: 'drawForTurn', playerId: 'p1' });
+
+    const playedUnicorn: UuCard = {
+      id: 1201,
+      kind: 'basic-red',
+      name: 'Basic Unicorn (Red)',
+      type: 'basicUnicorn',
+      text: '',
+    };
+    const redirectCard: UuCard = {
+      id: 1202,
+      kind: 'redirect',
+      name: 'Redirect',
+      type: 'instant',
+      text: '',
+      source: 'adventures',
+    };
+
+    s.hands.p1 = [playedUnicorn];
+    s.hands.p2 = [redirectCard];
+
+    s = applyAction(s, { type: 'playCard', playerId: 'p1', cardId: 1201 });
+    s = applyAction(s, { type: 'playNeigh', playerId: 'p2', cardId: 1202 });
+    expect(s.pending).toBeNull();
+    expect(s.stables.p2?.unicorns.some((c) => c.id === 1201)).toBe(true);
+    expect(s.stables.p1?.unicorns.some((c) => c.id === 1201)).toBe(false);
+  });
+
+  it('supports 1st Edition (base) Puppicorn end-of-turn movement and Basic Unicorn Upgrade requirements', () => {
+    const seats = makeSeats(2);
+    let s = createInitialState({ edition: 'base', expansions: [] }, 55, seats);
+
+    const extraTail: UuCard = {
+      id: 1301,
+      kind: 'extra-tail',
+      name: 'Extra Tail',
+      type: 'upgrade',
+      text: '',
+      source: 'base',
+    };
+    // Cannot play Extra Tail with only a Baby Unicorn in Stable
+    expect(canPlayCardFromHand(s, 'p1', extraTail, 'p1')).toBe(false);
+
+    // Add a Basic Unicorn -> now Extra Tail is playable
+    s.stables.p1!.unicorns.push({
+      id: 1302,
+      kind: 'basic-blue',
+      name: 'Basic Unicorn (Blue)',
+      type: 'basicUnicorn',
+      text: '',
+    });
+    expect(canPlayCardFromHand(s, 'p1', extraTail, 'p1')).toBe(true);
+
+    // Add Puppicorn to p1's Stable and finish p1's turn -> Puppicorn moves to p2's Stable
+    s.stables.p1!.unicorns.push({
+      id: 1303,
+      kind: 'puppicorn',
+      name: 'Puppicorn',
+      type: 'magicalUnicorn',
+      text: '',
+      source: 'base',
+    });
+    s = applyAction(s, { type: 'drawForTurn', playerId: 'p1' });
+    s = applyAction(s, { type: 'drawInsteadOfPlaying', playerId: 'p1' });
+    expect(s.turnPlayerId).toBe('p2');
+    expect(s.stables.p2?.unicorns.some((u) => u.id === 1303)).toBe(true);
+  });
+
+  it('plays full AI-vs-AI games to completion across every Edition', () => {
+    const editions: UuEdition[] = ['base-2nd', 'base', 'control', 'chaos', 'diamond', 'travel'];
+    for (const edition of editions) {
+      let s = createInitialState({ edition, expansions: [] }, 91, makeSeats(3));
+      let steps = 0;
+      while (s.phase !== 'gameOver' && steps < 2500) {
+        const active = s.activePlayerId;
+        expect(active).toBeTruthy();
+        const action = chooseAIAction(s, active!);
+        expect(action).toBeTruthy();
+        s = applyAction(s, action!);
+        steps++;
+      }
+      expect(s.phase).toBe('gameOver');
+      expect(s.winnerId).toBeTruthy();
+    }
+  });
+
+  it('plays full AI-vs-AI games to completion for each of the 8 Expansions and all 8 combined', () => {
+    const seats = makeSeats(3);
+    for (const exp of UU_EXPANSIONS) {
+      const expId = exp.id as UuExpansionId;
+      let s = createInitialState({ edition: 'base-2nd', expansions: [expId] }, 123, seats);
+      let steps = 0;
+      while (s.phase !== 'gameOver' && steps < 2500) {
+        const active = s.activePlayerId;
+        expect(active).toBeTruthy();
+        const action = chooseAIAction(s, active!);
+        expect(action).toBeTruthy();
+        s = applyAction(s, action!);
+        steps++;
+      }
+      expect(s.phase).toBe('gameOver');
+      expect(s.winnerId).toBeTruthy();
+    }
+
+    // All 8 expansions combined
+    const allExpIds = UU_EXPANSIONS.map((e) => e.id as UuExpansionId);
+    let sAll = createInitialState({ edition: 'base-2nd', expansions: allExpIds }, 456, seats);
+    let steps = 0;
+    while (sAll.phase !== 'gameOver' && steps < 3000) {
+      const active = sAll.activePlayerId;
+      expect(active).toBeTruthy();
+      const action = chooseAIAction(sAll, active!);
+      expect(action).toBeTruthy();
+      sAll = applyAction(sAll, action!);
+      steps++;
+    }
+    expect(sAll.phase).toBe('gameOver');
+    expect(sAll.winnerId).toBeTruthy();
   });
 });

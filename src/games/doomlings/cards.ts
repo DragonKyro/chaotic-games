@@ -1,8 +1,8 @@
-// Doomlings — verified Base Game deck (Birth of Life, 25 Ages, 15 Catastrophes, and 113 Trait cards).
+// Doomlings — verified Base Game deck + all 7 official Expansion pools.
 
 import type { RngState } from '@/core/rng';
 import { shuffle } from '@/core/rng';
-import type { DmAgeCard, DmTraitCard, DmTraitColor } from './types';
+import type { DmAgeCard, DmObjectiveCard, DmTraitCard, DmTraitColor } from './types';
 
 export const DM_BIRTH_OF_LIFE: Omit<DmAgeCard, 'id'> = {
   name: 'The Birth of Life',
@@ -437,20 +437,942 @@ const TRAIT_SEEDS: readonly TraitSeed[] = [
   { kind: 'flatulence', name: 'Flatulence', color: 'colorless', points: 3, dominant: false, genePoolDelta: 0, copies: 2, text: 'Silent but deadly.' },
 ];
 
-export function buildDmDecks(rng: RngState): {
+// ============================================================================
+// Expansion Ages & Catastrophes
+// ============================================================================
+
+export const DM_EXPANSION_AGE_DEFS: readonly Omit<DmAgeCard, 'id'>[] = [
+  // Overlush
+  {
+    name: 'Overlush Canopy',
+    kind: 'age',
+    genePoolDelta: 0,
+    ruleTag: 'allDraw2',
+    source: 'overlush',
+    text: 'Jungle abundance: each player draws 2 cards at the start of this round.',
+  },
+  {
+    name: 'Pollen Storm',
+    kind: 'age',
+    genePoolDelta: 1,
+    ruleTag: 'plusOneGenePoolPerm',
+    source: 'overlush',
+    text: 'Dense pollen cloud mutates life: all players gain +1 Gene Pool.',
+  },
+  // Imaginary Ends
+  {
+    name: 'Techno-Renaissance',
+    kind: 'age',
+    genePoolDelta: 0,
+    ruleTag: 'allDraw2',
+    source: 'imaginary-ends',
+    text: 'Techlings flourish: each player draws 2 cards at the start of this round.',
+  },
+  {
+    name: 'Jurassic Surge',
+    kind: 'age',
+    genePoolDelta: 1,
+    ruleTag: 'plusOneGenePoolPerm',
+    source: 'imaginary-ends',
+    text: 'Dinolings rule the earth: all players gain +1 Gene Pool.',
+  },
+  // Legends of Enderas
+  {
+    name: 'Realm of Enderas',
+    kind: 'age',
+    genePoolDelta: 0,
+    ruleTag: 'allDraw1',
+    source: 'legends-of-enderas',
+    text: 'Enter the fabled realm: each player draws 1 card at the start of this round.',
+  },
+  {
+    name: "King's Decree",
+    kind: 'age',
+    genePoolDelta: 0,
+    ruleTag: 'protectTraitPiles',
+    source: 'legends-of-enderas',
+    text: 'Royal protection: traits in Trait Piles cannot be stolen or destroyed this round.',
+  },
+  // Ancient Fates
+  {
+    name: 'Whispers of Destiny',
+    kind: 'age',
+    genePoolDelta: 0,
+    ruleTag: 'allSuppress1',
+    source: 'ancient-fates',
+    text: 'Ancient Fates: each player may Suppress 1 card from their hand at the start of this round.',
+  },
+  // Shadow Puppets
+  {
+    name: 'Theater of Shadows',
+    kind: 'age',
+    genePoolDelta: 0,
+    ruleTag: 'allSuppress1',
+    source: 'shadow-puppets',
+    text: 'Behind the curtain: each player may Suppress 1 card from their hand at the start of this round.',
+  },
+  // Castle Glass
+  {
+    name: 'Glass Citadel',
+    kind: 'age',
+    genePoolDelta: 0,
+    ruleTag: 'protectTraitPiles',
+    source: 'castle-glass',
+    text: 'Crystalline walls: traits in Trait Piles cannot be swapped, stolen, or destroyed this round.',
+  },
+  {
+    name: 'Fragile Truce',
+    kind: 'age',
+    genePoolDelta: 0,
+    ruleTag: 'noDominants',
+    source: 'castle-glass',
+    text: 'Delicate balance: players cannot play Dominant traits this round.',
+  },
+  // Mokoko Village
+  {
+    name: 'Mokoko Festival',
+    kind: 'age',
+    genePoolDelta: 0,
+    ruleTag: 'allDraw2',
+    source: 'mokoko-village',
+    text: 'Village celebration: each player draws 2 cards at the start of this round.',
+  },
+];
+
+export const DM_EXPANSION_CATASTROPHE_DEFS: readonly Omit<DmAgeCard, 'id'>[] = [
+  {
+    name: 'Spore Collapse',
+    kind: 'catastrophe',
+    genePoolDelta: -1,
+    ruleTag: 'none',
+    catastropheEffect: 'drawPerColorType',
+    worldsEndEffect: 'plus2PerMultiColor',
+    source: 'overlush',
+    text: '-1 Gene Pool. Draw 1 card for every color in your Trait Pile.',
+    worldsEndText: "World's End: +2 points for each Multi-color trait in your Trait Pile.",
+  },
+  {
+    name: 'Sands of Oblivion',
+    kind: 'catastrophe',
+    genePoolDelta: -1,
+    ruleTag: 'none',
+    catastropheEffect: 'suppressOneFromHand',
+    worldsEndEffect: 'plus1PerSuppressed',
+    source: 'ancient-fates',
+    text: '-1 Gene Pool. Each player Suppresses 1 card from their hand.',
+    worldsEndText: "World's End: +1 additional point for each card you have Suppressed.",
+  },
+];
+
+// ============================================================================
+// Meaning of Life & Treasure Objectives (Imaginary Ends & Legends of Enderas)
+// ============================================================================
+
+export const DM_OBJECTIVE_DEFS: readonly Omit<DmObjectiveCard, 'id'>[] = [
+  // Meaning of Life (Imaginary Ends)
+  {
+    name: 'The Chromatic Path',
+    kind: 'meaningOfLife',
+    source: 'imaginary-ends',
+    points: 6,
+    conditionTag: 'twoOfEachColor',
+    text: 'Have at least 2 traits of each of the 4 colors (Red, Blue, Green, Purple) in your Trait Pile (+6 pts).',
+  },
+  {
+    name: 'The Boundless Mind',
+    kind: 'meaningOfLife',
+    source: 'imaginary-ends',
+    points: 5,
+    conditionTag: 'genePool6Plus',
+    text: 'Have a Gene Pool of 6+ (+5 pts).',
+  },
+  {
+    name: 'The Minimalist Sage',
+    kind: 'meaningOfLife',
+    source: 'imaginary-ends',
+    points: 6,
+    conditionTag: 'fewestTraits',
+    text: 'Have the fewest traits in your Trait Pile (+6 pts).',
+  },
+  {
+    name: 'The Crimson Calling',
+    kind: 'meaningOfLife',
+    source: 'imaginary-ends',
+    points: 5,
+    conditionTag: 'fiveRed',
+    text: 'Have 5+ Red traits in your Trait Pile (+5 pts).',
+  },
+  {
+    name: 'The Apex Heart',
+    kind: 'meaningOfLife',
+    source: 'imaginary-ends',
+    points: 4,
+    conditionTag: 'twoDominants',
+    text: 'Have 2 Dominant traits in your Trait Pile (+4 pts).',
+  },
+  {
+    name: 'The Pure Spirit',
+    kind: 'meaningOfLife',
+    source: 'imaginary-ends',
+    points: 5,
+    conditionTag: 'fourColorless',
+    text: 'Have 4+ Colorless traits in your Trait Pile (+5 pts).',
+  },
+  // Treasures (Legends of Enderas)
+  {
+    name: 'Crown of the Tides',
+    kind: 'treasure',
+    source: 'legends-of-enderas',
+    points: 5,
+    conditionTag: 'fiveBlue',
+    text: 'Have 5+ Blue traits in your Trait Pile (+5 pts).',
+  },
+  {
+    name: 'Emerald Chalice',
+    kind: 'treasure',
+    source: 'legends-of-enderas',
+    points: 5,
+    conditionTag: 'fiveGreen',
+    text: 'Have 5+ Green traits in your Trait Pile (+5 pts).',
+  },
+  {
+    name: 'Amethyst Scepter',
+    kind: 'treasure',
+    source: 'legends-of-enderas',
+    points: 5,
+    conditionTag: 'fivePurple',
+    text: 'Have 5+ Purple traits in your Trait Pile (+5 pts).',
+  },
+  {
+    name: 'Hoard of Ages',
+    kind: 'treasure',
+    source: 'legends-of-enderas',
+    points: 5,
+    conditionTag: 'eightTraits',
+    text: 'Have 8+ traits in your Trait Pile (+5 pts).',
+  },
+  {
+    name: 'Prismatic Reliquary',
+    kind: 'treasure',
+    source: 'legends-of-enderas',
+    points: 6,
+    conditionTag: 'twoOfEachColor',
+    text: 'Have at least 2 traits of each of the 4 colors (Red, Blue, Green, Purple) in your Trait Pile (+6 pts).',
+  },
+  {
+    name: 'Grail of Vitality',
+    kind: 'treasure',
+    source: 'legends-of-enderas',
+    points: 5,
+    conditionTag: 'genePool6Plus',
+    text: 'Have a Gene Pool of 6+ (+5 pts).',
+  },
+];
+
+// ============================================================================
+// Expansion Trait Pools (all 7 official expansions)
+// ============================================================================
+
+export const DM_EXPANSION_TRAIT_SEEDS: readonly TraitSeed[] = [
+  // --------------------------------------------------------------------------
+  // 1. Overlush (Multi-color traits & lush Dominants)
+  // --------------------------------------------------------------------------
+  {
+    kind: 'overlush-bloom',
+    name: 'Overlush Bloom',
+    color: 'green',
+    secondaryColor: 'blue',
+    points: 4,
+    dominant: true,
+    genePoolDelta: 1,
+    dropOfLifeTag: 'perMultiColor',
+    dropOfLifeMultiplier: 2,
+    source: 'overlush',
+    text: 'Dominant (Green/Blue): +1 Gene Pool. Drop of Life: +2 points for each Multi-color trait in your Trait Pile.',
+  },
+  {
+    kind: 'prismatic-apex',
+    name: 'Prismatic Apex',
+    color: 'red',
+    secondaryColor: 'purple',
+    points: 5,
+    dominant: true,
+    genePoolDelta: 0,
+    dropOfLifeTag: 'colorVariety',
+    source: 'overlush',
+    text: 'Dominant (Red/Purple): +2 points for each distinct color in your Trait Pile.',
+  },
+  {
+    kind: 'venus-snaptrap',
+    name: 'Venus Snaptrap',
+    color: 'red',
+    secondaryColor: 'green',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'destroyOpponentTrait',
+    copies: 2,
+    source: 'overlush',
+    text: "Red/Green. Action: Discard a non-Dominant trait from an opponent's Trait Pile.",
+  },
+  {
+    kind: 'bioluminescent-kelp',
+    name: 'Bioluminescent Kelp',
+    color: 'blue',
+    secondaryColor: 'green',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 1,
+    copies: 2,
+    source: 'overlush',
+    text: 'Blue/Green. +1 Gene Pool.',
+  },
+  {
+    kind: 'toxic-orchid',
+    name: 'Toxic Orchid',
+    color: 'green',
+    secondaryColor: 'purple',
+    points: 1,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'stealRandomHandCard',
+    copies: 2,
+    source: 'overlush',
+    text: "Green/Purple. Action: Steal 1 random card from an opponent's hand.",
+  },
+  {
+    kind: 'magma-coral',
+    name: 'Magma Coral',
+    color: 'red',
+    secondaryColor: 'blue',
+    points: 3,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'draw1',
+    copies: 2,
+    source: 'overlush',
+    text: 'Red/Blue. Action: Draw 1 card.',
+  },
+  {
+    kind: 'phantom-vine',
+    name: 'Phantom Vine',
+    color: 'blue',
+    secondaryColor: 'purple',
+    points: 1,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'playExtraTrait',
+    copies: 2,
+    source: 'overlush',
+    text: 'Blue/Purple. Action: Play another trait from your hand.',
+  },
+  {
+    kind: 'blood-blossom',
+    name: 'Blood Blossom',
+    color: 'red',
+    secondaryColor: 'purple',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 0,
+    dropOfLifeTag: 'perRed',
+    dropOfLifeMultiplier: 1,
+    copies: 2,
+    source: 'overlush',
+    text: 'Red/Purple. Drop of Life: +1 point for each Red trait in your Trait Pile.',
+  },
+  {
+    kind: 'chromatic-plumage',
+    name: 'Chromatic Plumage',
+    color: 'red',
+    secondaryColor: 'green',
+    points: 1,
+    dominant: false,
+    genePoolDelta: 0,
+    dropOfLifeTag: 'perMultiColor',
+    dropOfLifeMultiplier: 1,
+    copies: 2,
+    source: 'overlush',
+    text: 'Red/Green. Drop of Life: +1 point for each Multi-color trait in your Trait Pile.',
+  },
+
+  // --------------------------------------------------------------------------
+  // 2. Imaginary Ends (Dinolings, Mythlings, Techlings, Magical)
+  // --------------------------------------------------------------------------
+  {
+    kind: 'mecha-core',
+    name: 'Mecha-Core',
+    color: 'blue',
+    points: 4,
+    dominant: true,
+    genePoolDelta: 1,
+    dropOfLifeTag: 'perAttachment',
+    dropOfLifeMultiplier: 2,
+    source: 'imaginary-ends',
+    text: 'Dominant (Techling): +1 Gene Pool. Drop of Life: +2 points for each Attachment in your Trait Pile.',
+  },
+  {
+    kind: 'arcane-unicorn',
+    name: 'Arcane Unicorn',
+    color: 'purple',
+    secondaryColor: 'blue',
+    points: 5,
+    dominant: true,
+    genePoolDelta: 0,
+    worldsEndTag: 'faithChangeColor',
+    source: 'imaginary-ends',
+    text: "Dominant (Magical, Purple/Blue): At World's End, change all of your traits of 1 color into another color.",
+  },
+  {
+    kind: 'tyranno-crest',
+    name: 'Tyranno Crest',
+    color: 'red',
+    points: 5,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'discardFromHand1',
+    copies: 2,
+    source: 'imaginary-ends',
+    text: 'Dinoling: 5 points. Action: Discard 1 card from your hand.',
+  },
+  {
+    kind: 'fossil-excavator',
+    name: 'Fossil Excavator',
+    color: 'red',
+    secondaryColor: 'green',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'discard1ToDraw3',
+    copies: 2,
+    source: 'imaginary-ends',
+    text: 'Dinoling (Red/Green): Action: Discard 1 card from your hand to draw 3 cards.',
+  },
+  {
+    kind: 'tar-pit-stalker',
+    name: 'Tar Pit Stalker',
+    color: 'red',
+    points: 1,
+    dominant: false,
+    genePoolDelta: 0,
+    dropOfLifeTag: 'perDiscardPile3',
+    dropOfLifeMultiplier: 1,
+    copies: 2,
+    source: 'imaginary-ends',
+    text: 'Dinoling: Drop of Life: +1 point for every 3 cards in the discard pile (up to +6).',
+  },
+  {
+    kind: 'phoenix-plume',
+    name: 'Phoenix Plume',
+    color: 'red',
+    secondaryColor: 'purple',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'playFromDiscard1',
+    copies: 2,
+    source: 'imaginary-ends',
+    text: 'Mythling (Red/Purple): Action: Play 1 non-Dominant trait directly from the discard pile.',
+  },
+  {
+    kind: 'symbiotic-coat',
+    name: 'Symbiotic Coat',
+    color: 'green',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 0,
+    isAttachment: true,
+    indestructible: true,
+    grantsIndestructible: true,
+    copies: 2,
+    source: 'imaginary-ends',
+    text: 'Attachment (Mythling): Attach to a non-Dominant trait in your Trait Pile (+2 pts, grants Indestructible).',
+  },
+  {
+    kind: 'cybernetic-implant',
+    name: 'Cybernetic Implant',
+    color: 'blue',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 1,
+    isAttachment: true,
+    copies: 2,
+    source: 'imaginary-ends',
+    text: 'Attachment (Techling): Attach to a non-Dominant trait in your Trait Pile (+2 pts, +1 Gene Pool).',
+  },
+  {
+    kind: 'parasitic-tendrils',
+    name: 'Parasitic Tendrils',
+    color: 'purple',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 0,
+    isAttachment: true,
+    actionTag: 'draw2',
+    copies: 2,
+    source: 'imaginary-ends',
+    text: 'Attachment (Mythling): Attach to a non-Dominant trait in your Trait Pile (+2 pts). Action: Draw 2 cards.',
+  },
+  {
+    kind: 'mana-conduit',
+    name: 'Mana Conduit',
+    color: 'purple',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 1,
+    dropOfLifeTag: 'perHandCard',
+    dropOfLifeMultiplier: 1,
+    copies: 2,
+    source: 'imaginary-ends',
+    text: 'Magical: +1 Gene Pool. Drop of Life: +1 point for each card in your hand.',
+  },
+
+  // --------------------------------------------------------------------------
+  // 3. Legends of Enderas (Relic Attachments, Enderas traits)
+  // --------------------------------------------------------------------------
+  {
+    kind: 'dragon-sovereign',
+    name: 'Dragon Sovereign',
+    color: 'red',
+    points: 6,
+    dominant: true,
+    genePoolDelta: 0,
+    dropOfLifeTag: 'perDominant',
+    dropOfLifeMultiplier: 2,
+    source: 'legends-of-enderas',
+    text: 'Dominant: +2 points for each Dominant trait in your Trait Pile.',
+  },
+  {
+    kind: 'world-tree-scion',
+    name: 'World-Tree Scion',
+    color: 'green',
+    points: 4,
+    dominant: true,
+    genePoolDelta: 1,
+    indestructible: true,
+    dropOfLifeTag: 'perGreen',
+    dropOfLifeMultiplier: 1,
+    source: 'legends-of-enderas',
+    text: 'Dominant: +1 Gene Pool. Indestructible. Drop of Life: +1 point for each Green trait in your Trait Pile.',
+  },
+  {
+    kind: 'golden-crown',
+    name: 'Golden Crown',
+    color: 'colorless',
+    points: 3,
+    dominant: false,
+    genePoolDelta: 1,
+    isAttachment: true,
+    indestructible: true,
+    grantsIndestructible: true,
+    copies: 2,
+    source: 'legends-of-enderas',
+    text: 'Attachment (Relic): Attach to a non-Dominant trait in your Trait Pile (+3 pts, +1 Gene Pool, grants Indestructible).',
+  },
+  {
+    kind: 'runic-shield',
+    name: 'Runic Shield',
+    color: 'blue',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 0,
+    isAttachment: true,
+    indestructible: true,
+    grantsIndestructible: true,
+    copies: 2,
+    source: 'legends-of-enderas',
+    text: 'Attachment (Relic): Attach to a non-Dominant trait in your Trait Pile (+2 pts, grants Indestructible).',
+  },
+  {
+    kind: 'enderas-knight',
+    name: 'Enderas Knight',
+    color: 'red',
+    secondaryColor: 'blue',
+    points: 3,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'draw1',
+    copies: 2,
+    source: 'legends-of-enderas',
+    text: 'Red/Blue. Action: Draw 1 card.',
+  },
+  {
+    kind: 'treasure-hoarder',
+    name: 'Treasure Hoarder',
+    color: 'purple',
+    points: 1,
+    dominant: false,
+    genePoolDelta: 0,
+    dropOfLifeTag: 'perAttachment',
+    dropOfLifeMultiplier: 2,
+    copies: 2,
+    source: 'legends-of-enderas',
+    text: 'Drop of Life: +2 points for each Attachment in your Trait Pile.',
+  },
+  {
+    kind: 'guild-merchant',
+    name: 'Guild Merchant',
+    color: 'colorless',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'takeFromDiscard1',
+    copies: 2,
+    source: 'legends-of-enderas',
+    text: 'Action: Take 1 card from the discard pile into your hand.',
+  },
+
+  // --------------------------------------------------------------------------
+  // 4. Ancient Fates (Suppress-synergy traits & Ancient Dominants)
+  // --------------------------------------------------------------------------
+  {
+    kind: 'chronos-weaver',
+    name: 'Chronos Weaver',
+    color: 'purple',
+    points: 3,
+    dominant: true,
+    genePoolDelta: 0,
+    actionTag: 'suppressFromHand2',
+    dropOfLifeTag: 'perSuppressed',
+    dropOfLifeMultiplier: 2,
+    source: 'ancient-fates',
+    text: 'Dominant: Suppress up to 2 cards from your hand. Drop of Life: +2 points for each Suppressed card.',
+  },
+  {
+    kind: 'primordial-titan',
+    name: 'Primordial Titan',
+    color: 'red',
+    points: 6,
+    dominant: true,
+    genePoolDelta: 0,
+    worldsEndTag: 'suppressHandAtWorldsEnd',
+    source: 'ancient-fates',
+    text: "Dominant: At World's End, you may Suppress up to 2 cards from your hand.",
+  },
+  {
+    kind: 'amber-fossil',
+    name: 'Amber Fossil',
+    color: 'colorless',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 0,
+    indestructible: true,
+    actionTag: 'suppressFromHand1',
+    copies: 2,
+    source: 'ancient-fates',
+    text: "Indestructible. Action: Suppress 1 card from your hand (+1 pt at World's End).",
+  },
+  {
+    kind: 'oracle-vision',
+    name: 'Oracle Vision',
+    color: 'blue',
+    points: 1,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'draw2AndSuppress1',
+    copies: 2,
+    source: 'ancient-fates',
+    text: 'Action: Draw 2 cards, then Suppress 1 card from your hand.',
+  },
+  {
+    kind: 'fate-binder',
+    name: 'Fate Binder',
+    color: 'purple',
+    points: 1,
+    dominant: false,
+    genePoolDelta: 0,
+    dropOfLifeTag: 'perSuppressed',
+    dropOfLifeMultiplier: 2,
+    copies: 2,
+    source: 'ancient-fates',
+    text: 'Drop of Life: +2 points for each card you have Suppressed.',
+  },
+  {
+    kind: 'ancient-roots',
+    name: 'Ancient Roots',
+    color: 'green',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 1,
+    actionTag: 'suppressFromHand1',
+    copies: 2,
+    source: 'ancient-fates',
+    text: '+1 Gene Pool. Action: Suppress 1 card from your hand.',
+  },
+
+  // --------------------------------------------------------------------------
+  // 5. Shadow Puppets (Suppress & trickster traits)
+  // --------------------------------------------------------------------------
+  {
+    kind: 'shadow-puppeteer',
+    name: 'Shadow Puppeteer',
+    color: 'purple',
+    points: 4,
+    dominant: true,
+    genePoolDelta: 0,
+    actionTag: 'vampirismSteal',
+    dropOfLifeTag: 'perSuppressed',
+    dropOfLifeMultiplier: 1,
+    source: 'shadow-puppets',
+    text: 'Dominant: Steal a non-Dominant trait from an opponent. Drop of Life: +1 point for each Suppressed card.',
+  },
+  {
+    kind: 'cloak-of-shadows',
+    name: 'Cloak of Shadows',
+    color: 'purple',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 0,
+    isAttachment: true,
+    actionTag: 'suppressFromHand1',
+    copies: 2,
+    source: 'shadow-puppets',
+    text: 'Attachment: Attach to a non-Dominant trait (+2 pts). Action: Suppress 1 card from your hand.',
+  },
+  {
+    kind: 'vanishing-act',
+    name: 'Vanishing Act',
+    color: 'blue',
+    points: 3,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'suppressFromPile1',
+    copies: 2,
+    source: 'shadow-puppets',
+    text: 'Action: You may Suppress 1 non-Dominant trait from your Trait Pile.',
+  },
+  {
+    kind: 'night-stalker',
+    name: 'Night Stalker',
+    color: 'purple',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'draw2AndSuppress1',
+    copies: 2,
+    source: 'shadow-puppets',
+    text: 'Action: Draw 2 cards, then Suppress 1 card from your hand.',
+  },
+  {
+    kind: 'puppet-strings',
+    name: 'Puppet Strings',
+    color: 'red',
+    secondaryColor: 'purple',
+    points: 1,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'swapTraits',
+    copies: 2,
+    source: 'shadow-puppets',
+    text: 'Red/Purple. Action: Swap or steal a non-Dominant trait from an opponent.',
+  },
+  {
+    kind: 'umbral-echo',
+    name: 'Umbral Echo',
+    color: 'colorless',
+    points: 1,
+    dominant: false,
+    genePoolDelta: 0,
+    dropOfLifeTag: 'perSuppressed',
+    dropOfLifeMultiplier: 2,
+    copies: 2,
+    source: 'shadow-puppets',
+    text: 'Drop of Life: +2 points for each card you have Suppressed.',
+  },
+
+  // --------------------------------------------------------------------------
+  // 6. Castle Glass (Fragile high-value traits & Indestructible shields)
+  // --------------------------------------------------------------------------
+  {
+    kind: 'glass-monarch',
+    name: 'Glass Monarch',
+    color: 'blue',
+    points: 7,
+    dominant: true,
+    genePoolDelta: -1,
+    dropOfLifeTag: 'glassHeartBonus',
+    source: 'castle-glass',
+    text: 'Dominant: 7 points, -1 Gene Pool. Drop of Life: +4 points if you have an Indestructible trait.',
+  },
+  {
+    kind: 'crystal-carapace',
+    name: 'Crystal Carapace',
+    color: 'blue',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 0,
+    isAttachment: true,
+    indestructible: true,
+    grantsIndestructible: true,
+    copies: 2,
+    source: 'castle-glass',
+    text: 'Attachment: Attach to a non-Dominant trait in your Trait Pile (+2 pts, grants Indestructible).',
+  },
+  {
+    kind: 'stained-glass-wings',
+    name: 'Stained-Glass Wings',
+    color: 'red',
+    secondaryColor: 'blue',
+    points: 5,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'discardFromHand1',
+    copies: 2,
+    source: 'castle-glass',
+    text: 'Red/Blue: 5 points. Action: Discard 1 card from your hand.',
+  },
+  {
+    kind: 'obsidian-spire',
+    name: 'Obsidian Spire',
+    color: 'red',
+    points: 4,
+    dominant: false,
+    genePoolDelta: 0,
+    indestructible: true,
+    copies: 2,
+    source: 'castle-glass',
+    text: 'Indestructible fortress trait (4 pts).',
+  },
+  {
+    kind: 'mirror-shield',
+    name: 'Mirror Shield',
+    color: 'colorless',
+    points: 3,
+    dominant: false,
+    genePoolDelta: 0,
+    indestructible: true,
+    actionTag: 'draw1',
+    copies: 2,
+    source: 'castle-glass',
+    text: 'Indestructible. Action: Draw 1 card.',
+  },
+  {
+    kind: 'shatter-bolt',
+    name: 'Shatter Bolt',
+    color: 'red',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 0,
+    actionTag: 'destroyOpponentTrait',
+    copies: 2,
+    source: 'castle-glass',
+    text: "Action: Destroy 1 non-Dominant trait in an opponent's Trait Pile.",
+  },
+
+  // --------------------------------------------------------------------------
+  // 7. Mokoko Village (Community Swarm & Kidney self-multiplying traits)
+  // --------------------------------------------------------------------------
+  {
+    kind: 'mokoko-elder',
+    name: 'Mokoko Elder',
+    color: 'green',
+    points: 3,
+    dominant: true,
+    genePoolDelta: 1,
+    isSwarm: true,
+    dropOfLifeTag: 'perSwarmAllPiles',
+    dropOfLifeMultiplier: 2,
+    source: 'mokoko-village',
+    text: "Dominant (Swarm): +1 Gene Pool. Drop of Life: +2 points for each Swarm trait across ALL Trait Piles!",
+  },
+  {
+    kind: 'swarm',
+    name: 'Swarm',
+    color: 'green',
+    points: 0,
+    dominant: false,
+    genePoolDelta: 0,
+    isSwarm: true,
+    actionTag: 'draw1',
+    dropOfLifeTag: 'perSwarmAllPiles',
+    dropOfLifeMultiplier: 1,
+    copies: 4,
+    source: 'mokoko-village',
+    text: "Swarm: Action: Draw 1 card. Drop of Life: +1 point for each Swarm trait across ALL Trait Piles!",
+  },
+  {
+    kind: 'kidney',
+    name: 'Kidney',
+    color: 'red',
+    points: 0,
+    dominant: false,
+    genePoolDelta: 0,
+    dropOfLifeTag: 'perSameKindOwnPile',
+    dropOfLifeMultiplier: 2,
+    copies: 4,
+    source: 'mokoko-village',
+    text: 'Drop of Life: +2 points for each Kidney in your Trait Pile!',
+  },
+  {
+    kind: 'mokoko-sprout',
+    name: 'Mokoko Sprout',
+    color: 'green',
+    points: 1,
+    dominant: false,
+    genePoolDelta: 0,
+    isSwarm: true,
+    actionTag: 'playExtraTrait',
+    dropOfLifeTag: 'perSameKindOwnPile',
+    dropOfLifeMultiplier: 2,
+    copies: 3,
+    source: 'mokoko-village',
+    text: 'Swarm: Action: Play another trait. Drop of Life: +2 points for each Mokoko Sprout in your Trait Pile!',
+  },
+  {
+    kind: 'mokoko-villager',
+    name: 'Mokoko Villager',
+    color: 'green',
+    secondaryColor: 'blue',
+    points: 1,
+    dominant: false,
+    genePoolDelta: 0,
+    isSwarm: true,
+    dropOfLifeTag: 'perSwarmAllPiles',
+    dropOfLifeMultiplier: 1,
+    copies: 3,
+    source: 'mokoko-village',
+    text: "Swarm (Green/Blue): Drop of Life: +1 point for each Swarm trait across ALL Trait Piles!",
+  },
+  {
+    kind: 'festival-drums',
+    name: 'Festival Drums',
+    color: 'red',
+    secondaryColor: 'green',
+    points: 2,
+    dominant: false,
+    genePoolDelta: 1,
+    actionTag: 'draw1',
+    copies: 2,
+    source: 'mokoko-village',
+    text: 'Red/Green: +1 Gene Pool. Action: Draw 1 card.',
+  },
+];
+
+export function buildDmDecks(
+  rng: RngState,
+  expansions: readonly string[] = [],
+): {
   traitDeck: DmTraitCard[];
   ageDeck: DmAgeCard[];
   birthOfLife: DmAgeCard;
+  objectiveDeck: DmObjectiveCard[];
 } {
+  const expSet = new Set(expansions);
   let nextId = 1;
   const traits: DmTraitCard[] = [];
-  for (const seed of TRAIT_SEEDS) {
+
+  const activeTraitSeeds =
+    expSet.size === 0
+      ? TRAIT_SEEDS
+      : [...TRAIT_SEEDS, ...DM_EXPANSION_TRAIT_SEEDS.filter((t) => t.source && expSet.has(t.source))];
+
+  for (const seed of activeTraitSeeds) {
     const copies = seed.copies ?? 1;
     for (let i = 0; i < copies; i++) {
       const { copies: _c, ...rest } = seed;
       void _c;
       traits.push({
         id: nextId++,
+        source: rest.source ?? 'base',
         ...rest,
       });
     }
@@ -458,16 +1380,27 @@ export function buildDmDecks(rng: RngState): {
 
   const birthOfLife: DmAgeCard = {
     id: nextId++,
+    source: 'base',
     ...DM_BIRTH_OF_LIFE,
   };
 
+  const activeAgeDefs =
+    expSet.size === 0
+      ? DM_AGE_DEFS
+      : [...DM_AGE_DEFS, ...DM_EXPANSION_AGE_DEFS.filter((a) => a.source && expSet.has(a.source))];
+
+  const activeCatDefs =
+    expSet.size === 0
+      ? DM_CATASTROPHE_DEFS
+      : [...DM_CATASTROPHE_DEFS, ...DM_EXPANSION_CATASTROPHE_DEFS.filter((c) => c.source && expSet.has(c.source))];
+
   const allAges: DmAgeCard[] = shuffle(
     rng,
-    DM_AGE_DEFS.map((a) => ({ id: nextId++, ...a })),
+    activeAgeDefs.map((a) => ({ id: nextId++, source: a.source ?? 'base', ...a })),
   );
   const allCats: DmAgeCard[] = shuffle(
     rng,
-    DM_CATASTROPHE_DEFS.map((c) => ({ id: nextId++, ...c })),
+    activeCatDefs.map((c) => ({ id: nextId++, source: c.source ?? 'base', ...c })),
   );
 
   // Build 3 Era piles of (3 Ages + 1 Catastrophe), each shuffled independently!
@@ -475,10 +1408,24 @@ export function buildDmDecks(rng: RngState): {
   const era2 = shuffle(rng, [...allAges.slice(3, 6), allCats[1]!]);
   const era3 = shuffle(rng, [...allAges.slice(6, 9), allCats[2]!]);
 
+  const traitDeck = shuffle(rng, traits);
+
+  const hasObjectives = expSet.has('imaginary-ends') || expSet.has('legends-of-enderas');
+  const objectiveDeck: DmObjectiveCard[] = hasObjectives
+    ? shuffle(
+        rng,
+        DM_OBJECTIVE_DEFS.filter((o) => expSet.has(o.source)).map((o) => ({
+          id: nextId++,
+          ...o,
+        })),
+      )
+    : [];
+
   return {
-    traitDeck: shuffle(rng, traits),
+    traitDeck,
     ageDeck: [...era1, ...era2, ...era3],
     birthOfLife,
+    objectiveDeck,
   };
 }
 
@@ -488,6 +1435,11 @@ export function traitCountsAsColor(
   swap: { from: DmTraitColor; to: DmTraitColor } | null,
 ): boolean {
   if (card.isAllColors && color !== 'colorless') return true;
-  const effectiveColor = swap && card.color === swap.from ? swap.to : card.color;
-  return effectiveColor === color;
+  const effectivePrimary = swap && card.color === swap.from ? swap.to : card.color;
+  if (effectivePrimary === color) return true;
+  if (card.secondaryColor) {
+    const effectiveSecondary = swap && card.secondaryColor === swap.from ? swap.to : card.secondaryColor;
+    if (effectiveSecondary === color) return true;
+  }
+  return false;
 }

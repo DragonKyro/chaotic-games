@@ -1,12 +1,15 @@
-// Happy Little Dinosaurs — GameModule (Base Game implemented).
+// Happy Little Dinosaurs — GameModule (Base Game + all 4 Expansions).
 
 import type { GameModule } from '@/core/module';
 import type { Seat } from '@/core/types';
 import { chooseAIAction } from './ai';
 import { applyAction, createInitialState } from './reducer';
-import type { HldAction, HldConfig, HldState } from './types';
+import { HLD_EXPANSIONS, type HldAction, type HldConfig, type HldState } from './types';
+import { HldThumbnail } from './Thumbnail';
 
 const NAME = 'Happy Little Dinosaurs';
+
+const VALID_EXPANSION_IDS = new Set(HLD_EXPANSIONS.map((e) => e.id));
 
 export const happyLittleDinosModule: GameModule<HldState, HldAction, HldConfig> = {
   id: 'happy-little-dinos',
@@ -15,12 +18,20 @@ export const happyLittleDinosModule: GameModule<HldState, HldAction, HldConfig> 
   minPlayers: 2,
   maxPlayers: 6,
 
-  defaultConfig: (_seats: Seat[]): HldConfig => ({ expansions: [], trackLength: 50 }),
+  defaultConfig: (seats: Seat[]): HldConfig => ({
+    expansions: seats.length >= 5 ? ['players-5-6'] : [],
+    trackLength: 50,
+  }),
 
   validateConfig: (config) => {
     const errors: string[] = [];
     if (config.trackLength < 10 || config.trackLength > 100) {
       errors.push('Track length must be between 10 and 100.');
+    }
+    for (const exp of config.expansions) {
+      if (!VALID_EXPANSION_IDS.has(exp)) {
+        errors.push(`Unknown expansion "${exp}".`);
+      }
     }
     return errors;
   },
@@ -28,6 +39,7 @@ export const happyLittleDinosModule: GameModule<HldState, HldAction, HldConfig> 
   createInitialState,
   applyAction,
   chooseAIAction,
+  Thumbnail: HldThumbnail,
 
   ui: async () => {
     const [{ GameView, LobbyConfig }, { Rules }] = await Promise.all([

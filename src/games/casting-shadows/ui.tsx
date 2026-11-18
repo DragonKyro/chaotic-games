@@ -1,11 +1,13 @@
-// Casting Shadows — LobbyConfig + GameView with full player decision support.
+// Casting Shadows — LobbyConfig + GameView + Thumbnail with full expansion support.
 
 import { useState } from 'react';
 import { randomSeed } from '@/core/rng';
 import type { PlayerId, Seat } from '@/core/types';
 import {
   areHexesAdjacent,
+  CS_ALL_CHARACTERS,
   CS_CHARACTERS,
+  getCharactersForExpansions,
   isHexInSpellRange,
   rollFiveResourceDice,
   rollSingleDieForIndex,
@@ -15,12 +17,57 @@ import {
   canAffordCost,
   canCollectCard,
   combinedPool,
+  getShadowAbilityCost,
   isLive,
   livePlayerIds,
   seatName,
 } from './reducer';
-import type { CsAction, CsConfig, CsHexId, CsState } from './types';
+import type { CsAction, CsConfig, CsExpansionId, CsHexId, CsState } from './types';
 import { CS_EXPANSIONS } from './types';
+
+export function Thumbnail() {
+  return (
+    <svg viewBox="0 0 160 100" role="img" aria-label="Casting Shadows">
+      <rect x={0} y={0} width={160} height={100} fill="#141024" />
+      {/* Center & outer hexes */}
+      <polygon
+        points="80,26 98,36 98,58 80,68 62,58 62,36"
+        fill="#2e1065"
+        stroke="#a855f7"
+        strokeWidth={2}
+      />
+      <polygon
+        points="44,18 58,26 58,42 44,50 30,42 30,26"
+        fill="#1e3a8a"
+        stroke="#38bdf8"
+        strokeWidth={1.8}
+      />
+      <polygon
+        points="116,18 130,26 130,42 116,50 102,42 102,26"
+        fill="#7f1d1d"
+        stroke="#fb923c"
+        strokeWidth={1.8}
+      />
+      <polygon
+        points="44,54 58,62 58,78 44,86 30,78 30,62"
+        fill="#312e81"
+        stroke="#818cf8"
+        strokeWidth={1.8}
+      />
+      <polygon
+        points="116,54 130,62 130,78 116,86 102,78 102,62"
+        fill="#4c1d95"
+        stroke="#c084fc"
+        strokeWidth={1.8}
+      />
+      {/* Shadow crest & elemental gems */}
+      <circle cx={80} cy={47} r={11} fill="#0f0720" stroke="#e879f9" strokeWidth={1.8} />
+      <path d="M80 39 L85 47 L80 55 L75 47 Z" fill="#facc15" />
+      <circle cx={44} cy={34} r={5} fill="#38bdf8" />
+      <circle cx={116} cy={34} r={5} fill="#ef4444" />
+    </svg>
+  );
+}
 
 export function LobbyConfig({
   config,
@@ -31,25 +78,83 @@ export function LobbyConfig({
   seats: Seat[];
   onChange: (c: CsConfig) => void;
 }) {
+  const availableCharacters = getCharactersForExpansions(config.expansions);
+
+  const toggleExpansion = (expId: CsExpansionId, checked: boolean) => {
+    const nextExpansions = checked
+      ? [...config.expansions, expId]
+      : config.expansions.filter((x) => x !== expId);
+    const nextAvail = getCharactersForExpansions(nextExpansions);
+    const nextCharMap: Record<PlayerId, string> = {};
+    seats.forEach((seat, idx) => {
+      const cur = config.characterByPlayer[seat.id];
+      nextCharMap[seat.id] =
+        cur && nextAvail.some((c) => c.id === cur)
+          ? cur
+          : nextAvail[idx % nextAvail.length]!.id;
+    });
+    onChange({
+      ...config,
+      expansions: nextExpansions,
+      characterByPlayer: nextCharMap,
+    });
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <strong>Expansions (enable at least one for 5–6 players):</strong>
+        {CS_EXPANSIONS.map((exp) => {
+          const id = exp.id as CsExpansionId;
+          const checked = config.expansions.includes(id);
+          return (
+            <label
+              key={exp.id}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.88rem' }}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => toggleExpansion(id, e.target.checked)}
+              />
+              <span>
+                <strong>{exp.name}</strong> — {exp.summary}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+
       {seats.map((seat, idx) => {
-        const chosen = config.characterByPlayer[seat.id] ?? CS_CHARACTERS[idx % CS_CHARACTERS.length]!.id;
+        const chosen =
+          config.characterByPlayer[seat.id] &&
+          availableCharacters.some((c) => c.id === config.characterByPlayer[seat.id])
+            ? config.characterByPlayer[seat.id]!
+            : availableCharacters[idx % availableCharacters.length]!.id;
         return (
           <label key={seat.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
             <span>{seat.name}&apos;s Character:</span>
             <select
               value={chosen}
-              onChange={(e) =>
+              onChange={(e) => {
+                const nextCharMap: Record<PlayerId, string> = {};
+                seats.forEach((st, i) => {
+                  nextCharMap[st.id] =
+                    st.id === seat.id
+                      ? e.target.value
+                      : config.characterByPlayer[st.id] ??
+                        availableCharacters[i % availableCharacters.length]!.id;
+                });
                 onChange({
                   ...config,
-                  characterByPlayer: { ...config.characterByPlayer, [seat.id]: e.target.value },
-                })
-              }
+                  characterByPlayer: nextCharMap,
+                });
+              }}
             >
-              {CS_CHARACTERS.map((c) => (
+              {availableCharacters.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.lightName} / {c.shadowName}
+                  {c.expansion ? ` (${c.expansion === 'ice-storm' ? 'Ice Storm' : 'Molten Rock'})` : ''}
                 </option>
               ))}
             </select>
@@ -57,8 +162,8 @@ export function LobbyConfig({
         );
       })}
       <p style={{ margin: 0, fontSize: '0.84rem', opacity: 0.8 }}>
-        2–4 players. 7-Hex board, 5 Resource Dice, 4 AP per turn (Travel, Cast, Reroll, Protect, Refresh, Collect),
-        Shadow Form transformation, Companions, and Counterspells! ({CS_EXPANSIONS.length} expansions listed.)
+        2–6 players (5–6 with Ice Storm or Molten Rock). Hex board, 5 Resource Dice, 4 AP per turn (Travel, Cast,
+        Reroll, Protect, Refresh, Collect), Shadow Form transformation, Companions, Counterspells, and Status Effects!
       </p>
     </div>
   );
@@ -225,7 +330,7 @@ export function GameView({
             <div>
               <strong>{seatName(s, s.turnPlayerId)}&apos;s Resource Pool:</strong>
             </div>
-            {me && isMyTurn && (
+            {me && isMyTurn && myBoard && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button
                   disabled={s.actionPointsRemaining < 1 || rerollSelection.length === 0}
@@ -245,10 +350,40 @@ export function GameView({
                 </button>
                 <button
                   disabled={s.actionPointsRemaining < 1 || !combinedPool(s).includes('cursedCrystal')}
-                  onClick={() => dispatch({ type: 'protect', playerId: me, targetHexId: castTargetHex ?? undefined })}
+                  onClick={() =>
+                    dispatch({
+                      type: 'protect',
+                      playerId: me,
+                      clearStatus: 'cursedCrystal',
+                      targetHexId: castTargetHex ?? undefined,
+                    })
+                  }
                 >
                   Protect (-1 Cursed Crystal) (1 AP)
                 </button>
+                {myBoard.burning && (
+                  <button
+                    disabled={s.actionPointsRemaining < 1}
+                    onClick={() =>
+                      dispatch({
+                        type: 'protect',
+                        playerId: me,
+                        clearStatus: 'burning',
+                        targetHexId: castTargetHex ?? undefined,
+                      })
+                    }
+                  >
+                    🔥 Extinguish Burn (1 AP)
+                  </button>
+                )}
+                {myBoard.frozen && (
+                  <button
+                    disabled={s.actionPointsRemaining < 1}
+                    onClick={() => dispatch({ type: 'unfreeze', playerId: me })}
+                  >
+                    ❄️ Break Ice / Unfreeze (1 AP)
+                  </button>
+                )}
                 <button
                   onClick={() => dispatch({ type: 'transformAndEndTurn', playerId: me, transform: true })}
                 >
@@ -307,9 +442,9 @@ export function GameView({
         </div>
       )}
 
-      {/* 7-Hex Map */}
+      {/* Hex World Map */}
       <div style={{ border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, padding: 12 }}>
-        <h4 style={{ margin: '0 0 8px' }}>🗺️ 7-Hex World Map</h4>
+        <h4 style={{ margin: '0 0 8px' }}>🗺️ {Object.keys(s.hexes).length}-Hex World Map</h4>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10 }}>
           {(Object.values(s.hexes) as CsState['hexes'][CsHexId][]).map((hex) => {
             const occupants = s.seats.filter((st) => isLive(s, st.id) && boardOf(s, st.id).hexId === hex.id);
@@ -320,6 +455,7 @@ export function GameView({
               s.subPhase === 'awaitingAction' &&
               s.actionPointsRemaining >= 1 &&
               myBoard !== null &&
+              !myBoard.frozen &&
               areHexesAdjacent(s.hexes[myBoard.hexId], hex);
             const canCollectHere =
               me !== null &&
@@ -406,7 +542,9 @@ export function GameView({
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 }}>
         {s.seats.map((seat) => {
           const b = boardOf(s, seat.id);
-          const charDef = CS_CHARACTERS.find((c) => c.id === b.characterId)!;
+          const charDef =
+            CS_ALL_CHARACTERS.find((c) => c.id === b.characterId) ?? CS_CHARACTERS[0]!;
+          const saCost = getShadowAbilityCost(b);
           const dead = !isLive(s, seat.id);
           const isMe = seat.id === me;
           return (
@@ -431,6 +569,64 @@ export function GameView({
                 </div>
               </div>
 
+              {/* Status Effect Badges */}
+              {(b.stunned || b.frozen || b.fortified > 0 || b.burning) && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: '0.75rem' }}>
+                  {b.stunned && (
+                    <span
+                      style={{
+                        padding: '2px 8px',
+                        borderRadius: 12,
+                        background: 'rgba(250,204,21,0.2)',
+                        border: '1px solid #facc15',
+                        color: '#fde047',
+                      }}
+                    >
+                      💫 Stunned (-1 AP next turn)
+                    </span>
+                  )}
+                  {b.frozen && (
+                    <span
+                      style={{
+                        padding: '2px 8px',
+                        borderRadius: 12,
+                        background: 'rgba(56,189,248,0.2)',
+                        border: '1px solid #38bdf8',
+                        color: '#7dd3fc',
+                      }}
+                    >
+                      ❄️ Frozen (Cannot Travel)
+                    </span>
+                  )}
+                  {b.fortified > 0 && (
+                    <span
+                      style={{
+                        padding: '2px 8px',
+                        borderRadius: 12,
+                        background: 'rgba(34,197,94,0.2)',
+                        border: '1px solid #22c55e',
+                        color: '#86efac',
+                      }}
+                    >
+                      🛡️ Fortified (+{b.fortified} Shield)
+                    </span>
+                  )}
+                  {b.burning && (
+                    <span
+                      style={{
+                        padding: '2px 8px',
+                        borderRadius: 12,
+                        background: 'rgba(249,115,22,0.2)',
+                        border: '1px solid #f97316',
+                        color: '#fdba74',
+                      }}
+                    >
+                      🔥 Burning (1 DMG at end of turn)
+                    </span>
+                  )}
+                </div>
+              )}
+
               {b.companion && (
                 <div style={{ fontSize: '0.78rem', color: '#c084fc' }}>
                   🐾 <strong>Companion:</strong> {b.companion.name} — {b.companion.text}
@@ -448,7 +644,7 @@ export function GameView({
                       .filter((id) => id !== me)
                       .map((id) => (
                         <option key={id} value={id}>
-                          {seatName(s, id)} (at {s.hexes[boardOf(s, id).hexId].name})
+                          {seatName(s, id)} (at {s.hexes[boardOf(s, id).hexId]?.name})
                         </option>
                       ))}
                   </select>
@@ -463,7 +659,7 @@ export function GameView({
                       </option>
                     ))}
                   </select>
-                  {b.form === 'shadow' && !b.usedShadowAbilityThisTurn && b.shadowEnergy >= charDef.shadowAbilityCost && (
+                  {b.form === 'shadow' && !b.usedShadowAbilityThisTurn && b.shadowEnergy >= saCost && (
                     <button
                       onClick={() =>
                         dispatch({
@@ -474,7 +670,7 @@ export function GameView({
                         })
                       }
                     >
-                      Use Shadow Ability ({charDef.shadowAbilityCost} Shadow)
+                      Use Shadow Ability ({saCost} Shadow)
                     </button>
                   )}
                 </div>

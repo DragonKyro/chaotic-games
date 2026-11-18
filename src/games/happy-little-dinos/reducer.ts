@@ -1,18 +1,43 @@
-// Happy Little Dinosaurs — pure deterministic reducer for the Base Game.
+// Happy Little Dinosaurs — pure deterministic reducer for Base Game + all 4 Expansions.
 
-import { shuffle } from '@/core/rng';
+import { rngInt, shuffle } from '@/core/rng';
 import type { PlayerId, Seat } from '@/core/types';
 import { buildHldDecks, HLD_DINO_DEFS } from './cards';
 import type {
   HldAction,
   HldCard,
+  HldCardKind,
   HldConfig,
   HldDinoId,
   HldDisasterCard,
+  HldHazardCard,
   HldState,
 } from './types';
 
 const LOG_CAP = 60;
+
+export const SCORING_INSTANT_KINDS: readonly HldCardKind[] = [
+  'score-booster',
+  'score-sapper',
+  'score-inversion',
+  'bffs-help',
+  'frenemys-curse',
+  'joy-of-puberty',
+  'spiteful-bullying',
+  'awkward-first-kiss',
+  'baby-pictures',
+  'double-date',
+  'one-week-anniversary',
+  'roadblock',
+];
+
+export const DISASTER_SAVE_INSTANT_KINDS: readonly HldCardKind[] = [
+  'disaster-insurance',
+  'disaster-redirect',
+  'lucky-break',
+  'crippling-shyness',
+  'detour',
+];
 
 // ============================================================================
 // Setup
@@ -23,10 +48,12 @@ export function createInitialState(config: HldConfig, seed: number, seats: Seat[
   const first = seats[0];
   if (!first) throw new Error('Happy Little Dinosaurs needs at least one seat');
 
-  const { disasterDeck, deck } = buildHldDecks(rngState);
+  const { disasterDeck, deck, hazardDeck } = buildHldDecks(rngState, config.expansions);
   const dinos: Record<PlayerId, HldDinoId> = {};
   seats.forEach((s, i) => {
-    dinos[s.id] = HLD_DINO_DEFS[i % HLD_DINO_DEFS.length]!.id;
+    const chosen = config.dinoSelections?.[s.id];
+    const valid = chosen && HLD_DINO_DEFS.some((d) => d.id === chosen);
+    dinos[s.id] = valid ? chosen : HLD_DINO_DEFS[i % HLD_DINO_DEFS.length]!.id;
   });
 
   const state: HldState = {
@@ -42,6 +69,10 @@ export function createInitialState(config: HldConfig, seed: number, seats: Seat[
     disasterDiscard: [],
     currentDisaster: null,
 
+    hazardDeck,
+    hazardDiscard: [],
+    hazardAreas: Object.fromEntries(seats.map((s) => [s.id, []])),
+
     deck,
     discard: [],
     hands: Object.fromEntries(seats.map((s) => [s.id, []])),
@@ -52,6 +83,7 @@ export function createInitialState(config: HldConfig, seed: number, seats: Seat[
     pointEffectBonuses: Object.fromEntries(seats.map((s) => [s.id, 0])),
     instantScoreDeltas: Object.fromEntries(seats.map((s) => [s.id, 0])),
     scoreInversionsPlayed: 0,
+    instantScoreSwaps: [],
 
     promptQueue: [],
     instantResponderQueue: [],
@@ -106,6 +138,30 @@ export function handOf(s: HldState, id: PlayerId): HldCard[] {
   return h;
 }
 
+export function hazardScorePenalty(s: HldState, playerId: PlayerId): number {
+  const hazards = s.hazardAreas?.[playerId] ?? [];
+  let delta = 0;
+  for (const h of hazards) {
+    if (h.penalty === 'score-minus-1') delta -= 1;
+    else if (h.penalty === 'score-minus-2') delta -= 2;
+  }
+  return delta;
+}
+
+export function maxHandRefillSize(s: HldState, playerId: PlayerId): number {
+  const hazards = s.hazardAreas?.[playerId] ?? [];
+  let cap = 5;
+  for (const h of hazards) {
+    if (h.penalty === 'hand-size-minus-1') cap -= 1;
+  }
+  return Math.max(2, cap);
+}
+
+export function hasNoInstantsHazard(s: HldState, playerId: PlayerId): boolean {
+  const hazards = s.hazardAreas?.[playerId] ?? [];
+  return hazards.some((h) => h.penalty === 'no-instants');
+}
+
 export function dinoTraitDelta(s: HldState, playerId: PlayerId): number {
   const disaster = s.currentDisaster;
   if (!disaster) return 0;
@@ -113,14 +169,16 @@ export function dinoTraitDelta(s: HldState, playerId: PlayerId): number {
   const def = HLD_DINO_DEFS.find((d) => d.id === dinoId);
   if (!def) return 0;
 
+  const ignorePlus = (s.hazardAreas?.[playerId] ?? []).some((h) => h.penalty === 'ignore-dino-plus');
+
   if (disaster.category === 'meteor') {
     // Meteor acts as all 3 categories (and triggers Stego's +1 on Meteor)
-    if (def.plusCategory === 'meteor') return 1;
-    // For Dinosaurs with +1 on one category and -1 on another, Meteor triggers both (+1 - 1 = 0)
-    return 0;
+    if (def.plusCategory === 'meteor') return ignorePlus ? 0 : 1;
+    // For Dinosaurs with +1 on one category and -1 on another, Meteor triggers both (+1 - 1 = 0, or -1 if +1 ignored)
+    return ignorePlus && def.minusCategory ? -1 : 0;
   }
 
-  if (def.plusCategory === disaster.category) return 1;
+  if (def.plusCategory === disaster.category) return ignorePlus ? 0 : 1;
   if (def.minusCategory === disaster.category) return -1;
   return 0;
 }
@@ -144,7 +202,8 @@ export function starFruitMultiplier(s: HldState): number {
 }
 
 /**
- * Compute each live player's score for the current round, including Mouth Trap / Score Inversion swaps.
+ * Compute each live player's score for the current round, including Hazard penalties,
+ * Spiteful Bullying / Awkward First Kiss pairwise swaps, and Mouth Trap / Score Inversion swaps.
  */
 export function computeRoundScores(s: HldState): Record<PlayerId, number> {
   const live = livePlayerIds(s);
@@ -158,7 +217,16 @@ export function computeRoundScores(s: HldState): Record<PlayerId, number> {
     const trait = dinoTraitDelta(s, id);
     const ptBonus = chainsaw ? 0 : s.pointEffectBonuses[id] ?? 0;
     const instBonus = (s.instantScoreDeltas[id] ?? 0) * mult;
-    raw[id] = base + trait + ptBonus + instBonus;
+    const hazPenalty = hazardScorePenalty(s, id);
+    raw[id] = base + trait + ptBonus + instBonus + hazPenalty;
+  }
+
+  for (const [p1, p2] of s.instantScoreSwaps ?? []) {
+    if (raw[p1] !== undefined && raw[p2] !== undefined) {
+      const tmp = raw[p1]!;
+      raw[p1] = raw[p2]!;
+      raw[p2] = tmp;
+    }
   }
 
   let mouthTraps = 0;
@@ -210,21 +278,30 @@ function drawOneCard(s: HldState): HldCard | null {
   return s.deck.shift() ?? null;
 }
 
+function drawOneHazardCard(s: HldState): HldHazardCard | null {
+  if (s.hazardDeck.length === 0 && s.hazardDiscard.length > 0) {
+    s.hazardDeck = shuffle(s.rngState, s.hazardDiscard);
+    s.hazardDiscard = [];
+  }
+  return s.hazardDeck.shift() ?? null;
+}
+
 function refillHandsTo5WithPointCard(s: HldState) {
   for (const id of livePlayerIds(s)) {
     const hand = handOf(s, id);
-    while (hand.length < 5) {
+    const targetSize = maxHandRefillSize(s, id);
+    while (hand.length < targetSize) {
       const c = drawOneCard(s);
       if (!c) break;
       hand.push(c);
     }
-    // Rulebook: if a player has no Point cards in hand, discard hand and draw 5 new cards
+    // Rulebook: if a player has no Point cards in hand, discard hand and draw new cards
     let attempts = 0;
     while (!hand.some((c) => c.type === 'point') && attempts < 5) {
       attempts++;
       s.discard.push(...hand);
       hand.length = 0;
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < targetSize; i++) {
         const c = drawOneCard(s);
         if (!c) break;
         hand.push(c);
@@ -270,6 +347,7 @@ function startNextRound(s: HldState) {
     s.instantScoreDeltas[seat.id] = 0;
   }
   s.scoreInversionsPlayed = 0;
+  s.instantScoreSwaps = [];
   s.suddenDeathPlayers = [];
   s.pendingDisasterVictimId = null;
 
@@ -281,6 +359,14 @@ function startNextRound(s: HldState) {
     `🌋 Round ${s.roundNumber}: Disaster flipped — ${disaster.name} (${disaster.category.toUpperCase()})!`,
     'danger',
   );
+}
+
+function findTopDiscardPointCard(s: HldState): HldCard | null {
+  for (let i = s.discard.length - 1; i >= 0; i--) {
+    const c = s.discard[i];
+    if (c && c.type === 'point') return c;
+  }
+  return null;
 }
 
 function revealAllPicks(s: HldState) {
@@ -304,13 +390,30 @@ function revealAllPicks(s: HldState) {
       if (!card) continue;
       if (card.kind === 'pet-rock' && handOf(s, id).some((c) => c.type === 'point')) {
         s.promptQueue.push({ kind: 'petRockDiscard', playerId: id, smoothieOnlyEffects: false });
-      } else if (card.kind === 'dino-grabber' && live.some((o) => o !== id && handOf(s, o).length > 0)) {
+      } else if (card.kind === 'cold-feet') {
+        const topDiscardPt = findTopDiscardPointCard(s);
+        if (topDiscardPt) {
+          s.promptQueue.push({
+            kind: 'coldFeetSwap',
+            playerId: id,
+            topDiscardPointCardId: topDiscardPt.id,
+          });
+        }
+      } else if (
+        (card.kind === 'dino-grabber' || card.kind === 'bouquet-of-flowers') &&
+        live.some((o) => o !== id && handOf(s, o).length > 0)
+      ) {
         s.promptQueue.push({ kind: 'dinoGrabberSteal', playerId: id });
       } else if (card.kind === 'grappling-snake') {
         const neighbors = adjacentSwapTargets(s, id);
         if (neighbors.length > 0) {
           s.promptQueue.push({ kind: 'grapplingSnakeSwap', playerId: id, validNeighbors: neighbors });
         }
+      } else if (card.kind === 'love-bug') {
+        const drawn = drawOneCard(s);
+        if (drawn) handOf(s, id).push(drawn);
+        s.pointEffectBonuses[id] = (s.pointEffectBonuses[id] ?? 0) + 1;
+        pushLog(s, id, `Love Bug: ${seatName(s, id)} drew a card and gained +1 score this round.`, 'good');
       } else if (
         card.kind === 'delicious-smoothie' &&
         handOf(s, id).some((c) => c.type === 'point' && c.hasEffect)
@@ -318,7 +421,41 @@ function revealAllPicks(s: HldState) {
         s.promptQueue.push({ kind: 'petRockDiscard', playerId: id, smoothieOnlyEffects: true });
       } else if (card.kind === 'fire-spray' && handOf(s, id).length > 0) {
         s.promptQueue.push({ kind: 'fireSprayDiscard', playerId: id });
-      } else if (card.kind === 'treenoculars') {
+      } else if (
+        card.kind === 'unwanted-lunch' &&
+        handOf(s, id).length > 0 &&
+        live.some((o) => o !== id)
+      ) {
+        s.promptQueue.push({ kind: 'unwantedLunchSwap', playerId: id });
+      } else if (
+        card.kind === 'caution-sign' &&
+        (s.hazardAreas[id]?.length ?? 0) > 0 &&
+        live.some((o) => o !== id)
+      ) {
+        s.promptQueue.push({ kind: 'removeHazardPick', playerId: id, canTransferToOpponent: true });
+      } else if (card.kind === 'ice-cream') {
+        const disCount = s.disasterAreas[id]?.length ?? 0;
+        if (disCount > 0) {
+          s.pointEffectBonuses[id] = (s.pointEffectBonuses[id] ?? 0) + disCount;
+          pushLog(s, id, `Ice Cream!: ${seatName(s, id)} gained +${disCount} from their Disasters!`, 'good');
+        }
+      } else if (card.kind === 'bedazzled-belt') {
+        if (dinoTraitDelta(s, id) > 0) {
+          s.pointEffectBonuses[id] = (s.pointEffectBonuses[id] ?? 0) + 2;
+          pushLog(s, id, `Bedazzled Belt: ${seatName(s, id)} gained +2 for matching Dinosaur specialty!`, 'good');
+        }
+      } else if (
+        (card.kind === 'molotov-crocktail' || card.kind === 'suck-up') &&
+        (s.hazardAreas[id]?.length ?? 0) > 0
+      ) {
+        s.promptQueue.push({ kind: 'removeHazardPick', playerId: id, canTransferToOpponent: false });
+      } else if (card.kind === 'handy-backpack') {
+        const c1 = drawOneCard(s);
+        const c2 = drawOneCard(s);
+        if (c1) handOf(s, id).push(c1);
+        if (c2) handOf(s, id).push(c2);
+        pushLog(s, id, `Handy Backpack: ${seatName(s, id)} drew 2 cards.`, 'good');
+      } else if (card.kind === 'treenoculars' || card.kind === 'box-of-chocolates') {
         const top2: HldCard[] = [];
         const c1 = drawOneCard(s);
         const c2 = drawOneCard(s);
@@ -327,8 +464,18 @@ function revealAllPicks(s: HldState) {
         if (top2.length > 0) {
           s.promptQueue.push({ kind: 'treenocularsPick', playerId: id, cards: top2 });
         }
+      } else if (card.kind === 'trash-into-treasure' && s.discard.some((c) => c.type === 'point')) {
+        s.promptQueue.push({ kind: 'trashIntoTreasurePick', playerId: id });
       } else if (card.kind === 'hungry-plant' && live.length >= 2) {
         s.promptQueue.push({ kind: 'hungryPlantSwap', playerId: id });
+      } else if (card.kind === 'really-thick-glasses') {
+        const c1 = drawOneCard(s);
+        if (c1) handOf(s, id).push(c1);
+        s.pointEffectBonuses[id] = (s.pointEffectBonuses[id] ?? 0) + 1;
+        pushLog(s, id, `Really Thick Glasses: ${seatName(s, id)} drew 1 card and gained +1 score.`, 'good');
+      } else if (card.kind === 'extra-sharp-stick') {
+        s.pointEffectBonuses[id] = (s.pointEffectBonuses[id] ?? 0) + 1;
+        pushLog(s, id, `Extra Sharp Stick: ${seatName(s, id)} gained +1 score.`, 'good');
       }
     }
   } else {
@@ -362,10 +509,18 @@ function advanceFromPointEffects(s: HldState) {
   openOrResolveScoringInstants(s);
 }
 
-function hasScoringInstant(s: HldState, playerId: PlayerId): boolean {
-  return handOf(s, playerId).some(
-    (c) => c.kind === 'score-booster' || c.kind === 'score-sapper' || c.kind === 'score-inversion',
-  );
+export function canPlayScoringInstantCard(s: HldState, playerId: PlayerId, card: HldCard): boolean {
+  if (hasNoInstantsHazard(s, playerId)) return false;
+  if (!SCORING_INSTANT_KINDS.includes(card.kind)) return false;
+  if (card.kind === 'bffs-help') {
+    return handOf(s, playerId).some((c) => c.type === 'point');
+  }
+  return true;
+}
+
+export function hasScoringInstant(s: HldState, playerId: PlayerId): boolean {
+  if (hasNoInstantsHazard(s, playerId)) return false;
+  return handOf(s, playerId).some((c) => canPlayScoringInstantCard(s, playerId, c));
 }
 
 function openOrResolveScoringInstants(s: HldState) {
@@ -401,6 +556,29 @@ function finalizeRoundScoring(s: HldState) {
     pushLog(s, w, `${seatName(s, w)} had the highest score (${maxScore}) and moved +${gain} on their Escape Route!`, 'good');
   }
 
+  // Official 5–6 Player Rule: When 5 or 6 players are in the game (s.seats.length >= 5),
+  // if only 1 player has the highest score and the 2nd-highest score is not tied for lowest,
+  // the 2nd-highest-scoring player(s) also collect points equal to their respective scores!
+  if (s.seats.length >= 5 && winners.length === 1) {
+    const remaining = live.filter((id) => scores[id] !== maxScore);
+    if (remaining.length > 0) {
+      const secondMaxScore = Math.max(...remaining.map((id) => scores[id]!));
+      if (secondMaxScore > minScore) {
+        const secondWinners = remaining.filter((id) => scores[id] === secondMaxScore);
+        for (const sw of secondWinners) {
+          const gain = Math.max(0, secondMaxScore);
+          s.trackPosition[sw] = (s.trackPosition[sw] ?? 0) + gain;
+          pushLog(
+            s,
+            sw,
+            `${seatName(s, sw)} had the 2nd-highest score (${secondMaxScore}) and moved +${gain} on their Escape Route!`,
+            'good',
+          );
+        }
+      }
+    }
+  }
+
   // Lowest scoring player(s)
   const losers = live.filter((id) => scores[id] === minScore);
   if (losers.length === 1) {
@@ -430,11 +608,17 @@ function finalizeRoundScoring(s: HldState) {
   pushLog(s, null, `⚡ Sudden Death tiebreaker between ${losers.map((id) => seatName(s, id)).join(' & ')}!`, 'danger');
 }
 
+export function canPlayDisasterSaveCard(s: HldState, playerId: PlayerId, card: HldCard): boolean {
+  if (!DISASTER_SAVE_INSTANT_KINDS.includes(card.kind)) return false;
+  if (card.kind === 'lucky-break') {
+    return handOf(s, playerId).some((c) => c.type === 'point');
+  }
+  return true;
+}
+
 function assignPendingDisaster(s: HldState, victimId: PlayerId) {
   s.pendingDisasterVictimId = victimId;
-  const canSave = handOf(s, victimId).some(
-    (c) => c.kind === 'disaster-insurance' || c.kind === 'disaster-redirect',
-  );
+  const canSave = handOf(s, victimId).some((c) => canPlayDisasterSaveCard(s, victimId, c));
   if (canSave) {
     s.subPhase = 'awaitingDisasterSave';
     s.activePlayerId = victimId;
@@ -457,6 +641,17 @@ function inflictDisaster(s: HldState, victimId: PlayerId) {
       s.discard.push(...handOf(s, victimId));
       s.hands[victimId] = [];
       pushLog(s, victimId, `☄️ ${seatName(s, victimId)} collected 3 Disasters and is ELIMINATED!`, 'danger');
+    } else if (disaster.drawsHazard) {
+      const hazard = drawOneHazardCard(s);
+      if (hazard) {
+        s.hazardAreas[victimId]!.push(hazard);
+        pushLog(
+          s,
+          victimId,
+          `⚠️ ${seatName(s, victimId)} also drew a Hazard card: ${hazard.name} (${hazard.text})!`,
+          'danger',
+        );
+      }
     }
   }
 
@@ -585,7 +780,7 @@ function handleResolvePrompt(s: HldState, a: Extract<HldAction, { type: 'resolve
           const [taken] = oppHand.splice(idx, 1);
           if (taken) {
             handOf(s, prompt.playerId).push(taken);
-            pushLog(s, prompt.playerId, `Dino Grabber: ${seatName(s, prompt.playerId)} took a card from ${seatName(s, a.targetPlayerId)}!`, 'good');
+            pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} took a card from ${seatName(s, a.targetPlayerId)}!`, 'good');
           }
         }
       }
@@ -651,6 +846,135 @@ function handleResolvePrompt(s: HldState, a: Extract<HldAction, { type: 'resolve
       }
       break;
     }
+
+    case 'trashIntoTreasurePick': {
+      if (!a.decline) {
+        let idx = -1;
+        if (a.targetCardId !== undefined) {
+          idx = s.discard.findIndex((c) => c.id === a.targetCardId && c.type === 'point');
+        }
+        if (idx < 0) {
+          for (let i = s.discard.length - 1; i >= 0; i--) {
+            if (s.discard[i]?.type === 'point') {
+              idx = i;
+              break;
+            }
+          }
+        }
+        if (idx >= 0) {
+          const [recovered] = s.discard.splice(idx, 1);
+          if (recovered) {
+            handOf(s, prompt.playerId).push(recovered);
+            pushLog(
+              s,
+              prompt.playerId,
+              `Trash into Treasure: ${seatName(s, prompt.playerId)} recovered ${recovered.name} from the discard pile!`,
+              'good',
+            );
+          }
+        }
+      }
+      break;
+    }
+
+    case 'unwantedLunchSwap': {
+      if (
+        !a.decline &&
+        a.targetPlayerId &&
+        a.targetPlayerId !== prompt.playerId &&
+        isLive(s, a.targetPlayerId) &&
+        a.targetCardId !== undefined
+      ) {
+        const myHand = handOf(s, prompt.playerId);
+        const oppHand = handOf(s, a.targetPlayerId);
+        const giveIdx = myHand.findIndex((c) => c.id === a.targetCardId);
+        if (giveIdx >= 0) {
+          const [given] = myHand.splice(giveIdx, 1);
+          if (oppHand.length > 0) {
+            const randIdx = rngInt(s.rngState, oppHand.length);
+            const [stolen] = oppHand.splice(randIdx, 1);
+            if (stolen) myHand.push(stolen);
+          }
+          if (given) oppHand.push(given);
+          pushLog(
+            s,
+            prompt.playerId,
+            `Unwanted Lunch: ${seatName(s, prompt.playerId)} traded a card with ${seatName(s, a.targetPlayerId)}!`,
+            'normal',
+          );
+        }
+      }
+      break;
+    }
+
+    case 'coldFeetSwap': {
+      if (!a.decline) {
+        let idx = s.discard.findIndex(
+          (c) => c.id === prompt.topDiscardPointCardId && c.type === 'point',
+        );
+        if (idx < 0) {
+          for (let i = s.discard.length - 1; i >= 0; i--) {
+            if (s.discard[i]?.type === 'point') {
+              idx = i;
+              break;
+            }
+          }
+        }
+        const currentCard = s.revealedPicks[prompt.playerId];
+        if (idx >= 0 && currentCard) {
+          const [fromDiscard] = s.discard.splice(idx, 1, currentCard);
+          if (fromDiscard) {
+            s.revealedPicks[prompt.playerId] = fromDiscard;
+            pushLog(
+              s,
+              prompt.playerId,
+              `Cold Feet: ${seatName(s, prompt.playerId)} swapped Cold Feet with ${fromDiscard.name} from the discard pile!`,
+              'good',
+            );
+          }
+        }
+      }
+      break;
+    }
+
+    case 'removeHazardPick': {
+      if (!a.decline) {
+        const myHazards = s.hazardAreas[prompt.playerId] ?? [];
+        if (myHazards.length > 0) {
+          let idx =
+            a.targetCardId !== undefined
+              ? myHazards.findIndex((h) => h.id === a.targetCardId)
+              : 0;
+          if (idx < 0) idx = 0;
+          const [removed] = myHazards.splice(idx, 1);
+          if (removed) {
+            if (
+              prompt.canTransferToOpponent &&
+              a.targetPlayerId &&
+              a.targetPlayerId !== prompt.playerId &&
+              isLive(s, a.targetPlayerId)
+            ) {
+              s.hazardAreas[a.targetPlayerId]!.push(removed);
+              pushLog(
+                s,
+                prompt.playerId,
+                `Caution Sign: ${seatName(s, prompt.playerId)} moved Hazard ${removed.name} to ${seatName(s, a.targetPlayerId)}!`,
+                'danger',
+              );
+            } else {
+              s.hazardDiscard.push(removed);
+              pushLog(
+                s,
+                prompt.playerId,
+                `🧹 ${seatName(s, prompt.playerId)} removed Hazard ${removed.name} from their Hazard Area!`,
+                'good',
+              );
+            }
+          }
+        }
+      }
+      break;
+    }
   }
 
   advanceFromPointEffects(s);
@@ -658,27 +982,159 @@ function handleResolvePrompt(s: HldState, a: Extract<HldAction, { type: 'resolve
 
 function handlePlayScoringInstant(s: HldState, a: Extract<HldAction, { type: 'playScoringInstant' }>) {
   if (s.subPhase !== 'awaitingScoringInstants') throw new Error('not in scoring instant window');
+  if (hasNoInstantsHazard(s, a.playerId)) throw new Error('Panic Attack Hazard prevents playing Scoring Instants');
+
   const hand = handOf(s, a.playerId);
-  const idx = hand.findIndex(
-    (c) =>
-      c.id === a.cardId &&
-      (c.kind === 'score-booster' || c.kind === 'score-sapper' || c.kind === 'score-inversion'),
-  );
-  if (idx < 0) throw new Error('Scoring Instant card not in hand');
+  const idx = hand.findIndex((c) => c.id === a.cardId && canPlayScoringInstantCard(s, a.playerId, c));
+  if (idx < 0) throw new Error('Scoring Instant card not in hand or not playable');
   const [card] = hand.splice(idx, 1);
   s.discard.push(card!);
 
-  if (card!.kind === 'score-booster') {
-    const target = a.targetPlayerId ?? a.playerId;
-    s.instantScoreDeltas[target] = (s.instantScoreDeltas[target] ?? 0) + 2;
-    pushLog(s, a.playerId, `${seatName(s, a.playerId)} played Score Booster on ${seatName(s, target)} (+2)!`, 'good');
-  } else if (card!.kind === 'score-sapper') {
-    const target = a.targetPlayerId ?? livePlayerIds(s).find((id) => id !== a.playerId) ?? a.playerId;
-    s.instantScoreDeltas[target] = (s.instantScoreDeltas[target] ?? 0) - 2;
-    pushLog(s, a.playerId, `${seatName(s, a.playerId)} played Score Sapper on ${seatName(s, target)} (-2)!`, 'danger');
-  } else if (card!.kind === 'score-inversion') {
-    s.scoreInversionsPlayed += 1;
-    pushLog(s, a.playerId, `${seatName(s, a.playerId)} played Score Inversion!`, 'danger');
+  const live = livePlayerIds(s);
+
+  switch (card!.kind) {
+    case 'score-booster': {
+      const target = a.targetPlayerId ?? a.playerId;
+      s.instantScoreDeltas[target] = (s.instantScoreDeltas[target] ?? 0) + 2;
+      pushLog(s, a.playerId, `${seatName(s, a.playerId)} played Score Booster on ${seatName(s, target)} (+2)!`, 'good');
+      break;
+    }
+    case 'score-sapper':
+    case 'baby-pictures': {
+      const target = a.targetPlayerId ?? live.find((id) => id !== a.playerId) ?? a.playerId;
+      s.instantScoreDeltas[target] = (s.instantScoreDeltas[target] ?? 0) - 2;
+      pushLog(
+        s,
+        a.playerId,
+        `${seatName(s, a.playerId)} played ${card!.name} on ${seatName(s, target)} (-2)!`,
+        'danger',
+      );
+      break;
+    }
+    case 'score-inversion': {
+      s.scoreInversionsPlayed += 1;
+      pushLog(s, a.playerId, `${seatName(s, a.playerId)} played Score Inversion!`, 'danger');
+      break;
+    }
+    case 'bffs-help': {
+      const target = a.targetPlayerId ?? a.playerId;
+      const ptCards = hand.filter((c) => c.type === 'point');
+      ptCards.sort((x, y) => (y.value ?? 0) - (x.value ?? 0));
+      const revealedHandCard =
+        (a.handCardId !== undefined ? ptCards.find((c) => c.id === a.handCardId) : undefined) ??
+        ptCards[0];
+      const bonus = revealedHandCard?.value ?? 0;
+      s.instantScoreDeltas[target] = (s.instantScoreDeltas[target] ?? 0) + bonus;
+      pushLog(
+        s,
+        a.playerId,
+        `${seatName(s, a.playerId)} played BFF's Help showing ${revealedHandCard?.name ?? 'a Point card'} (+${bonus} to ${seatName(s, target)})!`,
+        'good',
+      );
+      break;
+    }
+    case 'frenemys-curse': {
+      const curScores = computeRoundScores(s);
+      const maxVal = Math.max(...live.map((id) => curScores[id]!));
+      const highestPlayers = live.filter((id) => curScores[id] === maxVal);
+      const target =
+        a.targetPlayerId && highestPlayers.includes(a.targetPlayerId)
+          ? a.targetPlayerId
+          : highestPlayers[0] ?? a.playerId;
+      s.instantScoreDeltas[target] = (s.instantScoreDeltas[target] ?? 0) - 3;
+      pushLog(
+        s,
+        a.playerId,
+        `${seatName(s, a.playerId)} played Frenemy's Curse on highest scorer ${seatName(s, target)} (-3)!`,
+        'danger',
+      );
+      break;
+    }
+    case 'joy-of-puberty': {
+      const disCount = s.disasterAreas[a.playerId]?.length ?? 0;
+      const gain = disCount * 2;
+      s.instantScoreDeltas[a.playerId] = (s.instantScoreDeltas[a.playerId] ?? 0) + gain;
+      pushLog(
+        s,
+        a.playerId,
+        `${seatName(s, a.playerId)} played Joy of Puberty (+${gain} from ${disCount} Disasters)!`,
+        'good',
+      );
+      break;
+    }
+    case 'spiteful-bullying': {
+      const p1 = a.targetPlayerId ?? a.playerId;
+      const p2 = a.secondPlayerId ?? live.find((id) => id !== p1) ?? p1;
+      if (p1 !== p2 && isLive(s, p1) && isLive(s, p2)) {
+        s.instantScoreSwaps.push([p1, p2]);
+        pushLog(
+          s,
+          a.playerId,
+          `${seatName(s, a.playerId)} played Spiteful Bullying to swap ${seatName(s, p1)} and ${seatName(s, p2)}'s scores!`,
+          'danger',
+        );
+      }
+      break;
+    }
+    case 'awkward-first-kiss': {
+      const other =
+        a.targetPlayerId && a.targetPlayerId !== a.playerId
+          ? a.targetPlayerId
+          : live.find((id) => id !== a.playerId);
+      if (other && isLive(s, other)) {
+        s.instantScoreSwaps.push([a.playerId, other]);
+        pushLog(
+          s,
+          a.playerId,
+          `${seatName(s, a.playerId)} played Awkward First Kiss to swap scores with ${seatName(s, other)}!`,
+          'danger',
+        );
+      }
+      break;
+    }
+    case 'double-date': {
+      const p1 = a.targetPlayerId ?? a.playerId;
+      const p2 =
+        a.secondPlayerId && a.secondPlayerId !== p1
+          ? a.secondPlayerId
+          : live.find((id) => id !== p1);
+      s.instantScoreDeltas[p1] = (s.instantScoreDeltas[p1] ?? 0) + 2;
+      if (p2) {
+        s.instantScoreDeltas[p2] = (s.instantScoreDeltas[p2] ?? 0) + 2;
+        pushLog(
+          s,
+          a.playerId,
+          `${seatName(s, a.playerId)} played Double Date (+2 to ${seatName(s, p1)} and +2 to ${seatName(s, p2)})!`,
+          'good',
+        );
+      } else {
+        pushLog(s, a.playerId, `${seatName(s, a.playerId)} played Double Date (+2 to ${seatName(s, p1)})!`, 'good');
+      }
+      break;
+    }
+    case 'one-week-anniversary': {
+      const target = a.targetPlayerId ?? a.playerId;
+      s.instantScoreDeltas[target] = (s.instantScoreDeltas[target] ?? 0) + 3;
+      pushLog(
+        s,
+        a.playerId,
+        `${seatName(s, a.playerId)} played One Week Anniversary on ${seatName(s, target)} (+3)!`,
+        'good',
+      );
+      break;
+    }
+    case 'roadblock': {
+      const target = a.targetPlayerId ?? live.find((id) => id !== a.playerId) ?? a.playerId;
+      const penalty = 2 + (s.hazardAreas[target]?.length ?? 0);
+      s.instantScoreDeltas[target] = (s.instantScoreDeltas[target] ?? 0) - penalty;
+      pushLog(
+        s,
+        a.playerId,
+        `${seatName(s, a.playerId)} played Roadblock on ${seatName(s, target)} (-${penalty})!`,
+        'danger',
+      );
+      break;
+    }
   }
 
   openOrResolveScoringInstants(s);
@@ -740,18 +1196,53 @@ function handlePlayDisasterSave(s: HldState, a: Extract<HldAction, { type: 'play
   if (a.playerId !== s.pendingDisasterVictimId) throw new Error('not the disaster victim');
 
   const hand = handOf(s, a.playerId);
-  const idx = hand.findIndex(
-    (c) => c.id === a.cardId && (c.kind === 'disaster-insurance' || c.kind === 'disaster-redirect'),
-  );
-  if (idx < 0) throw new Error('card not in hand');
+  const idx = hand.findIndex((c) => c.id === a.cardId && canPlayDisasterSaveCard(s, a.playerId, c));
+  if (idx < 0) throw new Error('card not in hand or not playable');
   const [card] = hand.splice(idx, 1);
   s.discard.push(card!);
 
-  if (card!.kind === 'disaster-insurance') {
+  if (card!.kind === 'disaster-insurance' || card!.kind === 'crippling-shyness') {
     if (s.currentDisaster) s.disasterDeck.push(s.currentDisaster);
     s.currentDisaster = null;
     s.pendingDisasterVictimId = null;
-    pushLog(s, a.playerId, `🛡️ ${seatName(s, a.playerId)} played Disaster Insurance and dodged the Disaster!`, 'good');
+    pushLog(s, a.playerId, `🛡️ ${seatName(s, a.playerId)} played ${card!.name} and dodged the Disaster!`, 'good');
+    endRoundCleanup(s);
+    return;
+  }
+
+  if (card!.kind === 'lucky-break') {
+    const ptIdx =
+      a.discardCardId !== undefined
+        ? hand.findIndex((c) => c.id === a.discardCardId && c.type === 'point')
+        : hand.findIndex((c) => c.type === 'point');
+    if (ptIdx < 0) throw new Error('Lucky Break requires discarding a Point card from your hand');
+    const [discardedPt] = hand.splice(ptIdx, 1);
+    if (discardedPt) s.discard.push(discardedPt);
+    if (s.currentDisaster) s.disasterDeck.push(s.currentDisaster);
+    s.currentDisaster = null;
+    s.pendingDisasterVictimId = null;
+    pushLog(
+      s,
+      a.playerId,
+      `🍀 ${seatName(s, a.playerId)} played Lucky Break (discarding ${discardedPt?.name ?? 'a Point card'}) and dodged the Disaster!`,
+      'good',
+    );
+    endRoundCleanup(s);
+    return;
+  }
+
+  if (card!.kind === 'detour') {
+    if (s.currentDisaster) s.disasterDeck.push(s.currentDisaster);
+    s.currentDisaster = null;
+    s.pendingDisasterVictimId = null;
+    const removedHaz = s.hazardAreas[a.playerId]?.shift();
+    if (removedHaz) s.hazardDiscard.push(removedHaz);
+    pushLog(
+      s,
+      a.playerId,
+      `🚧 ${seatName(s, a.playerId)} played Detour to dodge the Disaster${removedHaz ? ` and removed Hazard ${removedHaz.name}` : ''}!`,
+      'good',
+    );
     endRoundCleanup(s);
     return;
   }

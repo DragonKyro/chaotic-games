@@ -1,4 +1,4 @@
-// Doomlings — pure deterministic reducer for the Base Game.
+// Doomlings — pure deterministic reducer for the Base Game and all 7 official expansions.
 
 import { rngInt, shuffle } from '@/core/rng';
 import type { PlayerId, Seat } from '@/core/types';
@@ -6,6 +6,7 @@ import { buildDmDecks, traitCountsAsColor } from './cards';
 import type {
   DmAction,
   DmConfig,
+  DmObjectiveCard,
   DmPrompt,
   DmState,
   DmTraitCard,
@@ -23,7 +24,10 @@ export function createInitialState(config: DmConfig, seed: number, seats: Seat[]
   const first = seats[0];
   if (!first) throw new Error('Doomlings needs at least one seat');
 
-  const { traitDeck, ageDeck, birthOfLife } = buildDmDecks(rngState);
+  const { traitDeck, ageDeck, birthOfLife, objectiveDeck } = buildDmDecks(
+    rngState,
+    config.expansions ?? [],
+  );
   const hands: Record<PlayerId, DmTraitCard[]> = {};
   for (const seat of seats) {
     hands[seat.id] = traitDeck.splice(0, 5);
@@ -46,6 +50,8 @@ export function createInitialState(config: DmConfig, seed: number, seats: Seat[]
     hands,
     tableaus: Object.fromEntries(seats.map((s) => [s.id, []])),
     baseGenePool: Object.fromEntries(seats.map((s) => [s.id, 5])),
+    suppressedCount: Object.fromEntries(seats.map((s) => [s.id, 0])),
+    objectives: Object.fromEntries(seats.map((s, i) => [s.id, objectiveDeck[i] ?? null])),
     faithColorSwap: Object.fromEntries(seats.map((s) => [s.id, null])),
     viralPenalties: [],
     denialArmed: Object.fromEntries(seats.map((s) => [s.id, false])),
@@ -54,6 +60,7 @@ export function createInitialState(config: DmConfig, seed: number, seats: Seat[]
     turnPlayerId: first.id,
     turnsTakenInRound: 0,
     catastrophesSeen: 0,
+    turnEndingAfterPrompts: false,
 
     promptQueue: [],
     winnerId: null,
@@ -98,6 +105,31 @@ export function tableauOf(s: DmState, id: PlayerId): DmTraitCard[] {
   return t;
 }
 
+export function isCardIndestructible(tab: DmTraitCard[], card: DmTraitCard): boolean {
+  if (card.indestructible) return true;
+  return tab.some(
+    (c) => c.attachedToId === card.id && Boolean(c.indestructible || c.grantsIndestructible),
+  );
+}
+
+function discardAttachmentsForHost(s: DmState, ownerId: PlayerId, hostCardId: number) {
+  const tab = tableauOf(s, ownerId);
+  for (let i = tab.length - 1; i >= 0; i--) {
+    const c = tab[i]!;
+    if (c.attachedToId === hostCardId) {
+      tab.splice(i, 1);
+      delete c.attachedToId;
+      s.traitDiscard.push(c);
+      pushLog(
+        s,
+        ownerId,
+        `Attachment ${c.name} was discarded because its host left ${seatName(s, ownerId)}'s Trait Pile.`,
+        'danger',
+      );
+    }
+  }
+}
+
 /**
  * Effective Gene Pool size (clamped between 1 and 8), computed dynamically from
  * `baseGenePool[playerId]` plus `genePoolDelta` of all traits in `tableaus[playerId]`.
@@ -118,6 +150,45 @@ export function distinctColorsInTableau(s: DmState, playerId: PlayerId): DmTrait
   return colors.filter((col) => countColorInTableau(s, playerId, col) > 0);
 }
 
+export function isObjectiveFulfilled(
+  s: DmState,
+  playerId: PlayerId,
+  obj?: DmObjectiveCard | null,
+): boolean {
+  const target = obj !== undefined ? obj : s.objectives[playerId];
+  if (!target) return false;
+  const tab = tableauOf(s, playerId);
+
+  switch (target.conditionTag) {
+    case 'twoOfEachColor':
+      return (['red', 'blue', 'green', 'purple'] as DmTraitColor[]).every(
+        (col) => countColorInTableau(s, playerId, col) >= 2,
+      );
+    case 'genePool6Plus':
+      return effectiveGenePool(s, playerId) >= 6;
+    case 'fewestTraits': {
+      const minLen = Math.min(...s.seats.map((st) => tableauOf(s, st.id).length));
+      return tab.length === minLen;
+    }
+    case 'fiveRed':
+      return countColorInTableau(s, playerId, 'red') >= 5;
+    case 'fiveBlue':
+      return countColorInTableau(s, playerId, 'blue') >= 5;
+    case 'fiveGreen':
+      return countColorInTableau(s, playerId, 'green') >= 5;
+    case 'fivePurple':
+      return countColorInTableau(s, playerId, 'purple') >= 5;
+    case 'twoDominants':
+      return tab.filter((c) => c.dominant).length >= 2;
+    case 'fourColorless':
+      return countColorInTableau(s, playerId, 'colorless') >= 4;
+    case 'eightTraits':
+      return tab.length >= 8;
+    default:
+      return false;
+  }
+}
+
 export function canPlayTrait(s: DmState, playerId: PlayerId, card: DmTraitCard): boolean {
   const tab = tableauOf(s, playerId);
 
@@ -129,11 +200,12 @@ export function canPlayTrait(s: DmState, playerId: PlayerId, card: DmTraitCard):
 
   // Active Age restrictions (read dynamically from currentAge!)
   const rule = s.currentAge.ruleTag;
-  if (rule === 'noColorless' && card.color === 'colorless') return false;
-  if (rule === 'noBlue' && card.color === 'blue') return false;
-  if (rule === 'noGreen' && card.color === 'green') return false;
-  if (rule === 'noRed' && card.color === 'red') return false;
-  if (rule === 'noPurple' && card.color === 'purple') return false;
+  if (rule === 'noDominants' && card.dominant) return false;
+  if (rule === 'noColorless' && (card.color === 'colorless' || card.secondaryColor === 'colorless')) return false;
+  if (rule === 'noBlue' && (card.color === 'blue' || card.secondaryColor === 'blue')) return false;
+  if (rule === 'noGreen' && (card.color === 'green' || card.secondaryColor === 'green')) return false;
+  if (rule === 'noRed' && (card.color === 'red' || card.secondaryColor === 'red')) return false;
+  if (rule === 'noPurple' && (card.color === 'purple' || card.secondaryColor === 'purple')) return false;
   if (rule === 'maxFaceValue3' && card.points > 3) return false;
 
   // Card-specific requirements
@@ -159,9 +231,15 @@ export function validTraitPileTargets(
     if (prompt.scope === 'own' && seat.id !== prompt.playerId) continue;
     if (prompt.scope === 'others' && seat.id === prompt.playerId) continue;
 
-    for (const card of tableauOf(s, seat.id)) {
-      if (card.dominant || card.indestructible) continue;
-      results.push({ ownerId: seat.id, card });
+    const tab = tableauOf(s, seat.id);
+    for (const card of tab) {
+      if (prompt.mode === 'attach') {
+        if (card.dominant || card.isAttachment || card.id === prompt.attachmentCardId) continue;
+        results.push({ ownerId: seat.id, card });
+      } else {
+        if (card.dominant || isCardIndestructible(tab, card)) continue;
+        results.push({ ownerId: seat.id, card });
+      }
     }
   }
   return results;
@@ -181,6 +259,12 @@ export function computePlayerScore(s: DmState, playerId: PlayerId): {
 
   let dropOfLifeBonus = 0;
   for (const c of tab) {
+    if (c.isAttachment && c.attachedToId !== undefined && c.hostBonusPoints) {
+      if (tab.some((h) => h.id === c.attachedToId)) {
+        dropOfLifeBonus += c.hostBonusPoints;
+      }
+    }
+
     const mult = c.dropOfLifeMultiplier ?? 1;
     switch (c.dropOfLifeTag) {
       case 'perRed':
@@ -238,12 +322,63 @@ export function computePlayerScore(s: DmState, playerId: PlayerId): {
         if (strictlyMost) dropOfLifeBonus += 4;
         break;
       }
+      case 'perMultiColor': {
+        const multiCount = tab.filter((t) => Boolean(t.secondaryColor || t.isAllColors)).length;
+        dropOfLifeBonus += multiCount * mult;
+        break;
+      }
+      case 'perAttachment': {
+        const attCount = tab.filter((t) => Boolean(t.isAttachment)).length;
+        dropOfLifeBonus += attCount * mult;
+        break;
+      }
+      case 'perSuppressed': {
+        dropOfLifeBonus += (s.suppressedCount[playerId] ?? 0) * mult;
+        break;
+      }
+      case 'perSameKindOwnPile': {
+        const sameCount = tab.filter((t) => t.kind === c.kind).length;
+        dropOfLifeBonus += sameCount * mult;
+        break;
+      }
+      case 'perSwarmAllPiles': {
+        const swarmCount = s.seats.reduce(
+          (sum, st) =>
+            sum + tableauOf(s, st.id).filter((t) => Boolean(t.isSwarm || t.kind === c.kind)).length,
+          0,
+        );
+        dropOfLifeBonus += swarmCount * mult;
+        break;
+      }
+      case 'perDominant': {
+        dropOfLifeBonus += tab.filter((t) => t.dominant).length * mult;
+        break;
+      }
+      case 'perDiscardPile3': {
+        dropOfLifeBonus += Math.min(6, Math.floor(s.traitDiscard.length / 3) * mult);
+        break;
+      }
+      case 'glassHeartBonus': {
+        if (tab.some((t) => isCardIndestructible(tab, t))) {
+          dropOfLifeBonus += 4;
+        }
+        break;
+      }
       default:
         break;
     }
   }
 
   let worldsEndBonus = 0;
+  // Suppressed cards are worth +1 point each at World's End
+  worldsEndBonus += s.suppressedCount[playerId] ?? 0;
+
+  // Personal Meaning of Life / Treasure Objective bonus if fulfilled
+  const obj = s.objectives[playerId];
+  if (obj && isObjectiveFulfilled(s, playerId, obj)) {
+    worldsEndBonus += obj.points;
+  }
+
   // Viral penalties from opponents
   for (const vp of s.viralPenalties) {
     if (vp.byPlayerId !== playerId) {
@@ -260,7 +395,11 @@ export function computePlayerScore(s: DmState, playerId: PlayerId): {
     else if (we === 'minus1PerPurple') worldsEndBonus -= countColorInTableau(s, playerId, 'purple');
     else if (we === 'plus1PerColorless') worldsEndBonus += countColorInTableau(s, playerId, 'colorless');
     else if (we === 'plus2PerDominant') worldsEndBonus += tab.filter((c) => c.dominant).length * 2;
-    else if (we === 'plus4FewestTraits') {
+    else if (we === 'plus2PerMultiColor') {
+      worldsEndBonus += tab.filter((c) => Boolean(c.secondaryColor || c.isAllColors)).length * 2;
+    } else if (we === 'plus1PerSuppressed') {
+      worldsEndBonus += s.suppressedCount[playerId] ?? 0;
+    } else if (we === 'plus4FewestTraits') {
       const minLen = Math.min(...s.seats.map((st) => tableauOf(s, st.id).length));
       if (tab.length === minLen) worldsEndBonus += 4;
     } else if (we === 'minus5MostTraits') {
@@ -326,6 +465,26 @@ function advanceFlow(s: DmState) {
     return;
   }
 
+  if (s.turnEndingAfterPrompts && s.catastrophesSeen < 3) {
+    s.turnEndingAfterPrompts = false;
+    queueStabilizeAndEndTurn(s, s.turnPlayerId);
+    while (s.promptQueue.length > 0) {
+      const front = s.promptQueue[0]!;
+      if (isPromptImpossible(s, front)) {
+        s.promptQueue.shift();
+        continue;
+      }
+      break;
+    }
+    if (s.promptQueue.length > 0) {
+      s.subPhase = 'awaitingPrompt';
+      s.activePlayerId = s.promptQueue[0]!.playerId;
+      return;
+    }
+    completeCurrentPlayerTurn(s);
+    return;
+  }
+
   // If 3rd Catastrophe has resolved all World's End prompts, finish the game!
   if (s.catastrophesSeen >= 3) {
     finishWorldsEndGame(s);
@@ -348,6 +507,9 @@ function isPromptImpossible(s: DmState, p: DmPrompt): boolean {
     return validTraitPileTargets(s, p).length === 0;
   }
   if (p.kind === 'chooseFromDiscard') {
+    if (p.mode === 'playDirectly') {
+      return !s.traitDiscard.some((c) => !c.dominant && canPlayTrait(s, p.playerId, c));
+    }
     return s.traitDiscard.length === 0;
   }
   return false;
@@ -387,6 +549,10 @@ function flipNextAge(s: DmState) {
       for (const seat of s.seats) {
         drawTraits(s, seat.id, 1);
       }
+    } else if (nextAge.ruleTag === 'allDraw2') {
+      for (const seat of s.seats) {
+        drawTraits(s, seat.id, 2);
+      }
     } else if (nextAge.ruleTag === 'allDiscard1') {
       for (const seat of s.seats) {
         if (handOf(s, seat.id).length > 0) {
@@ -397,6 +563,19 @@ function flipNextAge(s: DmState) {
             count: 1,
             optional: false,
             effectTag: 'discard',
+          });
+        }
+      }
+    } else if (nextAge.ruleTag === 'allSuppress1') {
+      for (const seat of s.seats) {
+        if (handOf(s, seat.id).length > 0) {
+          s.promptQueue.push({
+            kind: 'chooseCardsFromHand',
+            playerId: seat.id,
+            reason: `${nextAge.name}: you may Suppress 1 card from your hand (+1 pt at World's End).`,
+            count: 1,
+            optional: true,
+            effectTag: 'suppress',
           });
         }
       }
@@ -467,6 +646,17 @@ function flipNextAge(s: DmState) {
       s.traitDiscard.push(...handOf(s, seat.id));
       s.hands[seat.id] = [];
       drawTraits(s, seat.id, effectiveGenePool(s, seat.id));
+    } else if (eff === 'suppressOneFromHand') {
+      if (handOf(s, seat.id).length > 0) {
+        s.promptQueue.push({
+          kind: 'chooseCardsFromHand',
+          playerId: seat.id,
+          reason: `${nextAge.name}: Suppress 1 card from your hand.`,
+          count: 1,
+          optional: false,
+          effectTag: 'suppress',
+        });
+      }
     }
   }
 
@@ -512,6 +702,18 @@ function flipNextAge(s: DmState) {
           optional: true,
           effectTag: 'eloquencePlay',
         });
+      } else if (c.worldsEndTag === 'suppressHandAtWorldsEnd') {
+        const maxSuppress = Math.min(2, handOf(s, seat.id).length);
+        if (maxSuppress > 0) {
+          s.promptQueue.push({
+            kind: 'chooseCardsFromHand',
+            playerId: seat.id,
+            reason: `${c.name} (World's End): Suppress up to ${maxSuppress} card(s) from your hand.`,
+            count: maxSuppress,
+            optional: true,
+            effectTag: 'suppress',
+          });
+        }
       }
     }
   }
@@ -543,11 +745,44 @@ function finishWorldsEndGame(s: DmState) {
 }
 
 // ============================================================================
-// Trait Action Resolution
+// Trait Entry & Action Resolution
 // ============================================================================
 
+function onTraitEnteredTableau(
+  s: DmState,
+  playerId: PlayerId,
+  card: DmTraitCard,
+  triggerAction: boolean,
+) {
+  const tab = tableauOf(s, playerId);
+  tab.push(card);
+
+  if (card.kind === 'denial') {
+    s.denialArmed[playerId] = true;
+  }
+
+  if (card.isAttachment) {
+    const hasHost = tab.some((c) => c.id !== card.id && !c.dominant && !c.isAttachment);
+    if (hasHost) {
+      s.promptQueue.push({
+        kind: 'chooseTraitInPile',
+        playerId,
+        reason: `${card.name}: choose a non-Dominant trait in your Trait Pile to attach to.`,
+        optional: true,
+        scope: 'own',
+        mode: 'attach',
+        attachmentCardId: card.id,
+      });
+    }
+  }
+
+  if (triggerAction) {
+    queueTraitActionEffect(s, playerId, card);
+  }
+}
+
 function queueTraitActionEffect(s: DmState, playerId: PlayerId, card: DmTraitCard) {
-  // Vampirism is a Dominant trait — its steal is NOT an Action so Age of Peace does not block it
+  // Dominant trait abilities are NOT Actions so Age of Peace does not block them
   if (s.currentAge.ruleTag === 'ignoreActions' && !card.dominant) {
     return;
   }
@@ -577,6 +812,7 @@ function queueTraitActionEffect(s: DmState, playerId: PlayerId, card: DmTraitCar
       break;
     case 'stealTrait':
     case 'vampirismSteal':
+    case 'swapTraits':
       s.promptQueue.push({
         kind: 'chooseTraitInPile',
         playerId,
@@ -648,6 +884,17 @@ function queueTraitActionEffect(s: DmState, playerId: PlayerId, card: DmTraitCar
           kind: 'chooseFromDiscard',
           playerId,
           reason: `${card.name}: choose 1 card from the discard pile to add to your hand.`,
+          mode: 'takeToHand',
+        });
+      }
+      break;
+    case 'playFromDiscard1':
+      if (s.traitDiscard.some((c) => !c.dominant && canPlayTrait(s, playerId, c))) {
+        s.promptQueue.push({
+          kind: 'chooseFromDiscard',
+          playerId,
+          reason: `${card.name}: choose 1 non-Dominant trait from the discard pile to play directly.`,
+          mode: 'playDirectly',
         });
       }
       break;
@@ -658,11 +905,73 @@ function queueTraitActionEffect(s: DmState, playerId: PlayerId, card: DmTraitCar
         const idx = myTab.findIndex((c) => c.id === card.id);
         if (idx >= 0) {
           const [moved] = myTab.splice(idx, 1);
-          if (moved) tableauOf(s, opp.id).push(moved);
+          if (moved) {
+            discardAttachmentsForHost(s, playerId, moved.id);
+            tableauOf(s, opp.id).push(moved);
+          }
         }
       }
       break;
     }
+    case 'suppressFromHand1':
+      if (handOf(s, playerId).length > 0) {
+        s.promptQueue.push({
+          kind: 'chooseCardsFromHand',
+          playerId,
+          reason: `${card.name}: choose 1 card from your hand to Suppress (+1 pt at World's End).`,
+          count: 1,
+          optional: true,
+          effectTag: 'suppress',
+        });
+      }
+      break;
+    case 'suppressFromHand2':
+      if (handOf(s, playerId).length > 0) {
+        s.promptQueue.push({
+          kind: 'chooseCardsFromHand',
+          playerId,
+          reason: `${card.name}: choose up to 2 cards from your hand to Suppress (+1 pt each at World's End).`,
+          count: Math.min(2, handOf(s, playerId).length),
+          optional: true,
+          effectTag: 'suppress',
+        });
+      }
+      break;
+    case 'suppressFromPile1':
+      s.promptQueue.push({
+        kind: 'chooseTraitInPile',
+        playerId,
+        reason: `${card.name}: choose a non-Dominant trait in your Trait Pile to Suppress (+1 pt at World's End).`,
+        optional: true,
+        scope: 'own',
+        mode: 'suppress',
+      });
+      break;
+    case 'draw2AndSuppress1':
+      drawTraits(s, playerId, 2);
+      if (handOf(s, playerId).length > 0) {
+        s.promptQueue.push({
+          kind: 'chooseCardsFromHand',
+          playerId,
+          reason: `${card.name}: choose 1 card from your hand to Suppress (+1 pt at World's End).`,
+          count: 1,
+          optional: false,
+          effectTag: 'suppress',
+        });
+      }
+      break;
+    case 'discard1ToDraw3':
+      if (handOf(s, playerId).length > 0) {
+        s.promptQueue.push({
+          kind: 'chooseCardsFromHand',
+          playerId,
+          reason: `${card.name}: discard 1 card from your hand to draw 3 cards.`,
+          count: 1,
+          optional: true,
+          effectTag: 'discardToDraw3',
+        });
+      }
+      break;
     default:
       break;
   }
@@ -685,21 +994,17 @@ function handlePlayTrait(s: DmState, a: Extract<DmAction, { type: 'playTrait' }>
   }
 
   hand.splice(idx, 1);
-  tableauOf(s, a.playerId).push(card);
-  if (card.kind === 'denial') {
-    s.denialArmed[a.playerId] = true;
-  }
-  pushLog(s, a.playerId, `${seatName(s, a.playerId)} played ${card.name} (${card.color}, ${card.points} pts).`, 'normal');
+  const colorLabel = card.secondaryColor ? `${card.color}/${card.secondaryColor}` : card.color;
+  pushLog(
+    s,
+    a.playerId,
+    `${seatName(s, a.playerId)} played ${card.name} (${colorLabel}, ${card.points} pts).`,
+    'normal',
+  );
 
-  queueTraitActionEffect(s, a.playerId, card);
-  queueStabilizeAndEndTurn(s, a.playerId);
-
-  if (s.promptQueue.length > 0) {
-    advanceFlow(s);
-    return;
-  }
-
-  completeCurrentPlayerTurn(s);
+  onTraitEnteredTableau(s, a.playerId, card, true);
+  s.turnEndingAfterPrompts = true;
+  advanceFlow(s);
 }
 
 function handlePassTurn(s: DmState, a: Extract<DmAction, { type: 'passTurn' }>) {
@@ -715,12 +1020,8 @@ function handlePassTurn(s: DmState, a: Extract<DmAction, { type: 'passTurn' }>) 
     return;
   }
 
-  queueStabilizeAndEndTurn(s, a.playerId);
-  if (s.promptQueue.length > 0) {
-    advanceFlow(s);
-    return;
-  }
-  completeCurrentPlayerTurn(s);
+  s.turnEndingAfterPrompts = true;
+  advanceFlow(s);
 }
 
 function handleResolvePrompt(s: DmState, a: Extract<DmAction, { type: 'resolvePrompt' }>) {
@@ -744,10 +1045,12 @@ function handleResolvePrompt(s: DmState, a: Extract<DmAction, { type: 'resolvePr
         if (prompt.effectTag === 'playExtraTrait' || prompt.effectTag === 'eloquencePlay') {
           const c = chosen[0];
           if (c && canPlayTrait(s, prompt.playerId, c)) {
-            tableauOf(s, prompt.playerId).push(c);
-            if (prompt.effectTag === 'playExtraTrait') {
-              queueTraitActionEffect(s, prompt.playerId, c);
-            }
+            onTraitEnteredTableau(
+              s,
+              prompt.playerId,
+              c,
+              prompt.effectTag === 'playExtraTrait',
+            );
           } else if (c) {
             hand.push(c);
           }
@@ -755,6 +1058,28 @@ function handleResolvePrompt(s: DmState, a: Extract<DmAction, { type: 'resolvePr
           const oppId = a.targetPlayerId ?? s.seats.find((st) => st.id !== prompt.playerId)?.id;
           if (oppId && chosen[0]) {
             handOf(s, oppId).push(chosen[0]);
+          }
+        } else if (prompt.effectTag === 'suppress') {
+          if (chosen.length > 0) {
+            s.suppressedCount[prompt.playerId] =
+              (s.suppressedCount[prompt.playerId] ?? 0) + chosen.length;
+            pushLog(
+              s,
+              prompt.playerId,
+              `${seatName(s, prompt.playerId)} suppressed ${chosen.length} card(s) (+${chosen.length} pt at World's End).`,
+              'good',
+            );
+          }
+        } else if (prompt.effectTag === 'discardToDraw3') {
+          if (chosen.length > 0) {
+            s.traitDiscard.push(...chosen);
+            drawTraits(s, prompt.playerId, 3);
+            pushLog(
+              s,
+              prompt.playerId,
+              `${seatName(s, prompt.playerId)} discarded ${chosen[0]!.name} to draw 3 cards.`,
+              'normal',
+            );
           }
         } else {
           s.traitDiscard.push(...chosen);
@@ -774,16 +1099,55 @@ function handleResolvePrompt(s: DmState, a: Extract<DmAction, { type: 'resolvePr
         const found = valid.find((v) => v.card.id === a.targetCardId);
         if (found) {
           const ownerTab = tableauOf(s, found.ownerId);
-          const idx = ownerTab.findIndex((c) => c.id === found.card.id);
-          if (idx >= 0) {
-            const [removed] = ownerTab.splice(idx, 1);
-            if (removed) {
-              if (prompt.mode === 'steal') {
-                tableauOf(s, prompt.playerId).push(removed);
-                pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} stole ${removed.name} from ${seatName(s, found.ownerId)}!`, 'good');
-              } else {
-                s.traitDiscard.push(removed);
-                pushLog(s, prompt.playerId, `${removed.name} was discarded from ${seatName(s, found.ownerId)}'s Trait Pile.`, 'danger');
+          if (prompt.mode === 'attach') {
+            const att =
+              ownerTab.find((c) => c.id === prompt.attachmentCardId) ??
+              [...ownerTab].reverse().find((c) => c.isAttachment && c.attachedToId === undefined);
+            if (att) {
+              att.attachedToId = found.card.id;
+              if (att.indestructible || att.grantsIndestructible) {
+                found.card.indestructible = true;
+              }
+              pushLog(
+                s,
+                prompt.playerId,
+                `${seatName(s, prompt.playerId)} attached ${att.name} to ${found.card.name}!`,
+                'good',
+              );
+            }
+          } else {
+            const idx = ownerTab.findIndex((c) => c.id === found.card.id);
+            if (idx >= 0) {
+              const [removed] = ownerTab.splice(idx, 1);
+              if (removed) {
+                delete removed.attachedToId;
+                discardAttachmentsForHost(s, found.ownerId, removed.id);
+                if (prompt.mode === 'steal') {
+                  tableauOf(s, prompt.playerId).push(removed);
+                  pushLog(
+                    s,
+                    prompt.playerId,
+                    `${seatName(s, prompt.playerId)} stole ${removed.name} from ${seatName(s, found.ownerId)}!`,
+                    'good',
+                  );
+                } else if (prompt.mode === 'suppress') {
+                  s.suppressedCount[prompt.playerId] =
+                    (s.suppressedCount[prompt.playerId] ?? 0) + 1;
+                  pushLog(
+                    s,
+                    prompt.playerId,
+                    `${seatName(s, prompt.playerId)} suppressed ${removed.name} from their Trait Pile.`,
+                    'good',
+                  );
+                } else {
+                  s.traitDiscard.push(removed);
+                  pushLog(
+                    s,
+                    prompt.playerId,
+                    `${removed.name} was discarded from ${seatName(s, found.ownerId)}'s Trait Pile.`,
+                    'danger',
+                  );
+                }
               }
             }
           }
@@ -798,9 +1162,17 @@ function handleResolvePrompt(s: DmState, a: Extract<DmAction, { type: 'resolvePr
         for (const seat of s.seats) {
           if (seat.id === prompt.playerId) continue;
           const tab = tableauOf(s, seat.id);
-          const idx = tab.findIndex((c) => !c.dominant && !c.indestructible && c.color === col);
+          const swap = s.faithColorSwap[seat.id] ?? null;
+          const idx = tab.findIndex(
+            (c) => !c.dominant && !isCardIndestructible(tab, c) && traitCountsAsColor(c, col, swap),
+          );
           if (idx >= 0) {
-            s.traitDiscard.push(tab.splice(idx, 1)[0]!);
+            const [removed] = tab.splice(idx, 1);
+            if (removed) {
+              delete removed.attachedToId;
+              s.traitDiscard.push(removed);
+              discardAttachmentsForHost(s, seat.id, removed.id);
+            }
           }
         }
       } else if (prompt.effectTag === 'viral') {
@@ -820,9 +1192,25 @@ function handleResolvePrompt(s: DmState, a: Extract<DmAction, { type: 'resolvePr
     }
 
     case 'chooseFromDiscard': {
-      const idx = s.traitDiscard.findIndex((c) => c.id === a.targetCardId);
-      if (idx >= 0) {
-        handOf(s, prompt.playerId).push(s.traitDiscard.splice(idx, 1)[0]!);
+      if (!a.decline && a.targetCardId !== undefined) {
+        const idx = s.traitDiscard.findIndex((c) => c.id === a.targetCardId);
+        if (idx >= 0) {
+          const picked = s.traitDiscard[idx]!;
+          if (prompt.mode === 'playDirectly') {
+            if (!picked.dominant && canPlayTrait(s, prompt.playerId, picked)) {
+              s.traitDiscard.splice(idx, 1);
+              onTraitEnteredTableau(s, prompt.playerId, picked, false);
+              pushLog(
+                s,
+                prompt.playerId,
+                `${seatName(s, prompt.playerId)} played ${picked.name} from the discard pile!`,
+                'good',
+              );
+            }
+          } else {
+            handOf(s, prompt.playerId).push(s.traitDiscard.splice(idx, 1)[0]!);
+          }
+        }
       }
       break;
     }

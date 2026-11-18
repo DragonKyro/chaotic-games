@@ -1,4 +1,4 @@
-// Casting Shadows — types for the implemented Base Game.
+// Casting Shadows — types for the Base Game + Ice Storm + Molten Rock Expansions.
 
 import type { GameStateShape } from '@/core/module';
 import type { PlayerId } from '@/core/types';
@@ -15,7 +15,11 @@ export type CsHexId =
   | 'amber-mountain'
   | 'whispering-marsh'
   | 'crystal-crypt'
-  | 'scorched-peaks';
+  | 'scorched-peaks'
+  | 'floating-temple'
+  | 'glimmering-woods'
+  | 'cobble-cove'
+  | 'molten-quarry';
 
 export type CsResource =
   | 'redGem'
@@ -36,6 +40,7 @@ export interface CsHexTile {
   hasMainDeckSlot: boolean;
   faceUpCard: CsCard | null;
   effectText: string;
+  expansion?: CsExpansionId;
 }
 
 // ============================================================================
@@ -62,6 +67,19 @@ export interface CsResourceCost {
   cursedCrystal?: number;
 }
 
+export interface CsCastTier {
+  cost: CsResourceCost;
+  damage: number;
+  heal?: number;
+  produce?: CsResource[];
+  inflictStun?: boolean;
+  inflictFreeze?: boolean;
+  inflictBurn?: boolean;
+  gainFortify?: number;
+  gainShadowEnergy?: number;
+  label: string;
+}
+
 export interface CsCard {
   id: number;
   kind: string;
@@ -70,16 +88,15 @@ export interface CsCard {
   level: 1 | 2 | 3;
   collectionCost: CsResourceCost;
   /** For Attack / Conversion spells: one or more cast tiers the player can choose from. */
-  castTiers?: {
-    cost: CsResourceCost;
-    damage: number;
-    heal?: number;
-    produce?: CsResource[];
-    label: string;
-  }[];
+  castTiers?: CsCastTier[];
   range?: CsSpellRange;
   targetsAllOnHex?: boolean;
   grantsResource?: CsResource;
+  inflictStun?: boolean;
+  inflictFreeze?: boolean;
+  inflictBurn?: boolean;
+  gainFortify?: number;
+  expansion?: CsExpansionId;
   text: string;
 }
 
@@ -92,6 +109,7 @@ export interface CsCharacterDef {
   homeHex: CsHexId;
   shadowAbilityCost: number;
   shadowAbilityText: string;
+  expansion?: CsExpansionId;
 }
 
 export interface CsPlayerBoard {
@@ -105,6 +123,10 @@ export interface CsPlayerBoard {
   usedSpellIdsThisTurn: number[];
   companion: CsCard | null;
   usedShadowAbilityThisTurn: boolean;
+  stunned: boolean;
+  frozen: boolean;
+  fortified: number;
+  burning: boolean;
 }
 
 export interface CsPendingAttack {
@@ -113,6 +135,9 @@ export interface CsPendingAttack {
   damage: number;
   unreducible: boolean;
   remainingTargetIds: PlayerId[];
+  inflictStun?: boolean;
+  inflictFreeze?: boolean;
+  inflictBurn?: boolean;
 }
 
 export interface CsLogEntry {
@@ -201,7 +226,13 @@ export type CsAction =
       diceIndices: number[];
       newValues: CsResource[];
     }
-  | { type: 'protect'; playerId: PlayerId; targetHexId?: CsHexId }
+  | {
+      type: 'protect';
+      playerId: PlayerId;
+      targetHexId?: CsHexId;
+      clearStatus?: 'cursedCrystal' | 'burning' | 'frozen';
+    }
+  | { type: 'unfreeze'; playerId: PlayerId }
   | { type: 'refreshHexCard'; playerId: PlayerId }
   | {
       type: 'collectCard';

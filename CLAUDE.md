@@ -22,18 +22,17 @@ look there first; it has five finished games' worth of precedent.
 
 ## Current status
 
-**All six base games are implemented and playable** (Exploding Kittens, Unstable
-Unicorns, Here to Slay, Happy Little Dinosaurs, Casting Shadows, Doomlings).
-Each game has its official base-game card pool, pure deterministic reducer,
-interactive prompts for every player decision, heuristic AI driver, functional
-UI (`GameView` + `LobbyConfig` + `Rules`), and unit + AI-vs-AI playout tests.
+**All six base games AND all 30 expansions are implemented and playable**
+(Exploding Kittens + 6 expansions, Unstable Unicorns + 8 expansions & 6 base
+editions, Here to Slay + 3 expansions, Happy Little Dinosaurs + 4 expansions,
+Casting Shadows + 2 expansions, Doomlings + 7 expansions). Each game has its
+official base and expansion card pools, pure deterministic reducer, interactive
+prompts for every player decision, heuristic AI driver, picker `Thumbnail` SVG,
+functional UI (`GameView` + `LobbyConfig` + `Rules`), and unit + AI-vs-AI
+playout tests.
 
-117 tests pass (`npm run test:run`), covering all six base games across 2–6
-players and multiple seeds.
-
-Next up: custom inline SVG card/board art and animations for the five newly
-implemented games, or expansion packs (e.g., Imploding Kittens, Unstable
-Unicorns expansions, Here to Slay Warriors & Druids).
+185 tests pass (`npm run test:run`), covering all six base games and all 30
+expansions across 2–10 players and multiple seeds.
 
 ## Tech stack (locked)
 

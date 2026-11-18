@@ -5,7 +5,10 @@ import type { PlayerId, Seat } from '@/core/types';
 import {
   canPlayCardFromHand,
   canPlayNeigh,
+  findCardInStable,
+  handLimitOf,
   handOf,
+  hasDragonsBlessing,
   hasNannyCam,
   hasPandamonium,
   isBlinded,
@@ -18,8 +21,48 @@ import {
   validStableTargets,
 } from './reducer';
 import { isNeighCard } from './cards';
-import type { UuAction, UuCard, UuConfig, UuPrompt, UuState } from './types';
+import type { UuAction, UuCard, UuConfig, UuExpansionId, UuPrompt, UuState } from './types';
 import { UU_EXPANSIONS } from './types';
+
+export function Thumbnail() {
+  return (
+    <svg viewBox="0 0 160 100" role="img" aria-label="Unstable Unicorns">
+      <rect x={0} y={0} width={160} height={100} fill="#1b1530" />
+      {/* Rainbow arch */}
+      <g fill="none" strokeLinecap="round" strokeWidth={5} opacity={0.85}>
+        <path d="M16,86 A64,64 0 0,1 144,86" stroke="#ef4444" />
+        <path d="M22,86 A58,58 0 0,1 138,86" stroke="#f97316" />
+        <path d="M28,86 A52,52 0 0,1 132,86" stroke="#eab308" />
+        <path d="M34,86 A46,46 0 0,1 126,86" stroke="#22c55e" />
+        <path d="M40,86 A40,40 0 0,1 120,86" stroke="#3b82f6" />
+        <path d="M46,86 A34,34 0 0,1 114,86" stroke="#a855f7" />
+      </g>
+      {/* Fanned cards */}
+      <g transform="rotate(-14 48 56)">
+        <rect x={26} y={24} width={44} height={60} rx={6} fill="#fef9ef" stroke="#221f33" strokeWidth={2.4} />
+        <rect x={30} y={28} width={36} height={34} rx={3} fill="#ef4444" />
+        <text x={48} y={50} textAnchor="middle" fill="#fff" fontSize="9" fontWeight="bold">NEIGH!</text>
+      </g>
+      <g transform="rotate(14 112 56)">
+        <rect x={90} y={24} width={44} height={60} rx={6} fill="#fef9ef" stroke="#221f33" strokeWidth={2.4} />
+        <rect x={94} y={28} width={36} height={34} rx={3} fill="#22c55e" />
+        <path d="M112,34 L115,43 L124,43 L117,48 L119,57 L112,52 L105,57 L107,48 L100,43 L109,43 Z" fill="#fde047" />
+      </g>
+      {/* Center Unicorn card */}
+      <g>
+        <rect x={56} y={16} width={48} height={66} rx={6} fill="#ffffff" stroke="#221f33" strokeWidth={2.6} />
+        <rect x={60} y={20} width={40} height={42} rx={4} fill="#3b82f6" />
+        {/* Unicorn head + golden horn */}
+        <path d="M72,56 Q68,40 78,34 Q88,34 90,44 Q94,46 92,52 Q86,56 72,56 Z" fill="#fff" stroke="#221f33" strokeWidth={2} />
+        <path d="M80,34 L90,14 L85,36 Z" fill="#facc15" stroke="#221f33" strokeWidth={1.8} />
+        <path d="M68,38 Q62,44 66,54" fill="none" stroke="#ec4899" strokeWidth={3.5} strokeLinecap="round" />
+        <circle cx={83} cy={42} r={2} fill="#221f33" />
+        <rect x={63} y={66} width={34} height={4} rx={2} fill="#cbd5e1" />
+        <rect x={68} y={73} width={24} height={4} rx={2} fill="#cbd5e1" />
+      </g>
+    </svg>
+  );
+}
 
 // ============================================================================
 // Lobby Config
@@ -33,21 +76,94 @@ export function LobbyConfig({
   seats: Seat[];
   onChange: (c: UuConfig) => void;
 }) {
+  const toggleExpansion = (id: UuExpansionId) => {
+    const exists = config.expansions.includes(id);
+    const next = exists ? config.expansions.filter((x) => x !== id) : [...config.expansions, id];
+    onChange({ ...config, expansions: next });
+  };
+
   return (
-    <div className="uu-lobby" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div className="uu-lobby" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span>Base Edition</span>
+        <span><strong>Base Edition</strong></span>
         <select
           value={config.edition}
           onChange={(e) => onChange({ ...config, edition: e.target.value as UuConfig['edition'] })}
         >
-          <option value="base-2nd">2nd Edition Base Deck (135 cards)</option>
-          <option value="base">2nd Edition Base Deck (default)</option>
+          <option value="base-2nd">2nd Edition Base Deck (135 cards — default)</option>
+          <option value="base">1st Edition / Original Print (Fertile, Puppicorn, Zombie, Angel, Shrinkray, Lasso)</option>
+          <option value="control">Control Collector&apos;s Edition (Chronocorn, Time Shift, Absorb &amp; Reflect)</option>
+          <option value="chaos">Chaos Collector&apos;s Edition (Unicorn of Chaos, Hell&apos;s Steedicorn, Redirect)</option>
+          <option value="diamond">Diamond Edition (Diamond Unicorns, Crystal Narwhal, Prismatic Shield)</option>
+          <option value="travel">Travel Edition (Compact 82-card portable deck)</option>
         </select>
       </label>
-      <p style={{ margin: 0, fontSize: '0.85rem', opacity: 0.8 }}>
-        2–8 players. First to 7 Unicorns wins (6 at 6–8 players). All 127 playable cards + Nursery rules implemented.
-        Expansions ({UU_EXPANSIONS.length}) are listed for reference.
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span><strong>Expansions ({config.expansions.length} / {UU_EXPANSIONS.length} enabled)</strong></span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              type="button"
+              className="secondary"
+              style={{ fontSize: '0.75rem', padding: '2px 8px' }}
+              onClick={() =>
+                onChange({
+                  ...config,
+                  expansions: UU_EXPANSIONS.map((e) => e.id as UuExpansionId),
+                })
+              }
+            >
+              Select All
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              style={{ fontSize: '0.75rem', padding: '2px 8px' }}
+              onClick={() => onChange({ ...config, expansions: [] })}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6 }}>
+          {UU_EXPANSIONS.map((exp) => {
+            const id = exp.id as UuExpansionId;
+            const checked = config.expansions.includes(id);
+            return (
+              <label
+                key={exp.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 8,
+                  padding: '6px 8px',
+                  borderRadius: 6,
+                  border: `1px solid ${checked ? '#a855f7' : 'rgba(255,255,255,0.12)'}`,
+                  background: checked ? 'rgba(168, 85, 247, 0.14)' : 'rgba(255,255,255,0.03)',
+                  cursor: 'pointer',
+                  fontSize: '0.82rem',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleExpansion(id)}
+                  style={{ marginTop: 2 }}
+                />
+                <div>
+                  <div><strong>{exp.name}</strong></div>
+                  <div style={{ fontSize: '0.74rem', opacity: 0.8 }}>{exp.summary}</div>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      <p style={{ margin: 0, fontSize: '0.82rem', opacity: 0.8 }}>
+        2–8 players. First to 7 Unicorns wins (6 at 6–8 players). Combine any Base Edition with any of the 8 official Expansion packs!
       </p>
     </div>
   );
@@ -235,6 +351,7 @@ export function GameView({
           const count = unicornCount(s, seat.id);
           const panda = hasPandamonium(s, seat.id);
           const blinded = isBlinded(s, seat.id);
+          const blessed = hasDragonsBlessing(s, seat.id);
           const nanny = hasNannyCam(s, seat.id);
           const oppHand = handOf(s, seat.id);
           return (
@@ -268,7 +385,8 @@ export function GameView({
                   Unicorns: <strong>{count} / {s.unicornsToWin}</strong>
                   {panda && <span style={{ marginLeft: 6, color: '#eab308' }}>(🐼 Pandas!)</span>}
                   {blinded && <span style={{ marginLeft: 6, color: '#f97316' }}>(Blinded)</span>}
-                  {' · '}Hand: <strong>{oppHand.length}</strong>
+                  {blessed && <span style={{ marginLeft: 6, color: '#22c55e' }}>(✨ Dragon&apos;s Blessing)</span>}
+                  {' · '}Hand: <strong>{oppHand.length} / {handLimitOf(s, seat.id)}</strong>
                 </div>
               </div>
 
@@ -323,7 +441,7 @@ export function GameView({
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <h4 style={{ margin: 0 }}>Your Hand ({myHand.length} / 7 limit)</h4>
+            <h4 style={{ margin: 0 }}>Your Hand ({myHand.length} / {handLimitOf(s, me)} limit)</h4>
             {isMyTurn && s.subPhase === 'action' && (
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '0.85rem' }}>
@@ -737,15 +855,16 @@ function PromptResolutionView({
   }
 
   if (prompt.kind === 'blackKnightSave') {
+    const protectorName = findCardInStable(s, me, prompt.blackKnightCardId)?.name ?? 'Black Knight Unicorn';
     return (
       <div style={{ padding: 14, borderRadius: 8, background: 'rgba(239, 68, 68, 0.15)', border: '2px solid #ef4444' }}>
-        <h4 style={{ margin: '0 0 6px' }}>Black Knight Unicorn — Protect your Unicorn?</h4>
+        <h4 style={{ margin: '0 0 6px' }}>{protectorName} — Protect your Unicorn?</h4>
         <p style={{ margin: '0 0 10px', fontSize: '0.9rem' }}>
-          One of your Unicorns is about to be destroyed. You may SACRIFICE Black Knight Unicorn instead!
+          One of your Unicorns is about to be destroyed. You may SACRIFICE {protectorName} instead!
         </p>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, decline: false })}>
-            Sacrifice Black Knight Unicorn
+            Sacrifice {protectorName}
           </button>
           <button className="secondary" onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, decline: true })}>
             Let Unicorn be Destroyed

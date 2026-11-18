@@ -187,8 +187,9 @@ export function GameLobby({ module, onBack, onStart }: Props) {
 
   const LobbyConfigComponent = bundle?.LobbyConfig;
   const RulesComponent = bundle?.Rules;
-  const canStartOnline = isOnlineHost && hotSeats.length >= module.minPlayers;
-  const canStartLocal = !isOnline && hotSeats.length >= module.minPlayers;
+  const configErrors = module.validateConfig(config);
+  const canStartOnline = isOnlineHost && hotSeats.length >= module.minPlayers && configErrors.length === 0;
+  const canStartLocal = !isOnline && hotSeats.length >= module.minPlayers && configErrors.length === 0;
 
   return (
     <div className="lobby-single">
@@ -201,6 +202,7 @@ export function GameLobby({ module, onBack, onStart }: Props) {
 
       <section className="lobby-panel">
         <h3>{module.name}</h3>
+        {module.tagline && <p className="lobby-hint" style={{ marginTop: -6, marginBottom: 12 }}>{module.tagline}</p>}
 
         {/* ----- seats ----- */}
         <h4 className="lobby-section-h">Seats</h4>
@@ -294,6 +296,13 @@ export function GameLobby({ module, onBack, onStart }: Props) {
         )}
 
         {/* ----- launch buttons ----- */}
+        {configErrors.length > 0 && !isOnlineGuest && (
+          <div className="online-error" style={{ marginTop: 12 }}>
+            {configErrors.map((err, i) => (
+              <div key={i}>⚠ {err}</div>
+            ))}
+          </div>
+        )}
         <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {!isOnline && (
             <>

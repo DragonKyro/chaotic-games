@@ -353,3 +353,37 @@ describe('nope decisions', () => {
     expect(action.type).toBe('playNope');
   });
 });
+
+describe('AI vs AI playouts with expansions', () => {
+  const expansionSets: EkConfig['expansions'][] = [
+    ['imploding-kittens'],
+    ['streaking-kittens'],
+    ['barking-kittens'],
+    ['zombie-kittens'],
+    ['party-pack'],
+    ['recipes-for-disaster'],
+    ['imploding-kittens', 'streaking-kittens', 'barking-kittens', 'zombie-kittens'],
+  ];
+
+  for (const expansions of expansionSets) {
+    it(`completes games with expansions: ${expansions.join(', ')}`, () => {
+      const playerCount = expansions.includes('party-pack') ? 7 : 4;
+      for (const seed of [1, 7, 42, 99]) {
+        let state = createInitialState({ ...CONFIG, expansions }, seed, seats(playerCount));
+        let ticks = 0;
+        while (state.phase !== 'gameOver') {
+          ticks += 1;
+          if (ticks > 6000) {
+            throw new Error(`expansion game did not finish in 6000 ticks (subPhase=${state.subPhase})`);
+          }
+          const active = state.activePlayerId!;
+          const action = chooseAIAction(state, active);
+          if (!action) throw new Error(`AI returned null during ${state.subPhase}`);
+          state = applyAction(state, action);
+        }
+        expect(state.phase).toBe('gameOver');
+        expect(livePlayerIds(state)).toHaveLength(1);
+      }
+    });
+  }
+});

@@ -53,7 +53,7 @@ import type { ExpansionMeta, ScaffoldConfig } from '../_scaffold';
  * Base set card kinds. The five cat cards have no ability of their own — they
  * exist purely as combo fodder.
  */
-export type EkBaseCardKind =
+export type EkCoreCardKind =
   | 'explodingKitten'
   | 'defuse'
   | 'nope'
@@ -68,17 +68,42 @@ export type EkBaseCardKind =
   | 'hairyPotatoCat'
   | 'beardCat';
 
-// Cards the expansions add, for planning only — none are implemented, and
-// `EkCard.kind` is deliberately narrowed to the base set so the reducer cannot
-// silently receive one:
-//
-//   Imploding Kittens — implodingKitten, reverse, drawFromTheBottom,
-//                       alterTheFuture, feralCat, targetedAttack
-//   Streaking Kittens — streakingKitten, superSkip, swapTopAndBottom,
-//                       catomicBomb, curseOfTheCatButt, garbageCollector, mark
-//   Barking Kittens   — barkingKitten, bury, alterTheFutureNow, illTakeThat,
-//                       shareTheFuture, towerOfPower, personalAttack, potluck
-//   Zombie Kittens    — zombieKitten
+/** Expansion card kinds across Imploding, Streaking, Barking, and Zombie Kittens. */
+export type EkExpansionCardKind =
+  // Imploding Kittens
+  | 'implodingKitten'
+  | 'reverse'
+  | 'drawFromTheBottom'
+  | 'alterTheFuture'
+  | 'targetedAttack'
+  | 'feralCat'
+  // Streaking Kittens
+  | 'streakingKitten'
+  | 'superSkip'
+  | 'seeTheFuture5x'
+  | 'alterTheFuture5x'
+  | 'swapTopAndBottom'
+  | 'garbageCollection'
+  | 'catomicBomb'
+  | 'mark'
+  | 'curseOfTheCatButt'
+  // Barking Kittens
+  | 'barkingKitten'
+  | 'alterTheFutureNow'
+  | 'bury'
+  | 'personalAttack'
+  | 'shareTheFuture'
+  | 'illTakeThat'
+  | 'potluck'
+  | 'towerOfPower'
+  // Zombie Kittens
+  | 'zombieKitten'
+  | 'digDeeper'
+  | 'clone'
+  | 'clairvoyance';
+
+export type EkBaseCardKind = EkCoreCardKind | EkExpansionCardKind;
+export type EkCardKind = EkBaseCardKind;
 
 /**
  * A physical card instance. Instance ids matter more here than in the sibling
@@ -110,6 +135,8 @@ export interface EkPendingPlay {
   targetPlayerId: PlayerId | null;
   /** Three-of-a-kind: the card type being demanded, named on play. */
   demandKind: EkBaseCardKind | null;
+  /** When Clone is played, the underlying card kind it copied from the discard pile. */
+  clonedKind?: EkBaseCardKind | null;
   /** Nopes stacked on top, in play order. Odd = cancelled. */
   nopeCards: EkCard[];
   /**
@@ -187,7 +214,7 @@ export const EK_EXPANSIONS: readonly ExpansionMeta[] = [
 ];
 
 export interface EkConfig extends ScaffoldConfig {
-  /** None are implemented — the lobby shows them as unavailable. */
+  /** Enabled expansion packs. */
   expansions: EkExpansionId[];
   /**
    * Random cards dealt to each player before their guaranteed Defuse. The
@@ -200,6 +227,8 @@ export interface EkConfig extends ScaffoldConfig {
    * form a combo; true = cat cards only.
    */
   combosCatsOnly: boolean;
+  /** Optional seat count from the lobby for player-count vs expansion validation. */
+  playerCount?: number;
 }
 
 // ============================================================================
@@ -214,6 +243,10 @@ export type EkSubPhase =
   | 'awaitingFavorGive'
   | 'awaitingDiscardPick'
   | 'awaitingFutureView'
+  | 'awaitingGarbagePick'
+  | 'awaitingBuryPlace'
+  | 'awaitingPotluckPick'
+  | 'awaitingDigDeeper'
   | 'gameOver';
 
 export interface EkState extends GameStateShape {
@@ -249,14 +282,19 @@ export interface EkState extends GameStateShape {
    */
   turnsRemaining: number;
 
-  /** +1 clockwise. Always +1 in the base game — Reverse arrives with Imploding. */
+  /** +1 clockwise, -1 counter-clockwise (flipped by Reverse). */
   turnDirection: 1 | -1;
 
   /** Open reaction window, if any. */
   pending: EkPendingPlay | null;
 
-  /** Open See the Future peek — drives the modal, then folds into knownTopCount. */
-  peek: { playerId: PlayerId; cards: EkCard[] } | null;
+  /** Open See/Alter/Share the Future peek — drives the modal, then folds into knownTopCount. */
+  peek: {
+    playerId: PlayerId;
+    cards: EkCard[];
+    canReorder?: boolean;
+    shareWithNext?: boolean;
+  } | null;
 
   /** In-flight Favor: `from` owes `to` a card of their choosing. */
   pendingFavor: { fromPlayerId: PlayerId; toPlayerId: PlayerId } | null;
@@ -273,6 +311,42 @@ export interface EkState extends GameStateShape {
    * just played aren't available for you to immediately reclaim.
    */
   limbo: EkCard[];
+
+  /** Whether the Imploding Kitten has been drawn once and is now face-up in the deck. */
+  implodingFaceUp?: boolean;
+
+  /** Card IDs that have been Marked and are visible to all players while in a hand. */
+  markedCardIds?: number[];
+
+  /** Players currently under Curse of the Cat Butt (must play/give blindly until drawing). */
+  cursedPlayers?: PlayerId[];
+
+  /** In-flight Garbage Collection queue and cards collected to be shuffled into the deck. */
+  pendingGarbage?: { queue: PlayerId[]; collected: EkCard[] } | null;
+
+  /** Card drawn via Bury awaiting secret reinsertion into the deck. */
+  pendingBury?: EkCard | null;
+
+  /** In-flight Potluck queue of players choosing a card to place on top of the deck. */
+  pendingPotluck?: { queue: PlayerId[] } | null;
+
+  /** Top 2 cards being inspected during Dig Deeper. */
+  pendingDigDeeper?: { playerId: PlayerId; cards: EkCard[] } | null;
+
+  /** Maps victim PlayerId -> thief PlayerId who played "I'll Take That" in front of them. */
+  illTakeThat?: Record<PlayerId, PlayerId>;
+
+  /** Protected 6-card stash per player who played Tower of Power. */
+  towerStash?: Record<PlayerId, EkCard[]>;
+
+  /** Players who played a Barking Kitten while the other was still in the deck. */
+  activeBarking?: PlayerId[];
+
+  /** Players who have played Clairvoyance and sense where reinserted kittens go. */
+  clairvoyantPlayers?: PlayerId[];
+
+  /** Whether resolving the current pendingKitten ends the active turn (true on draw, false on mid-turn exposure). */
+  defuseEndsTurn?: boolean;
 
   log: EkLogEntry[];
   logSeq: number;
@@ -303,13 +377,25 @@ export type EkAction =
   | { type: 'declineNope'; playerId: PlayerId }
   /** End your turn by drawing. Resolves kitten draws into a Defuse or death. */
   | { type: 'drawCard'; playerId: PlayerId }
-  /** Play the Defuse for the kitten you just drew. */
-  | { type: 'playDefuse'; playerId: PlayerId; cardId: number }
-  /** Secretly reinsert the defused kitten. index 0 = top of deck. */
+  /** Play the Defuse (or Zombie Kitten, optionally choosing a dead targetPlayerId to resurrect) for the kitten you just drew. */
+  | { type: 'playDefuse'; playerId: PlayerId; cardId: number; targetPlayerId?: PlayerId }
+  /** Secretly hold the drawn Exploding Kitten in your hand using Streaking Kitten instead of defusing. */
+  | { type: 'keepKitten'; playerId: PlayerId }
+  /** Secretly reinsert the defused (or face-up Imploding) kitten. index 0 = top of deck. */
   | { type: 'placeKitten'; playerId: PlayerId; index: number }
   /** Favor's victim hands over a card of their own choosing. */
   | { type: 'giveCard'; playerId: PlayerId; cardId: number }
   /** Five-different combo: take any one card from the discard pile. */
   | { type: 'takeFromDiscard'; playerId: PlayerId; cardId: number }
-  /** Close a See the Future peek. */
-  | { type: 'ackPeek'; playerId: PlayerId };
+  /** Close a See/Alter/Share the Future peek without changing the card order. */
+  | { type: 'ackPeek'; playerId: PlayerId }
+  /** Rearrange the top cards during Alter the Future / Share the Future and close the peek. */
+  | { type: 'reorderFuture'; playerId: PlayerId; orderedCardIds: number[] }
+  /** Garbage Collection: choose 1 card from your hand to shuffle back into the deck. */
+  | { type: 'garbagePick'; playerId: PlayerId; cardId: number }
+  /** Bury: secretly insert the drawn card at any index in the deck to end your turn. */
+  | { type: 'placeBury'; playerId: PlayerId; index: number }
+  /** Potluck: choose 1 card from your hand to place on top of the deck. */
+  | { type: 'potluckPick'; playerId: PlayerId; cardId: number }
+  /** Dig Deeper: choose 1 of the top 2 cards to take into your hand and put the other back. */
+  | { type: 'pickDigDeeper'; playerId: PlayerId; cardId: number };

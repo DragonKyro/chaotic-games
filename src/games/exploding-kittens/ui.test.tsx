@@ -8,9 +8,11 @@ import type { Seat } from '@/core/types';
 import { CardArt, CardBack, Thumbnail } from './CardArt';
 import { Rules } from './Rules';
 import { GameView, LobbyConfig } from './ui';
-import { BASE_DECK_COUNTS, CARD_LABEL } from './cards';
+import { ALL_CARD_KINDS, BASE_DECK_COUNTS, CARD_LABEL } from './cards';
+import { explodingKittensModule } from './module';
 import { applyAction, createInitialState } from './reducer';
 import type { EkBaseCardKind, EkConfig, EkState } from './types';
+import { EK_EXPANSIONS } from './types';
 
 const ALL_KINDS = Object.keys(BASE_DECK_COUNTS) as EkBaseCardKind[];
 const CONFIG: EkConfig = { expansions: [], handSize: 4, combosCatsOnly: false };
@@ -184,5 +186,27 @@ describe('view survives a full AI game', () => {
       s = applyAction(s, action);
     }
     expect(s.phase).toBe('gameOver');
+  });
+
+  it('renders every expansion card kind and expansion lobby checkboxes', () => {
+    for (const kind of ALL_CARD_KINDS) {
+      const { container, unmount } = render(<CardArt kind={kind} />);
+      expect(screen.getByLabelText(CARD_LABEL[kind])).toBeDefined();
+      const shapes = container.querySelectorAll('path, circle, ellipse, rect');
+      expect(shapes.length, `${kind} has no shapes`).toBeGreaterThan(2);
+      unmount();
+    }
+
+    const onChange = vi.fn();
+    render(<LobbyConfig config={CONFIG} seats={seats(4)} onChange={onChange} />);
+    for (const exp of EK_EXPANSIONS) {
+      expect(screen.getByText(exp.name)).toBeDefined();
+    }
+
+    expect(explodingKittensModule.maxPlayers).toBe(10);
+    expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: ['imploding-kittens'] })).toEqual([]);
+    expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: [], playerCount: 6 }).length).toBeGreaterThan(0);
+    expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: ['imploding-kittens'], playerCount: 6 })).toEqual([]);
+    expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: ['party-pack'], playerCount: 9 })).toEqual([]);
   });
 });

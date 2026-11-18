@@ -3,12 +3,17 @@
 import { useState } from 'react';
 import { randomSeed, rngInt } from '@/core/rng';
 import type { PlayerId, Seat } from '@/core/types';
-import { HTS_PARTY_LEADERS } from './cards';
+import { getPartyLeadersForExpansions } from './cards';
 import {
   canAttackMonster,
+  canEquipItemToHero,
   computeRollTotals,
+  getClassesToWin,
   handOf,
   heroEffectiveClass,
+  heroEquippedItems,
+  heroHasItemKind,
+  niceGiftsOf,
   partyClasses,
   partyOf,
   seatName,
@@ -16,12 +21,62 @@ import {
   validHandCardsForPrompt,
   validHeroTargets,
 } from './reducer';
-import type { HtsAction, HtsCard, HtsConfig, HtsPrompt, HtsState } from './types';
+import type { HtsAction, HtsCard, HtsConfig, HtsExpansionId, HtsPrompt, HtsState } from './types';
 import { HTS_EXPANSIONS } from './types';
 
 function rollClient2d6(): [number, number] {
   const rng = { seed: randomSeed() };
   return [rngInt(rng, 6) + 1, rngInt(rng, 6) + 1];
+}
+
+export function Thumbnail() {
+  return (
+    <svg viewBox="0 0 240 140" style={{ width: '100%', height: 'auto', display: 'block' }}>
+      <defs>
+        <linearGradient id="hts-bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#1e1b4b" />
+          <stop offset="50%" stopColor="#311042" />
+          <stop offset="100%" stopColor="#450a0a" />
+        </linearGradient>
+      </defs>
+      <rect width="240" height="140" rx="12" fill="url(#hts-bg)" />
+      {/* Crossed Swords & Shield */}
+      <path d="M58 106 L124 40 M50 98 L66 114" stroke="#e2e8f0" strokeWidth="4" strokeLinecap="round" />
+      <path d="M182 106 L116 40 M190 98 L174 114" stroke="#e2e8f0" strokeWidth="4" strokeLinecap="round" />
+      <path
+        d="M120 26 L152 38 V68 C152 92 136 108 120 116 C104 108 88 92 88 68 V38 Z"
+        fill="#7f1d1d"
+        stroke="#facc15"
+        strokeWidth="3"
+      />
+      {/* 2d6 Dice on Shield */}
+      <rect x="99" y="54" width="18" height="18" rx="3" fill="#f8fafc" stroke="#0f172a" strokeWidth="1.5" />
+      <circle cx="104" cy="59" r="1.7" fill="#0f172a" />
+      <circle cx="112" cy="67" r="1.7" fill="#0f172a" />
+      <rect x="123" y="54" width="18" height="18" rx="3" fill="#facc15" stroke="#0f172a" strokeWidth="1.5" />
+      <circle cx="128" cy="59" r="1.7" fill="#0f172a" />
+      <circle cx="132" cy="63" r="1.7" fill="#0f172a" />
+      <circle cx="136" cy="67" r="1.7" fill="#0f172a" />
+      {/* Class Gems */}
+      <circle cx="36" cy="36" r="6" fill="#ef4444" />
+      <circle cx="36" cy="56" r="6" fill="#f97316" />
+      <circle cx="36" cy="76" r="6" fill="#eab308" />
+      <circle cx="204" cy="36" r="6" fill="#22c55e" />
+      <circle cx="204" cy="56" r="6" fill="#3b82f6" />
+      <circle cx="204" cy="76" r="6" fill="#a855f7" />
+      <text
+        x="120"
+        y="131"
+        textAnchor="middle"
+        fill="#fef08a"
+        fontSize="12"
+        fontWeight="700"
+        letterSpacing="1"
+      >
+        HERE TO SLAY
+      </text>
+    </svg>
+  );
 }
 
 export function LobbyConfig({
@@ -32,6 +87,22 @@ export function LobbyConfig({
   seats: Seat[];
   onChange: (c: HtsConfig) => void;
 }) {
+  const classesToWin = getClassesToWin(config);
+
+  const toggleExpansion = (expId: HtsExpansionId) => {
+    const has = config.expansions.includes(expId);
+    const nextExpansions = has
+      ? config.expansions.filter((x) => x !== expId)
+      : [...config.expansions, expId];
+    const hasClassExp =
+      nextExpansions.includes('warriors-druids') || nextExpansions.includes('berserkers-necromancers');
+    onChange({
+      ...config,
+      expansions: nextExpansions,
+      classesToWin: hasClassExp ? 7 : 6,
+    });
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -44,9 +115,53 @@ export function LobbyConfig({
           <option value={2}>2 Monsters (Quick Game)</option>
         </select>
       </label>
+
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <span>Distinct Hero Classes to Win</span>
+        <select
+          value={classesToWin}
+          onChange={(e) => onChange({ ...config, classesToWin: Number(e.target.value) })}
+        >
+          <option value={6}>6 Classes (Base Game Standard)</option>
+          <option value={7}>7 Classes (Standard with Class Expansion)</option>
+          <option value={8}>8 Classes (Epic Party)</option>
+        </select>
+      </label>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span>Expansions</span>
+        {HTS_EXPANSIONS.map((exp) => {
+          const checked = config.expansions.includes(exp.id as HtsExpansionId);
+          return (
+            <label
+              key={exp.id}
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 8,
+                padding: '6px 8px',
+                borderRadius: 6,
+                background: checked ? 'rgba(250,204,21,0.12)' : 'rgba(255,255,255,0.03)',
+                border: `1px solid ${checked ? '#facc15' : 'rgba(255,255,255,0.12)'}`,
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => toggleExpansion(exp.id as HtsExpansionId)}
+              />
+              <div style={{ fontSize: '0.82rem' }}>
+                <strong>{exp.name}</strong> — <span style={{ opacity: 0.85 }}>{exp.summary}</span>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+
       <p style={{ margin: 0, fontSize: '0.85rem', opacity: 0.8 }}>
-        2–6 players. 3 Action Points per turn. Slay {config.monstersToWin} Monsters OR assemble all 6 Hero classes
-        (Fighter, Bard, Guardian, Ranger, Thief, Wizard) to win! ({HTS_EXPANSIONS.length} expansions listed for reference.)
+        2–6 players. 3 Action Points per turn. Slay {config.monstersToWin} Monsters OR assemble {classesToWin} distinct
+        Hero classes{config.expansions.includes('here-to-sleigh') ? ' OR collect 3 Nice List Gifts' : ''} to win!
       </p>
     </div>
   );
@@ -59,6 +174,10 @@ const CLASS_COLORS: Record<string, string> = {
   ranger: '#22c55e',
   thief: '#3b82f6',
   wizard: '#a855f7',
+  warrior: '#0ea5e9',
+  druid: '#10b981',
+  berserker: '#dc2626',
+  necromancer: '#7c3aed',
 };
 
 function HtsCardTile({
@@ -105,7 +224,9 @@ function HtsCardTile({
         </span>
       </div>
       {card.abilityThreshold && (
-        <div style={{ fontSize: '0.74rem', color: '#facc15' }}>Roll {card.abilityThreshold}+</div>
+        <div style={{ fontSize: '0.74rem', color: card.rollLow ? '#34d399' : '#facc15' }}>
+          Roll {card.rollLow ? `≤${card.abilityThreshold}` : `${card.abilityThreshold}+`}
+        </div>
       )}
       <div style={{ fontSize: '0.73rem', opacity: 0.85, lineHeight: 1.25 }}>{card.text}</div>
     </div>
@@ -239,7 +360,10 @@ export function GameView({
           const leader = s.partyLeaders[seat.id];
           const party = partyOf(s, seat.id);
           const trophies = trophiesOf(s, seat.id);
+          const gifts = niceGiftsOf(s, seat.id);
           const classes = Array.from(partyClasses(s, seat.id));
+          const classesToWin = getClassesToWin(s.config);
+          const availableLeaders = getPartyLeadersForExpansions(s.config.expansions);
           return (
             <div
               key={seat.id}
@@ -257,7 +381,11 @@ export function GameView({
                   <strong>{seat.name}</strong> {seat.id === me && <em>(You)</em>}
                 </div>
                 <div style={{ fontSize: '0.8rem' }}>
-                  Classes: <strong>{classes.length}/6</strong> · Monsters: <strong>{trophies.length}/{s.config.monstersToWin}</strong> · Hand: <strong>{handOf(s, seat.id).length}</strong>
+                  Classes: <strong>{classes.length}/{classesToWin}</strong> · Monsters: <strong>{trophies.length}/{s.config.monstersToWin}</strong>
+                  {s.config.expansions.includes('here-to-sleigh') && (
+                    <> · Gifts: <strong>{gifts.length}/3</strong></>
+                  )}{' '}
+                  · Hand: <strong>{handOf(s, seat.id).length}</strong>
                 </div>
               </div>
 
@@ -275,7 +403,7 @@ export function GameView({
                         }
                         style={{ fontSize: '0.75rem' }}
                       >
-                        {HTS_PARTY_LEADERS.map((l) => (
+                        {availableLeaders.map((l) => (
                           <option key={l.kind} value={l.kind}>
                             {l.name} ({l.class})
                           </option>
@@ -308,6 +436,30 @@ export function GameView({
                           </button>
                         </>
                       )}
+                      {leader.kind === 'leader-gnawing-dread' &&
+                        !s.turnBuffs.gnawingDreadUsed &&
+                        s.actionPointsRemaining >= 2 &&
+                        s.discard.length > 0 && (
+                          <button
+                            onClick={() => dispatch({ type: 'gnawingDreadSearch', playerId: me })}
+                          >
+                            Gnawing Dread Search Discard (2 AP)
+                          </button>
+                        )}
+                      {leader.kind === 'leader-noble-shaman' && !s.turnBuffs.nobleShamanUsed && (
+                        <>
+                          <button
+                            onClick={() => dispatch({ type: 'nobleShamanAdjust', playerId: me, delta: 1 })}
+                          >
+                            Noble Shaman +1 Roll
+                          </button>
+                          <button
+                            onClick={() => dispatch({ type: 'nobleShamanAdjust', playerId: me, delta: -1 })}
+                          >
+                            Noble Shaman -1 Roll
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -316,19 +468,20 @@ export function GameView({
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {party.map((h) => {
                   const effClass = heroEffectiveClass(h);
+                  const equipped = heroEquippedItems(h);
                   const canRoll =
                     seat.id === me &&
                     isMyTurn &&
                     s.subPhase === 'awaitingAction' &&
                     s.actionPointsRemaining >= 1 &&
                     !h.usedThisTurn &&
-                    h.equippedItem?.kind !== 'sealing-key';
+                    !heroHasItemKind(h, 'sealing-key');
                   return (
                     <div key={h.card.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       <HtsCardTile
                         card={h.card}
                         compact
-                        badgeText={`${effClass ?? ''}${h.equippedItem ? ` + ${h.equippedItem.name}` : ''}`}
+                        badgeText={`${effClass ?? ''}${equipped.length > 0 ? ` + ${equipped.map((i) => i.name).join(' + ')}` : ''}`}
                       />
                       {seat.id === me && isMyTurn && s.subPhase === 'awaitingAction' && (
                         <button
@@ -356,6 +509,11 @@ export function GameView({
                   <strong>Slain Monsters:</strong> {trophies.map((t) => t.card.name).join(', ')}
                 </div>
               )}
+              {gifts.length > 0 && (
+                <div style={{ fontSize: '0.76rem', color: '#facc15' }}>
+                  <strong>🎁 Nice Gifts ({gifts.length}/3):</strong> {gifts.map((g) => g.name).join(', ')}
+                </div>
+              )}
             </div>
           );
         })}
@@ -374,6 +532,14 @@ export function GameView({
                 >
                   Draw 1 Card (1 AP)
                 </button>
+                {s.config.expansions.includes('here-to-sleigh') && (
+                  <button
+                    disabled={s.actionPointsRemaining < 2 || partyOf(s, me).length < 1}
+                    onClick={() => dispatch({ type: 'claimHolidayGift', playerId: me })}
+                  >
+                    🎁 Deliver Holiday Gift (2 AP)
+                  </button>
+                )}
                 <button
                   className="secondary"
                   disabled={s.actionPointsRemaining < 3}
@@ -446,7 +612,7 @@ export function GameView({
                   >
                     <option value="">Choose Hero…</option>
                     {partyOf(s, equipTargetPlayer ?? me)
-                      .filter((h) => !h.equippedItem)
+                      .filter((h) => canEquipItemToHero(h, selectedCard))
                       .map((h) => (
                         <option key={h.card.id} value={h.card.id}>
                           {h.card.name}
@@ -549,12 +715,19 @@ function ModifierWindowView({
   const { actorTotal, challengerTotal } = computeRollTotals(s, r);
   const mods = handOf(s, me).filter((c) => c.type === 'modifier');
   const isProtectingHorn = s.partyLeaders[me]?.kind === 'leader-protecting-horn';
+  const canNobleShaman =
+    me === s.turnPlayerId &&
+    s.partyLeaders[me]?.kind === 'leader-noble-shaman' &&
+    !s.turnBuffs.nobleShamanUsed;
 
   return (
     <div style={{ padding: 14, borderRadius: 8, background: 'rgba(59,130,246,0.15)', border: '2px solid #3b82f6' }}>
       <h4 style={{ margin: '0 0 6px' }}>
         Roll Window — {seatName(s, r.byPlayerId)} rolled {r.dice[0]} + {r.dice[1]} (Current Total: {actorTotal}
-        {r.reason !== 'challengeDuel' ? `, Needs ${r.threshold}+` : ` vs Challenger ${seatName(s, r.challengerId)}: ${challengerTotal}`})
+        {r.reason !== 'challengeDuel'
+          ? `, Needs ${r.rollLow ? `≤${r.threshold}` : `${r.threshold}+`}`
+          : ` vs Challenger ${seatName(s, r.challengerId)}: ${challengerTotal}`}
+        )
       </h4>
 
       {r.reason === 'challengeDuel' && (
@@ -578,6 +751,16 @@ function ModifierWindowView({
       )}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {canNobleShaman && (
+          <>
+            <button onClick={() => dispatch({ type: 'nobleShamanAdjust', playerId: me, delta: 1 })}>
+              The Noble Shaman: +1
+            </button>
+            <button onClick={() => dispatch({ type: 'nobleShamanAdjust', playerId: me, delta: -1 })}>
+              The Noble Shaman: -1
+            </button>
+          </>
+        )}
         {mods.map((m) =>
           (m.modifierChoices ?? []).map((val) => (
             <button
@@ -629,7 +812,7 @@ function HtsPromptView({
       <div style={{ padding: 14, borderRadius: 8, background: 'rgba(34,197,94,0.15)', border: '2px solid #22c55e' }}>
         <h4 style={{ margin: '0 0 6px' }}>{prompt.heroCard.name} entered your Party!</h4>
         <p style={{ margin: '0 0 10px', fontSize: '0.88rem' }}>
-          Roll {prompt.heroCard.abilityThreshold}+ for free now: {prompt.heroCard.text}
+          Roll {prompt.heroCard.rollLow ? `≤${prompt.heroCard.abilityThreshold}` : `${prompt.heroCard.abilityThreshold}+`} for free now: {prompt.heroCard.text}
         </p>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, dice: rollClient2d6() })}>

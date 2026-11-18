@@ -6,29 +6,60 @@
 // `state.deck` is NEVER rendered except through `knownTopCards`, which is the
 // knowledge that seat has legitimately earned.
 
-import { useMemo, useState } from 'react';
-import type { PlayerId } from '@/core/types';
+import { useEffect, useMemo, useState } from 'react';
+import type { PlayerId, Seat } from '@/core/types';
 import { Card, FaceDownCard } from './Card';
-import { CARD_LABEL, detectCombo, isPlayableAction } from './cards';
+import {
+  CARD_LABEL,
+  detectCombo,
+  isDefuseKind,
+  isPlayableAction,
+  maxPlayersForExpansions,
+  needsTargetForKind,
+} from './cards';
 import {
   availableCombos,
+  canHoldWithStreaking,
   drawDanger,
+  findCloneTargetKind,
   isLive,
   kittensInDeck,
   knownTopCards,
 } from './reducer';
-import type { EkAction, EkBaseCardKind, EkCard, EkConfig, EkState } from './types';
+import type {
+  EkAction,
+  EkBaseCardKind,
+  EkCard,
+  EkConfig,
+  EkExpansionId,
+  EkState,
+} from './types';
 import { EK_EXPANSIONS } from './types';
 
 // ============================================================================
 // Lobby
 // ============================================================================
 
-export function LobbyConfig({ config, onChange }: {
+export function LobbyConfig({ config, seats, onChange }: {
   config: EkConfig;
   seats: unknown;
   onChange: (c: EkConfig) => void;
 }) {
+  const seatCount = Array.isArray(seats) ? (seats as Seat[]).length : undefined;
+  const maxAllowed = maxPlayersForExpansions(config.expansions);
+
+  function toggleExpansion(id: EkExpansionId) {
+    const has = config.expansions.includes(id);
+    const nextExpansions = has
+      ? config.expansions.filter((x) => x !== id)
+      : [...config.expansions, id];
+    onChange({
+      ...config,
+      expansions: nextExpansions,
+      ...(seatCount !== undefined ? { playerCount: seatCount } : {}),
+    });
+  }
+
   return (
     <div className="ek-lobby">
       <label className="ek-field">
@@ -58,11 +89,26 @@ export function LobbyConfig({ config, onChange }: {
       </label>
 
       <div className="ek-expansion-note">
-        <strong>Expansions</strong>
-        <p>
-          Base game only for now. {EK_EXPANSIONS.length} expansions are mapped out in
-          the code but none are implemented yet.
-        </p>
+        <strong>Expansions (Max players: {maxAllowed})</strong>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+          {EK_EXPANSIONS.map((exp) => {
+            const id = exp.id as EkExpansionId;
+            const checked = config.expansions.includes(id);
+            return (
+              <label key={exp.id} className="ek-check">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleExpansion(id)}
+                />
+                <span>
+                  {exp.name}
+                  <small>{exp.summary}</small>
+                </span>
+              </label>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -82,9 +128,11 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   const [selected, setSelected] = useState<number[]>([]);
   const [target, setTarget] = useState<PlayerId | null>(null);
   const [demand, setDemand] = useState<EkBaseCardKind>('defuse');
+  const [reviveTarget, setReviveTarget] = useState<PlayerId | null>(null);
 
   const myHand: EkCard[] = (me && s.hands[me]) || [];
   const isMyTurn = me != null && s.activePlayerId === me;
+  const isCursed = me != null && (s.cursedPlayers?.includes(me) ?? false);
   const opponents = s.seats.filter((seat) => seat.id !== me);
 
   function clearSelection() {
@@ -108,18 +156,30 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   );
   const combo = selectedCards.length > 1 ? detectCombo(selectedCards, s.config.combosCatsOnly) : null;
   const single = selectedCards.length === 1 ? selectedCards[0] : null;
-  const singleIsPlayable = !!single && isPlayableAction(single.kind);
-  const needsTarget = combo === 'pair' || combo === 'triple' || single?.kind === 'favor';
+  const clonedKind = single?.kind === 'clone' ? findCloneTargetKind(s) : null;
+  const effectiveSingleKind = single ? (single.kind === 'clone' ? clonedKind : single.kind) : null;
+  const singleIsPlayable = !!single && (
+    isCursed
+    || (single.kind === 'clone' ? clonedKind !== null : isPlayableAction(single.kind))
+  );
+  const isOutOfTurnNow = single?.kind === 'alterTheFutureNow';
+  const needsTarget = !isCursed && (
+    combo === 'pair'
+    || combo === 'triple'
+    || (effectiveSingleKind !== null && needsTargetForKind(effectiveSingleKind))
+  );
   const liveOpponents = opponents.filter((o) => isLive(s, o.id));
-  const canPlay = isMyTurn
+  const canPlay = me != null
     && s.subPhase === 'awaitingAction'
+    && (isMyTurn || isOutOfTurnNow)
     && (singleIsPlayable || combo !== null)
     && (!needsTarget || (target !== null && liveOpponents.some((o) => o.id === target)));
 
-  const playLabel = combo === 'pair' ? 'Play pair — steal at random'
+  const playLabel = isCursed && single ? 'Play blind card'
+    : combo === 'pair' ? 'Play pair — steal at random'
     : combo === 'triple' ? `Play three of a kind — demand ${CARD_LABEL[demand]}`
     : combo === 'fiveDifferent' ? 'Play five different — raid the discard'
-    : single ? `Play ${CARD_LABEL[single.kind]}`
+    : single ? `Play ${CARD_LABEL[single.kind]}${clonedKind ? ` (${CARD_LABEL[clonedKind]})` : ''}`
     : 'Select cards';
 
   function doPlay() {
@@ -135,7 +195,10 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
 
   const known = me ? knownTopCards(s, me) : [];
   const danger = me && isLive(s, me) ? drawDanger(s, me) : 0;
-  const hints = me ? availableCombos(s, me) : [];
+  const hints = me && !isCursed ? availableCombos(s, me) : [];
+  const activeEliminatedTarget = reviveTarget && s.eliminated.includes(reviveTarget)
+    ? reviveTarget
+    : (s.eliminated[0] ?? null);
 
   return (
     <div className="ek-root">
@@ -147,6 +210,11 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
             const theirTurn = s.turnPlayerId === o.id;
             const owesResponse = s.activePlayerId === o.id;
             const peeking = (s.knownTopCount[o.id] ?? 0) > 0;
+            const oppHand = s.hands[o.id] ?? [];
+            const markedInHand = oppHand.filter((c) => s.markedCardIds?.includes(c.id));
+            const stashCount = s.towerStash?.[o.id]?.length ?? 0;
+            const oppCursed = s.cursedPlayers?.includes(o.id) ?? false;
+            const takeFrom = s.illTakeThat?.[o.id];
             return (
               <div
                 key={o.id}
@@ -157,16 +225,28 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
                   <strong>{o.name}</strong>
                   {dead && <span className="ek-tag ek-tag-dead">exploded</span>}
                   {!dead && owesResponse && <span className="ek-tag">deciding…</span>}
+                  {!dead && oppCursed && <span className="ek-tag ek-tag-warn">🙈 cursed</span>}
+                  {!dead && stashCount > 0 && <span className="ek-tag">👑 stash {stashCount}</span>}
+                  {!dead && takeFrom && (
+                    <span className="ek-tag ek-tag-warn">
+                      next draw → {s.seats.find((x) => x.id === takeFrom)?.name}
+                    </span>
+                  )}
                 </div>
                 <div className="ek-opponent-cards">
                   {dead ? <span className="ek-muted">—</span> : (
                     <>
-                      <span className="ek-handcount">{s.hands[o.id]?.length ?? 0} cards</span>
+                      <span className="ek-handcount">{oppHand.length} cards</span>
                       {peeking && (
                         <span className="ek-tag ek-tag-warn" title="They played See the Future and still remember it">
                           👁 knows {s.knownTopCount[o.id]}
                         </span>
                       )}
+                      {markedInHand.map((mc) => (
+                        <span key={mc.id} className="ek-tag ek-tag-dead" title="Marked card">
+                          🎯 {CARD_LABEL[mc.kind]}
+                        </span>
+                      ))}
                     </>
                   )}
                 </div>
@@ -177,11 +257,16 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
 
         <div className="ek-center">
           <div className="ek-pile">
-            <FaceDownCard size="md" />
+            {s.implodingFaceUp && s.deck[0]?.kind === 'implodingKitten' ? (
+              <Card kind="implodingKitten" size="md" />
+            ) : (
+              <FaceDownCard size="md" />
+            )}
             <div className="ek-pile-meta">
               <strong>{s.deck.length}</strong> in deck
               <span className="ek-muted">
                 {kittensInDeck(s)} kitten{kittensInDeck(s) === 1 ? '' : 's'} left
+                {s.turnDirection === -1 ? ' • ↺ CCW' : ''}
               </span>
             </div>
           </div>
@@ -216,18 +301,56 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
 
       {me && s.subPhase === 'awaitingDefuse' && s.activePlayerId === me && (
         <div className="ek-prompt is-danger">
-          <h4>💥 You drew an Exploding Kitten!</h4>
-          <p>Play a Defuse or you are out.</p>
+          <h4>
+            {s.pendingKitten?.kind === 'barkingKitten'
+              ? '💥 You were hit by a Barking Kitten!'
+              : '💥 You drew an Exploding Kitten!'}
+          </h4>
+          <p>Play a Defuse (or keep it with Streaking Kitten) or you are out.</p>
+          {s.eliminated.length > 0 && myHand.some((c) => c.kind === 'zombieKitten') && (
+            <div className="ek-picker" style={{ marginBottom: 8 }}>
+              <span>Zombie Kitten resurrects:</span>
+              {s.eliminated.map((deadId) => (
+                <button
+                  key={deadId}
+                  className={`secondary tiny${activeEliminatedTarget === deadId ? ' is-on' : ''}`}
+                  onClick={() => setReviveTarget(deadId)}
+                >
+                  {s.seats.find((x) => x.id === deadId)?.name ?? deadId}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="ek-prompt-row">
-            {myHand.filter((c) => c.kind === 'defuse').map((c) => (
-              <Card key={c.id} kind={c.kind} onClick={() => send({ type: 'playDefuse', playerId: me, cardId: c.id })} />
+            {myHand.filter((c) => isDefuseKind(c.kind)).map((c) => (
+              <Card
+                key={c.id}
+                kind={c.kind}
+                onClick={() => send({
+                  type: 'playDefuse',
+                  playerId: me,
+                  cardId: c.id,
+                  ...(c.kind === 'zombieKitten' && activeEliminatedTarget
+                    ? { targetPlayerId: activeEliminatedTarget }
+                    : {}),
+                })}
+              />
             ))}
+            {s.pendingKitten?.kind === 'explodingKitten' && canHoldWithStreaking(s, me) && (
+              <button onClick={() => send({ type: 'keepKitten', playerId: me })}>
+                🐾 Keep in hand (Streaking Kitten)
+              </button>
+            )}
           </div>
         </div>
       )}
 
       {me && s.subPhase === 'awaitingKittenPlace' && s.activePlayerId === me && (
         <KittenPlacePrompt state={s} me={me} onSend={send} />
+      )}
+
+      {me && s.subPhase === 'awaitingBuryPlace' && s.activePlayerId === me && (
+        <BuryPlacePrompt state={s} me={me} onSend={send} />
       )}
 
       {me && s.subPhase === 'awaitingFavorGive' && s.activePlayerId === me && (
@@ -239,7 +362,67 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
           </p>
           <div className="ek-prompt-row">
             {myHand.map((c) => (
-              <Card key={c.id} kind={c.kind} onClick={() => send({ type: 'giveCard', playerId: me, cardId: c.id })} />
+              isCursed ? (
+                <FaceDownCard
+                  key={c.id}
+                  onClick={() => send({ type: 'giveCard', playerId: me, cardId: c.id })}
+                />
+              ) : (
+                <Card
+                  key={c.id}
+                  kind={c.kind}
+                  onClick={() => send({ type: 'giveCard', playerId: me, cardId: c.id })}
+                />
+              )
+            ))}
+          </div>
+        </div>
+      )}
+
+      {me && s.subPhase === 'awaitingGarbagePick' && s.activePlayerId === me && (
+        <div className="ek-prompt">
+          <h4>🗑️ Garbage Collection</h4>
+          <p>Choose 1 card from your hand to shuffle back into the draw pile.</p>
+          <div className="ek-prompt-row">
+            {myHand.map((c) => (
+              <Card
+                key={c.id}
+                kind={c.kind}
+                onClick={() => send({ type: 'garbagePick', playerId: me, cardId: c.id })}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {me && s.subPhase === 'awaitingPotluckPick' && s.activePlayerId === me && (
+        <div className="ek-prompt">
+          <h4>🍲 Potluck</h4>
+          <p>Choose 1 card from your hand to place face-down on top of the deck.</p>
+          <div className="ek-prompt-row">
+            {myHand.map((c) => (
+              <Card
+                key={c.id}
+                kind={c.kind}
+                onClick={() => send({ type: 'potluckPick', playerId: me, cardId: c.id })}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {me && s.subPhase === 'awaitingDigDeeper' && s.activePlayerId === me && s.pendingDigDeeper && (
+        <div className="ek-prompt">
+          <h4>⛏️ Dig Deeper</h4>
+          <p>Choose 1 card to take into your hand; the other goes back on top of the deck.</p>
+          <div className="ek-prompt-row">
+            {s.pendingDigDeeper.cards.map((c, i) => (
+              <Card
+                key={c.id}
+                kind={c.kind}
+                footnote={i === 0 ? 'top' : '2nd'}
+                onClick={() => send({ type: 'pickDigDeeper', playerId: me, cardId: c.id })}
+              />
             ))}
           </div>
         </div>
@@ -258,28 +441,28 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
       )}
 
       {me && s.subPhase === 'awaitingFutureView' && s.peek?.playerId === me && (
-        <div className="ek-prompt">
-          <h4>The next {s.peek.cards.length} cards</h4>
-          <p>Top of the deck first. Only you can see this.</p>
-          <div className="ek-prompt-row">
-            {s.peek.cards.map((c, i) => (
-              <Card key={c.id} kind={c.kind} footnote={i === 0 ? 'next' : `+${i}`} />
-            ))}
-          </div>
-          <button onClick={() => send({ type: 'ackPeek', playerId: me })}>Got it</button>
-        </div>
+        <FutureViewPrompt state={s} me={me} onSend={send} />
       )}
 
       {/* ---------------- my hand ---------------- */}
       {me && isLive(s, me) ? (
         <div className="ek-hand-area">
           <div className="ek-hand-head">
-            <h4>Your hand ({myHand.length})</h4>
+            <h4>
+              Your hand ({myHand.length})
+              {isCursed && ' — 🙈 Cursed (blind until you draw)'}
+              {(s.towerStash?.[me]?.length ?? 0) > 0 && ` • 👑 Stash (${s.towerStash![me]!.length})`}
+            </h4>
             {known.length > 0 && (
               <div className="ek-known">
                 <span>You know what's coming:</span>
                 {known.map((c, i) => (
-                  <span key={c.id} className={`ek-known-chip${c.kind === 'explodingKitten' ? ' is-bad' : ''}`}>
+                  <span
+                    key={c.id}
+                    className={`ek-known-chip${
+                      c.kind === 'explodingKitten' || (c.kind === 'implodingKitten' && s.implodingFaceUp) ? ' is-bad' : ''
+                    }`}
+                  >
                     {i + 1}. {CARD_LABEL[c.kind]}
                   </span>
                 ))}
@@ -293,21 +476,35 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
           </div>
 
           <div className="ek-hand">
-            {myHand.map((c) => (
-              <Card
-                key={c.id}
-                kind={c.kind}
-                selected={selected.includes(c.id)}
-                onClick={s.subPhase === 'awaitingAction' && isMyTurn ? () => toggleCard(c.id) : undefined}
-                disabled={!(s.subPhase === 'awaitingAction' && isMyTurn)}
-              />
-            ))}
+            {myHand.map((c) => {
+              const canSelect = s.subPhase === 'awaitingAction' && (isMyTurn || c.kind === 'alterTheFutureNow');
+              if (isCursed) {
+                return (
+                  <FaceDownCard
+                    key={c.id}
+                    selected={selected.includes(c.id)}
+                    onClick={canSelect ? () => toggleCard(c.id) : undefined}
+                    disabled={!canSelect}
+                  />
+                );
+              }
+              return (
+                <Card
+                  key={c.id}
+                  kind={c.kind}
+                  selected={selected.includes(c.id)}
+                  footnote={s.markedCardIds?.includes(c.id) ? '🎯 marked' : undefined}
+                  onClick={canSelect ? () => toggleCard(c.id) : undefined}
+                  disabled={!canSelect}
+                />
+              );
+            })}
             {myHand.length === 0 && <p className="ek-muted">Empty. Bold strategy.</p>}
           </div>
 
-          {isMyTurn && s.subPhase === 'awaitingAction' && (
+          {(isMyTurn || isOutOfTurnNow) && s.subPhase === 'awaitingAction' && (
             <div className="ek-actions">
-              {s.turnsRemaining > 1 && (
+              {isMyTurn && s.turnsRemaining > 1 && (
                 <div className="ek-owed">You owe {s.turnsRemaining} turns.</div>
               )}
 
@@ -332,7 +529,7 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
                       <span>Demand:</span>
                       <select value={demand} onChange={(e) => setDemand(e.target.value as EkBaseCardKind)}>
                         {(Object.keys(CARD_LABEL) as EkBaseCardKind[])
-                          .filter((k) => k !== 'explodingKitten')
+                          .filter((k) => k !== 'explodingKitten' && k !== 'implodingKitten')
                           .map((k) => <option key={k} value={k}>{CARD_LABEL[k]}</option>)}
                       </select>
                     </div>
@@ -351,15 +548,17 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
                 </div>
               )}
 
-              {selectedCards.length === 0 && hints.length > 0 && (
+              {isMyTurn && selectedCards.length === 0 && hints.length > 0 && (
                 <p className="ek-hint">
                   Combos available: {hints.map((h) => h.kind === 'fiveDifferent' ? 'five different' : h.kind).join(', ')}.
                 </p>
               )}
 
-              <button className="ek-draw" onClick={() => send({ type: 'drawCard', playerId: me })}>
-                🐾 Draw &amp; end turn
-              </button>
+              {isMyTurn && (
+                <button className="ek-draw" onClick={() => send({ type: 'drawCard', playerId: me })}>
+                  🐾 Draw &amp; end turn
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -379,6 +578,89 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
 // ============================================================================
 // Prompt sub-views
 // ============================================================================
+
+function FutureViewPrompt({ state: s, me, onSend }: {
+  state: EkState;
+  me: PlayerId;
+  onSend: (a: EkAction) => void;
+}) {
+  const peek = s.peek;
+  const [ordered, setOrdered] = useState<EkCard[]>(() => peek?.cards ?? []);
+
+  useEffect(() => {
+    setOrdered(peek?.cards ?? []);
+  }, [peek]);
+
+  if (!peek) return null;
+
+  function moveCard(idx: number, dir: -1 | 1) {
+    const targetIdx = idx + dir;
+    if (targetIdx < 0 || targetIdx >= ordered.length) return;
+    const next = [...ordered];
+    const tmp = next[idx]!;
+    next[idx] = next[targetIdx]!;
+    next[targetIdx] = tmp;
+    setOrdered(next);
+  }
+
+  return (
+    <div className="ek-prompt">
+      <h4>
+        {peek.canReorder
+          ? `Rearrange the next ${peek.cards.length} cards`
+          : `The next ${peek.cards.length} cards`}
+      </h4>
+      <p>
+        Top of the deck first.{' '}
+        {peek.shareWithNext
+          ? 'The next player will also see the order you choose!'
+          : 'Only you can see this.'}
+      </p>
+      <div className="ek-prompt-row">
+        {ordered.map((c, i) => (
+          <div key={c.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+            <Card kind={c.kind} footnote={i === 0 ? 'next' : `+${i}`} />
+            {peek.canReorder && ordered.length > 1 && (
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button
+                  type="button"
+                  className="secondary tiny"
+                  disabled={i === 0}
+                  onClick={() => moveCard(i, -1)}
+                >
+                  ←
+                </button>
+                <button
+                  type="button"
+                  className="secondary tiny"
+                  disabled={i === ordered.length - 1}
+                  onClick={() => moveCard(i, 1)}
+                >
+                  →
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="ek-play-row">
+        {peek.canReorder ? (
+          <button
+            onClick={() => onSend({
+              type: 'reorderFuture',
+              playerId: me,
+              orderedCardIds: ordered.map((c) => c.id),
+            })}
+          >
+            Confirm Order
+          </button>
+        ) : (
+          <button onClick={() => onSend({ type: 'ackPeek', playerId: me })}>Got it</button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function NopePrompt({ state: s, me, onSend }: {
   state: EkState;
@@ -426,6 +708,7 @@ function KittenPlacePrompt({ state: s, me, onSend }: {
   const max = s.deck.length;
   const [index, setIndex] = useState(0);
   const weDrawNext = s.turnsRemaining > 1;
+  const isImploding = s.pendingKitten?.kind === 'implodingKitten';
 
   const quick: { label: string; value: number }[] = [
     { label: 'Top', value: 0 },
@@ -437,9 +720,12 @@ function KittenPlacePrompt({ state: s, me, onSend }: {
 
   return (
     <div className="ek-prompt is-good">
-      <h4>Hide the kitten</h4>
+      <h4>{isImploding ? '🌀 Place the Face-Up Imploding Kitten' : 'Hide the kitten'}</h4>
       <p>
-        Slip it back anywhere in the {max}-card deck. Nobody sees where it goes.
+        Slip it back anywhere in the {max}-card deck.{' '}
+        {isImploding
+          ? 'It goes back FACE-UP — whoever draws it next explodes immediately!'
+          : 'Nobody sees where it goes.'}
         {weDrawNext && (
           <strong> Careful — you still owe {s.turnsRemaining} turns, so you draw next.</strong>
         )}
@@ -469,6 +755,42 @@ function KittenPlacePrompt({ state: s, me, onSend }: {
       </div>
       <button onClick={() => onSend({ type: 'placeKitten', playerId: me, index })}>
         Bury it
+      </button>
+    </div>
+  );
+}
+
+function BuryPlacePrompt({ state: s, me, onSend }: {
+  state: EkState;
+  me: PlayerId;
+  onSend: (a: EkAction) => void;
+}) {
+  const max = s.deck.length;
+  const [index, setIndex] = useState(0);
+  const card = s.pendingBury;
+  if (!card) return null;
+
+  return (
+    <div className="ek-prompt">
+      <h4>⛏️ Bury the drawn card</h4>
+      <p>You drew {CARD_LABEL[card.kind]}. Choose where to insert it back into the {max}-card deck.</p>
+      <div className="ek-prompt-row">
+        <Card kind={card.kind} />
+      </div>
+      <div className="ek-slider">
+        <input
+          type="range"
+          min={0}
+          max={max}
+          value={index}
+          onChange={(e) => setIndex(Number(e.target.value))}
+        />
+        <span>
+          {index === 0 ? 'on top' : index >= max ? 'at the bottom' : `${index} card${index === 1 ? '' : 's'} down`}
+        </span>
+      </div>
+      <button onClick={() => onSend({ type: 'placeBury', playerId: me, index })}>
+        Bury card
       </button>
     </div>
   );

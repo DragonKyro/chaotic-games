@@ -46,7 +46,10 @@ export default function App() {
                     </div>
                   )}
                   <div className="game-card-meta">
-                    <h3>{g.name}</h3>
+                    <div>
+                      <h3>{g.name}</h3>
+                      {g.tagline && <p className="game-card-tagline">{g.tagline}</p>}
+                    </div>
                     <span className="player-range">
                       {g.minPlayers === g.maxPlayers
                         ? `${g.minPlayers}p`

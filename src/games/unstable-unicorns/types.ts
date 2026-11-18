@@ -118,7 +118,129 @@ export type UuCardKind =
   | 'pandamonium'
   | 'sadistic-ritual'
   | 'slowdown'
-  | 'tiny-stable';
+  | 'tiny-stable'
+  // Rainbow Apocalypse expansion
+  | 'baby-apocalypse'
+  | 'four-horsecorn'
+  | 'unicorn-of-famine'
+  | 'unicorn-of-pestilence'
+  | 'unicorn-of-war'
+  | 'unicorn-of-death'
+  | 'unicorn-rainbow-princess'
+  | 'catastrophe'
+  | 'rainbow-apocalypse-magic'
+  | 'plague-of-death'
+  | 'apocalypse-bunker'
+  | 'all-out-of-rainbows'
+  | 'neigh-thank-you'
+  // Dragons expansion
+  | 'baby-dragoncorn'
+  | 'bahamuticorn'
+  | 'twin-dragoncorns'
+  | 'dragon-riders'
+  | 'dragon-slayer-unicorn'
+  | 'scaled-flying-unicorn'
+  | 'dragons-breath'
+  | 'dragons-fire'
+  | 'dragons-blessing'
+  | 'dragons-fortune'
+  | 'dragons-curse'
+  | 'dragon-skies'
+  | 'neigh-foul-beast'
+  // Unicorns of Legend expansion
+  | 'baby-knight-unicorn'
+  | 'archangel-unicorn'
+  | 'nine-tailed-foxicorn'
+  | 'mage-unicorn'
+  | 'bardicorn'
+  | 'paladincorn'
+  | 'raze-the-stables'
+  | 'fireball'
+  | 'dwarven-forge'
+  | 'medieval-sanitation'
+  | 'neigh-mlord'
+  // Adventures expansion
+  | 'baby-adventurer'
+  | 'cutthroat-captain-unicorn'
+  | 'extreme-adventurer-unicorn'
+  | 'pillaging-pirate-unicorn'
+  | 'treasure-hunter-unicorn'
+  | 'the-great-baby-heist'
+  | 'mysterious-compass'
+  | 'unicorn-survival-kit'
+  | 'royal-hooves'
+  | 'the-black-spot'
+  | 'unicorn-net'
+  | 'absorb-and-reflect'
+  | 'redirect'
+  | 'flare-gun'
+  | 'trapped-chest'
+  // Nightmares expansion
+  | 'baby-nightmare'
+  | 'phantom-steedicorn'
+  | 'vampirellacorn'
+  | 'jack-the-reapercorn'
+  | 'chainsaw-massicorn'
+  | 'nightmare-pact'
+  | 'black-hole'
+  | 'saved-by-the-sigil'
+  | 'hex'
+  | 'hex-neigh'
+  // Christmas expansion
+  | 'baby-rudolphicorn'
+  | 'santaicorn'
+  | 'reindeercorn'
+  | 'flying-krampuscorn'
+  | 'humbug'
+  | 'gift-receipt'
+  | 'gingerbread-stable'
+  | 'ugly-holiday-sweater'
+  | 'gift-inspector'
+  | 'lump-of-coal'
+  | 'jingle-all-the-neigh'
+  // Uncut Unicorns expansion
+  | 'baby-uncut'
+  | 'uncut-unicorn'
+  | 'stripper-unicorn'
+  | 'hangover-unicorn'
+  | 'liquid-courage'
+  | 'walk-of-shame'
+  | 'vip-lounge'
+  | 'stage-fright'
+  | 'neigh-bitch'
+  // NSFW expansion
+  | 'baby-nsfw'
+  | 'dominatrix-unicorn'
+  | 'sugar-daddy-unicorn'
+  | 'polyamorous-unicorn'
+  | 'booty-call'
+  | 'ghosted'
+  | 'leather-harness'
+  | 'ball-and-chain'
+  | 'hard-limit-neigh'
+  // 1st Edition ('base') / Control / Chaos / Diamond / Travel edition cards
+  | 'extremely-fertile-unicorn'
+  | 'puppicorn'
+  | 'zombie-unicorn'
+  | 'angel-unicorn'
+  | 'unicorn-shrinkray'
+  | 'extra-tail'
+  | 'rainbow-mane'
+  | 'summoning-ritual'
+  | 'unicorn-lasso'
+  | 'chronocorn'
+  | 'unicorn-of-order'
+  | 'time-shift'
+  | 'aura-of-order'
+  | 'unicorn-of-chaos'
+  | 'hells-steedicorn'
+  | 'chaos-storm'
+  | 'altar-of-chaos'
+  | 'diamond-unicorn'
+  | 'crystal-narwhal'
+  | 'diamond-dust'
+  | 'prismatic-shield'
+  | 'travel-unicorn';
 
 export interface UuCard {
   id: number;
@@ -126,6 +248,7 @@ export interface UuCard {
   name: string;
   type: UuCardType;
   text: string;
+  source?: UuExpansionId | UuEdition;
 }
 
 // ============================================================================
@@ -144,6 +267,7 @@ export interface UuPendingPlay {
   /** Target stable owner where a Unicorn/Upgrade/Downgrade will enter, or target of a Magic card. */
   targetPlayerId: PlayerId | null;
   neighCards: UuCard[];
+  instantPlays?: { byPlayerId: PlayerId; card: UuCard }[];
   superNeighed: boolean;
   responderQueue: PlayerId[];
 }
@@ -165,6 +289,7 @@ export type UuPrompt =
       effectTag:
         | 'discard'
         | 'rainbowUnicornBring'
+        | 'unicornBring'
         | 'necromancerDiscard'
         | 'seductiveDiscard'
         | 'changeOfLuckDiscard'
@@ -173,6 +298,9 @@ export type UuPrompt =
         | 'clawMachineDiscard'
         | 'stableArtilleryDiscard'
         | 'rainbowLassoDiscard'
+        | 'fertileDiscard'
+        | 'zombieDiscard'
+        | 'summoningRitualDiscard'
         | 'endOfTurnLimit';
       contextCardId?: number;
       afterContext?: {
@@ -194,6 +322,7 @@ export type UuPrompt =
         | 'upgrade'
         | 'downgrade'
         | 'upgradeOrDowngrade'
+        | 'unicornOrUpgrade'
         | 'destroyUpgradeOrSacrificeDowngrade';
       mode: 'sacrifice' | 'destroy' | 'steal' | 'bounce' | 'moveSource' | 'swapGive' | 'swapSteal';
       sourceType: 'magic' | 'unicorn' | 'upgrade' | 'downgrade';
@@ -211,7 +340,9 @@ export type UuPrompt =
         | 'blatantThieveryLook'
         | 'unfairBargainTrade'
         | 'reTargetDestination'
-        | 'unicornSwapTarget';
+        | 'unicornSwapTarget'
+        | 'shrinkrayTarget'
+        | 'dominatrixForceSacrifice';
       movedCardId?: number;
       movedFromPlayerId?: PlayerId;
     }
@@ -227,7 +358,16 @@ export type UuPrompt =
       reason: string;
       optional: boolean;
       pile: 'discard' | 'deck' | 'nursery';
-      filter: 'unicorn' | 'magic' | 'upgrade' | 'downgrade' | 'neigh' | 'narwhal' | 'baby';
+      filter:
+        | 'unicorn'
+        | 'magic'
+        | 'upgrade'
+        | 'downgrade'
+        | 'neigh'
+        | 'narwhal'
+        | 'baby'
+        | 'unicornOrUpgrade'
+        | 'magicOrUpgrade';
       destination: 'hand' | 'stable';
       shuffleDeckAfter?: boolean;
     }
@@ -276,14 +416,54 @@ export type UuEdition =
   | 'diamond';
 
 export const UU_EXPANSIONS: readonly ExpansionMeta[] = [
-  { id: 'uncut-unicorns', name: 'Uncut Unicorns', summary: 'Expansion pack.', verified: true },
-  { id: 'nsfw', name: 'NSFW', summary: 'Adult-humour expansion pack.', verified: true },
-  { id: 'rainbow-apocalypse', name: 'Rainbow Apocalypse', summary: 'Expansion pack.', verified: true },
-  { id: 'dragons', name: 'Dragons', summary: 'Expansion pack.', verified: true },
-  { id: 'unicorns-of-legend', name: 'Unicorns of Legend', summary: 'Expansion pack.', verified: true },
-  { id: 'adventures', name: 'Adventures', summary: 'Expansion pack.', verified: true },
-  { id: 'christmas', name: 'Christmas', summary: 'Holiday expansion pack.', verified: true },
-  { id: 'nightmares', name: 'Nightmares', summary: 'Expansion pack.', verified: true },
+  {
+    id: 'uncut-unicorns',
+    name: 'Uncut Unicorns',
+    summary: 'Uncut Unicorn (+1 hand limit), Burlesque & Hangover Unicorns, Liquid Courage, Walk of Shame, Stage Fright.',
+    verified: true,
+  },
+  {
+    id: 'nsfw',
+    name: 'NSFW',
+    summary: 'Dominatrix, Sugar Daddy & Polyamorous Unicorns, Spiked Harness, Ball and Chain, Hard Limit Neigh.',
+    verified: true,
+  },
+  {
+    id: 'rainbow-apocalypse',
+    name: 'Rainbow Apocalypse',
+    summary: 'Four Horsecorn, Unicorns of Famine/Pestilence/War/Death, Catastrophe, Rainbow Apocalypse, Neigh Thank You.',
+    verified: true,
+  },
+  {
+    id: 'dragons',
+    name: 'Dragons',
+    summary: "Bahamuticorn, Twin Dragoncorns, Dragon Riders, Dragon's Breath, Dragon's Blessing (ignores Downgrades), Dragon's Curse.",
+    verified: true,
+  },
+  {
+    id: 'unicorns-of-legend',
+    name: 'Unicorns of Legend',
+    summary: 'Archangel Unicorn, Nine-Tailed Foxicorn, Mage Unicorn, Bardicorn, Paladincorn, Raze the Stables, Medieval Sanitation.',
+    verified: true,
+  },
+  {
+    id: 'adventures',
+    name: 'Adventures',
+    summary: 'New Instant responses (Unicorn Net, Absorb & Reflect, Redirect, Flare Gun, Trapped Chest), Pirate & Adventurer Unicorns.',
+    verified: true,
+  },
+  {
+    id: 'christmas',
+    name: 'Christmas',
+    summary: 'Santaicorn, Reindeercorn, Flying Krampuscorn, Gingerbread Stable, Ugly Holiday Sweater, Gift Inspector, Jingle All The Neigh.',
+    verified: true,
+  },
+  {
+    id: 'nightmares',
+    name: 'Nightmares',
+    summary: 'Phantom Steedicorn, Vampirellacorn, Jack the Reapercorn, Nightmare Pact, Black Hole, Saved by the Sigil, Hex.',
+    verified: true,
+  },
 ];
 
 export interface UuConfig extends ScaffoldConfig {

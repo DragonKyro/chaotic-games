@@ -498,6 +498,299 @@ function BeardCatArt() {
 }
 
 // ============================================================================
+// Expansion card art
+// ============================================================================
+
+function ImplodingKittenArt() {
+  return (
+    <g>
+      <circle cx={50} cy={50} r={42} fill="#1f1135" stroke={INK} strokeWidth={2.6} />
+      <path d="M50,10 Q85,20 75,50 Q65,85 35,75 Q15,60 30,30" fill="none" stroke="#a66cff" strokeWidth={4} strokeLinecap="round" />
+      <path d="M50,22 Q72,30 66,50 Q58,72 38,65" fill="none" stroke="#5ec2e0" strokeWidth={3} strokeLinecap="round" />
+      <g transform="translate(8,8) scale(0.84)">
+        <CatHead fur={FUR.grey} eyes="wide" open whiskers={false} />
+      </g>
+    </g>
+  );
+}
+
+function ReverseArt() {
+  return (
+    <g>
+      <g transform="translate(8,10) scale(0.82)">
+        <CatHead fur={FUR.cream} eyes="shifty" whiskers={false} />
+      </g>
+      <g fill="none" stroke="#ffd24a" strokeWidth={4.5} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18,30 A34,34 0 0,1 82,30" />
+        <path d="M18,30 L28,22 M18,30 L28,38" />
+        <path d="M82,74 A34,34 0 0,1 18,74" />
+        <path d="M82,74 L72,66 M82,74 L72,82" />
+      </g>
+    </g>
+  );
+}
+
+function DrawFromTheBottomArt() {
+  return (
+    <g>
+      <rect x={26} y={14} width={48} height={34} rx={5} fill="#2b2544" stroke={INK} strokeWidth={2.4} />
+      <rect x={22} y={52} width={56} height={36} rx={5} fill="#ff9f43" stroke={INK} strokeWidth={2.6} />
+      <g transform="translate(15,36) scale(0.7)">
+        <CatHead fur={FUR.tan} eyes="happy" whiskers={false} />
+      </g>
+      <path d="M50,8 L50,44 M40,34 L50,44 L60,34" fill="none" stroke="#fff" strokeWidth={3.6} strokeLinecap="round" strokeLinejoin="round" />
+    </g>
+  );
+}
+
+function AlterTheFutureArt() {
+  return (
+    <g>
+      <SeeTheFutureArt />
+      <path d="M20,76 Q50,94 80,76" fill="none" stroke="#ffd24a" strokeWidth={4} strokeLinecap="round" />
+      <path d="M72,70 L82,76 L72,84" fill="none" stroke="#ffd24a" strokeWidth={3.5} strokeLinecap="round" />
+    </g>
+  );
+}
+
+function TargetedAttackArt() {
+  return (
+    <g>
+      <g transform="translate(5,4) scale(0.9)">
+        <CatHead fur={FUR.ginger} eyes="angry" open whiskers={false} />
+      </g>
+      <circle cx={50} cy={54} r={34} fill="none" stroke="#ff4d4d" strokeWidth={3.5} />
+      <circle cx={50} cy={54} r={18} fill="none" stroke="#ff4d4d" strokeWidth={2.5} />
+      <path d="M50,12 L50,96 M8,54 L92,54" stroke="#ff4d4d" strokeWidth={2.5} strokeLinecap="round" />
+    </g>
+  );
+}
+
+function FeralCatArt() {
+  return (
+    <g>
+      <path d="M12,26 L26,12 L42,24 L50,8 L58,24 L74,12 L88,26" fill="none" stroke="#ffd24a" strokeWidth={3.5} strokeLinejoin="round" />
+      <CatHead fur={FUR.ginger} eyes="glow" open />
+    </g>
+  );
+}
+
+function StreakingKittenArt() {
+  return (
+    <g>
+      <g stroke="#ffd24a" strokeWidth={3} strokeLinecap="round">
+        <path d="M6,34 L28,34" />
+        <path d="M4,52 L24,52" />
+        <path d="M8,70 L28,70" />
+      </g>
+      <g transform="translate(8,4) scale(0.88)">
+        <CatHead fur={FUR.tan} eyes="happy" open whiskers={false} />
+      </g>
+      <circle cx={80} cy={26} r={11} fill="#ff6b3d" stroke={INK} strokeWidth={2.2} />
+    </g>
+  );
+}
+
+function SuperSkipArt() {
+  return (
+    <g>
+      <SkipArt />
+      <path d="M44,12 L34,36 L50,36 L40,60 L66,30 L50,30 Z" fill="#ffd24a" stroke={INK} strokeWidth={2.2} strokeLinejoin="round" />
+    </g>
+  );
+}
+
+function SeeTheFuture5xArt() {
+  return (
+    <g>
+      <SeeTheFutureArt />
+      <circle cx={80} cy={22} r={13} fill="#ffd24a" stroke={INK} strokeWidth={2.2} />
+      <path d="M84,16 L76,16 L76,22 Q84,21 84,26 Q84,30 76,29" fill="none" stroke={INK} strokeWidth={2.6} strokeLinecap="round" />
+    </g>
+  );
+}
+
+function AlterTheFuture5xArt() {
+  return (
+    <g>
+      <AlterTheFutureArt />
+      <circle cx={80} cy={22} r={13} fill="#ff6b3d" stroke={INK} strokeWidth={2.2} />
+      <path d="M84,16 L76,16 L76,22 Q84,21 84,26 Q84,30 76,29" fill="none" stroke="#fff" strokeWidth={2.6} strokeLinecap="round" />
+    </g>
+  );
+}
+
+function SwapTopAndBottomArt() {
+  return (
+    <g>
+      <ShuffleArt />
+      <path d="M50,14 L50,86 M38,26 L50,14 L62,26 M38,74 L50,86 L62,74" fill="none" stroke="#ffd24a" strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
+    </g>
+  );
+}
+
+function GarbageCollectionArt() {
+  return (
+    <g>
+      <rect x={24} y={38} width={52} height={52} rx={6} fill="#7f8c8d" stroke={INK} strokeWidth={2.6} />
+      <rect x={18} y={30} width={64} height={10} rx={3} fill="#95a5a6" stroke={INK} strokeWidth={2.6} />
+      <g transform="translate(18,-6) scale(0.64)">
+        <CatHead fur={FUR.grey} eyes="shifty" whiskers={false} />
+      </g>
+    </g>
+  );
+}
+
+function CatomicBombArt() {
+  return (
+    <g>
+      <ExplodingKittenArt />
+      <circle cx={50} cy={50} r={16} fill="#ffd24a" stroke={INK} strokeWidth={2.4} opacity={0.9} />
+      <circle cx={50} cy={50} r={5} fill={INK} />
+    </g>
+  );
+}
+
+function MarkArt() {
+  return (
+    <g>
+      <CatHead fur={FUR.cream} eyes="wide" />
+      <circle cx={50} cy={38} r={9} fill="#e33b4e" stroke={INK} strokeWidth={2} />
+      <circle cx={50} cy={38} r={4} fill="#fff" />
+    </g>
+  );
+}
+
+function CurseOfTheCatButtArt() {
+  return (
+    <g>
+      <CatHead fur={FUR.brown} eyes="dead" whiskers />
+      <rect x={24} y={44} width={52} height={18} rx={6} fill="#221f33" stroke="#ffd24a" strokeWidth={2.2} />
+    </g>
+  );
+}
+
+function BarkingKittenArt() {
+  return (
+    <g>
+      <CatHead fur={FUR.ginger} eyes="angry" open />
+      <path d="M78,34 L94,26 M80,48 L96,48 M78,62 L94,70" stroke="#ffd24a" strokeWidth={3.5} strokeLinecap="round" />
+    </g>
+  );
+}
+
+function AlterTheFutureNowArt() {
+  return (
+    <g>
+      <AlterTheFutureArt />
+      <path d="M18,12 L10,32 L24,32 L16,52 L36,26 L22,26 Z" fill="#ffd24a" stroke={INK} strokeWidth={2} />
+    </g>
+  );
+}
+
+function BuryArt() {
+  return (
+    <g>
+      <ellipse cx={50} cy={82} rx={36} ry={12} fill="#8b5a2b" stroke={INK} strokeWidth={2.6} />
+      <g transform="translate(10,4) scale(0.8)">
+        <CatHead fur={FUR.tan} eyes="shifty" whiskers={false} />
+      </g>
+    </g>
+  );
+}
+
+function PersonalAttackArt() {
+  return (
+    <g>
+      <AttackArt />
+      <path d="M18,76 Q50,96 82,76" fill="none" stroke="#ffd24a" strokeWidth={4} strokeLinecap="round" />
+    </g>
+  );
+}
+
+function ShareTheFutureArt() {
+  return (
+    <g>
+      <SeeTheFutureArt />
+      <circle cx={22} cy={76} r={10} fill={FUR.tan} stroke={INK} strokeWidth={2.2} />
+      <circle cx={78} cy={76} r={10} fill={FUR.cream} stroke={INK} strokeWidth={2.2} />
+    </g>
+  );
+}
+
+function IllTakeThatArt() {
+  return (
+    <g>
+      <FavorArt />
+      <path d="M22,26 L56,26 M44,16 L56,26 L44,36" fill="none" stroke="#ffd24a" strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
+    </g>
+  );
+}
+
+function PotluckArt() {
+  return (
+    <g>
+      <path d="M16,54 a34,30 0 0 0 68,0 Z" fill="#3a3752" stroke={INK} strokeWidth={2.6} />
+      <g transform="translate(15,-2) scale(0.7)">
+        <CatHead fur={FUR.cream} eyes="happy" whiskers={false} />
+      </g>
+    </g>
+  );
+}
+
+function TowerOfPowerArt() {
+  return (
+    <g>
+      <g transform="translate(8,14) scale(0.84)">
+        <CatHead fur={FUR.tan} eyes="happy" whiskers />
+      </g>
+      <path d="M24,34 L28,10 L42,24 L50,8 L58,24 L72,10 L76,34 Z" fill="#ffd24a" stroke={INK} strokeWidth={2.6} strokeLinejoin="round" />
+    </g>
+  );
+}
+
+function ZombieKittenArt() {
+  return (
+    <g>
+      <CatHead fur="#7bc67b" eyes="glow" open />
+      <path d="M36,36 L48,42 M40,33 L44,44" stroke={INK} strokeWidth={2.2} strokeLinecap="round" />
+    </g>
+  );
+}
+
+function DigDeeperArt() {
+  return (
+    <g>
+      <BuryArt />
+      <path d="M76,16 L76,68 M66,56 L76,68 L86,56" fill="none" stroke="#5ec2e0" strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
+    </g>
+  );
+}
+
+function CloneArt() {
+  return (
+    <g>
+      <g transform="translate(-8,6) scale(0.74)">
+        <CatHead fur={FUR.grey} eyes="normal" whiskers={false} />
+      </g>
+      <g transform="translate(20,14) scale(0.74)">
+        <CatHead fur={FUR.grey} eyes="glow" whiskers={false} />
+      </g>
+    </g>
+  );
+}
+
+function ClairvoyanceArt() {
+  return (
+    <g>
+      <CatHead fur={FUR.cream} eyes="glow" />
+      <ellipse cx={50} cy={38} rx={9} ry={5} fill="#a8e6ff" stroke={INK} strokeWidth={2} />
+      <circle cx={50} cy={38} r={2.5} fill={INK} />
+    </g>
+  );
+}
+
+// ============================================================================
 // Registry
 // ============================================================================
 
@@ -515,6 +808,37 @@ const ART: Record<EkBaseCardKind, () => ReactElement> = {
   cattermelon: CattermelonArt,
   hairyPotatoCat: HairyPotatoCatArt,
   beardCat: BeardCatArt,
+  // Imploding Kittens
+  implodingKitten: ImplodingKittenArt,
+  reverse: ReverseArt,
+  drawFromTheBottom: DrawFromTheBottomArt,
+  alterTheFuture: AlterTheFutureArt,
+  targetedAttack: TargetedAttackArt,
+  feralCat: FeralCatArt,
+  // Streaking Kittens
+  streakingKitten: StreakingKittenArt,
+  superSkip: SuperSkipArt,
+  seeTheFuture5x: SeeTheFuture5xArt,
+  alterTheFuture5x: AlterTheFuture5xArt,
+  swapTopAndBottom: SwapTopAndBottomArt,
+  garbageCollection: GarbageCollectionArt,
+  catomicBomb: CatomicBombArt,
+  mark: MarkArt,
+  curseOfTheCatButt: CurseOfTheCatButtArt,
+  // Barking Kittens
+  barkingKitten: BarkingKittenArt,
+  alterTheFutureNow: AlterTheFutureNowArt,
+  bury: BuryArt,
+  personalAttack: PersonalAttackArt,
+  shareTheFuture: ShareTheFutureArt,
+  illTakeThat: IllTakeThatArt,
+  potluck: PotluckArt,
+  towerOfPower: TowerOfPowerArt,
+  // Zombie Kittens
+  zombieKitten: ZombieKittenArt,
+  digDeeper: DigDeeperArt,
+  clone: CloneArt,
+  clairvoyance: ClairvoyanceArt,
 };
 
 /** Accent colour behind the art, per card. Keeps kinds distinguishable at a glance. */
@@ -532,6 +856,37 @@ export const CARD_ACCENT: Record<EkBaseCardKind, string> = {
   cattermelon: '#8a2740',
   hairyPotatoCat: '#6b4a24',
   beardCat: '#4a4459',
+  // Imploding Kittens
+  implodingKitten: '#3a1b5e',
+  reverse: '#246670',
+  drawFromTheBottom: '#8c4b1f',
+  alterTheFuture: '#5c2d82',
+  targetedAttack: '#9e2424',
+  feralCat: '#7d5218',
+  // Streaking Kittens
+  streakingKitten: '#b3471b',
+  superSkip: '#1b6d8c',
+  seeTheFuture5x: '#543285',
+  alterTheFuture5x: '#682b87',
+  swapTopAndBottom: '#2d577a',
+  garbageCollection: '#4c5c5c',
+  catomicBomb: '#8f2418',
+  mark: '#8a243b',
+  curseOfTheCatButt: '#4f3829',
+  // Barking Kittens
+  barkingKitten: '#963b1e',
+  alterTheFutureNow: '#6b2878',
+  bury: '#6e4726',
+  personalAttack: '#8f341b',
+  shareTheFuture: '#5a387d',
+  illTakeThat: '#7a385c',
+  potluck: '#4c4669',
+  towerOfPower: '#8a6d1b',
+  // Zombie Kittens
+  zombieKitten: '#286e3b',
+  digDeeper: '#5e4526',
+  clone: '#3b526b',
+  clairvoyance: '#38477a',
 };
 
 export function CardArt({ kind }: { kind: EkBaseCardKind }) {

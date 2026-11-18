@@ -6,17 +6,52 @@
 // places where the rules are ambiguous and we had to pick a reading.
 
 import { Card } from './Card';
-import { BASE_DECK_COUNTS, CARD_LABEL, CARD_TEXT, TOTAL_BASE_CARDS } from './cards';
-import type { EkBaseCardKind } from './types';
+import {
+  BARKING_DECK_COUNTS,
+  BASE_DECK_COUNTS,
+  CARD_LABEL,
+  CARD_TEXT,
+  IMPLODING_DECK_COUNTS,
+  STREAKING_DECK_COUNTS,
+  TOTAL_BASE_CARDS,
+  ZOMBIE_DECK_COUNTS,
+} from './cards';
+import type { EkBaseCardKind, EkCoreCardKind } from './types';
 
-const ORDER: EkBaseCardKind[] = [
+const ORDER: EkCoreCardKind[] = [
   'explodingKitten', 'defuse', 'nope', 'attack', 'skip', 'favor', 'shuffle', 'seeTheFuture',
   'tacoCat', 'rainbowRalphingCat', 'cattermelon', 'hairyPotatoCat', 'beardCat',
 ];
 
-const CATS: EkBaseCardKind[] = [
+const CATS: EkCoreCardKind[] = [
   'tacoCat', 'rainbowRalphingCat', 'cattermelon', 'hairyPotatoCat', 'beardCat',
 ];
+
+function ExpansionCardTable({ counts }: { counts: Partial<Record<EkBaseCardKind, number>> }) {
+  const entries = Object.entries(counts) as [EkBaseCardKind, number][];
+  const total = entries.reduce((sum, [, n]) => sum + n, 0);
+  return (
+    <table className="ek-rules-table">
+      <thead>
+        <tr><th>Card</th><th>×</th><th>What it does</th></tr>
+      </thead>
+      <tbody>
+        {entries.map(([kind, count]) => (
+          <tr key={kind} className={kind === 'implodingKitten' ? 'is-bad' : undefined}>
+            <td>{CARD_LABEL[kind]}</td>
+            <td className="ek-num">{count}</td>
+            <td>{CARD_TEXT[kind]}</td>
+          </tr>
+        ))}
+        <tr className="ek-rules-total">
+          <td>Total</td>
+          <td className="ek-num">{total}</td>
+          <td />
+        </tr>
+      </tbody>
+    </table>
+  );
+}
 
 export function Rules() {
   return (
@@ -72,7 +107,7 @@ export function Rules() {
         the window for everyone else.
       </p>
 
-      <h4>Card reference</h4>
+      <h4>Card reference (Base Game)</h4>
       <p>
         The base deck is <strong>{TOTAL_BASE_CARDS} cards</strong>.
       </p>
@@ -104,6 +139,35 @@ export function Rules() {
         ))}
       </div>
 
+      <h4>Expansions</h4>
+      <p>
+        All six expansions can be toggled in the lobby:
+      </p>
+
+      <h5>1. Imploding Kittens (+20 cards, up to 6 players)</h5>
+      <ExpansionCardTable counts={IMPLODING_DECK_COUNTS} />
+
+      <h5>2. Streaking Kittens (+15 cards, +1 Exploding Kitten)</h5>
+      <ExpansionCardTable counts={STREAKING_DECK_COUNTS} />
+
+      <h5>3. Barking Kittens (+20 cards)</h5>
+      <ExpansionCardTable counts={BARKING_DECK_COUNTS} />
+
+      <h5>4. Zombie Kittens (Zombie Kitten replaces Defuse)</h5>
+      <ExpansionCardTable counts={ZOMBIE_DECK_COUNTS} />
+
+      <h5>5. Party Pack (Up to 10 players)</h5>
+      <p>
+        Doubles the action and cat card pool to support up to 10 players and includes
+        the Imploding Kittens mechanics.
+      </p>
+
+      <h5>6. Recipes for Disaster (Up to 6 players)</h5>
+      <p>
+        Compiles the best action cards from the Base Game, Imploding Kittens,
+        Streaking Kittens, and Barking Kittens into a combined chaos deck.
+      </p>
+
       <h4>Where we had to make a call</h4>
       <ul>
         <li>
@@ -116,11 +180,6 @@ export function Rules() {
           <strong>Attack stacking.</strong> Playing Attack ends your turns immediately
           and the next player owes two turns <em>plus</em> any turns you still owed. So
           being attacked and answering with your own Attack passes on three.
-        </li>
-        <li>
-          <strong>Card counts</strong> were reconstructed rather than read off the box —
-          the publisher's site was unreachable. They total {TOTAL_BASE_CARDS} and split
-          cleanly, but worth a spot-check against the real thing.
         </li>
       </ul>
 

@@ -4,8 +4,12 @@ import { rngInt } from '@/core/rng';
 import type { PlayerId } from '@/core/types';
 import {
   canAttackMonster,
+  canEquipItemToHero,
   computeRollTotals,
+  getClassesToWin,
   handOf,
+  heroHasItemKind,
+  niceGiftsOf,
   partyClasses,
   partyOf,
   validHandCardsForPrompt,
@@ -27,10 +31,14 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
   if (state.subPhase === 'awaitingChallenge') {
     const p = state.pendingPlay;
     if (!p) return null;
-    // Challenge if opponent is about to win with a 6th class Hero
+    // Challenge if opponent is about to win with a final class Hero
+    const classesNeeded = getClassesToWin(state.config);
     const oppClasses = partyClasses(state, p.byPlayerId);
     const wouldCompleteParty =
-      p.card.type === 'hero' && p.card.class && !oppClasses.has(p.card.class) && oppClasses.size >= 5;
+      p.card.type === 'hero' &&
+      p.card.class &&
+      !oppClasses.has(p.card.class) &&
+      oppClasses.size >= classesNeeded - 1;
     if (wouldCompleteParty) {
       const ch = handOf(state, playerId).find((c) => c.type === 'challenge');
       if (ch) {
@@ -51,21 +59,50 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
     if (!r) return null;
     const { actorTotal } = computeRollTotals(state, r);
     const mods = handOf(state, playerId).filter((c) => c.type === 'modifier');
+    const canNobleShaman =
+      playerId === state.turnPlayerId &&
+      state.partyLeaders[playerId]?.kind === 'leader-noble-shaman' &&
+      !state.turnBuffs.nobleShamanUsed;
 
     // Help our own Monster or Hero roll if we are just short of threshold
     if (r.byPlayerId === playerId && r.reason !== 'challengeDuel') {
-      const deficit = r.threshold - actorTotal;
-      if (deficit > 0 && deficit <= 4 && mods.length > 0) {
-        for (const m of mods) {
-          const pos = (m.modifierChoices ?? []).find((v) => v >= deficit);
-          if (pos !== undefined) {
-            return {
-              type: 'playModifier',
-              playerId,
-              cardId: m.id,
-              chosenValue: pos,
-              protectingHornDelta: 1,
-            };
+      if (r.rollLow) {
+        // Druid low-roll or Dracos: need actorTotal <= r.threshold!
+        const excess = actorTotal - r.threshold;
+        if (excess === 1 && canNobleShaman) {
+          return { type: 'nobleShamanAdjust', playerId, delta: -1 };
+        }
+        if (excess > 0 && excess <= 4 && mods.length > 0) {
+          for (const m of mods) {
+            const neg = (m.modifierChoices ?? []).find((v) => v <= -excess);
+            if (neg !== undefined) {
+              return {
+                type: 'playModifier',
+                playerId,
+                cardId: m.id,
+                chosenValue: neg,
+                protectingHornDelta: -1,
+              };
+            }
+          }
+        }
+      } else {
+        const deficit = r.threshold - actorTotal;
+        if (deficit === 1 && canNobleShaman) {
+          return { type: 'nobleShamanAdjust', playerId, delta: 1 };
+        }
+        if (deficit > 0 && deficit <= 4 && mods.length > 0) {
+          for (const m of mods) {
+            const pos = (m.modifierChoices ?? []).find((v) => v >= deficit);
+            if (pos !== undefined) {
+              return {
+                type: 'playModifier',
+                playerId,
+                cardId: m.id,
+                chosenValue: pos,
+                protectingHornDelta: 1,
+              };
+            }
           }
         }
       }
@@ -148,6 +185,16 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
     const hand = handOf(state, playerId);
     const myClasses = partyClasses(state, playerId);
 
+    // 0. If Here to Sleigh is enabled and we have 2 Nice Gifts + 2 AP + 1 Hero, claim the 3rd Nice Gift to win!
+    if (
+      state.config.expansions.includes('here-to-sleigh') &&
+      state.actionPointsRemaining >= 2 &&
+      partyOf(state, playerId).length >= 1 &&
+      niceGiftsOf(state, playerId).length >= 2
+    ) {
+      return { type: 'claimHolidayGift', playerId };
+    }
+
     // 1. Play a Hero of a class we don't have yet (or any Hero)
     const heroesInHand = hand.filter((c) => c.type === 'hero');
     const newClassHero = heroesInHand.find((c) => c.class && !myClasses.has(c.class));
@@ -156,7 +203,17 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
       return { type: 'playHero', playerId, cardId: heroToPlay.id };
     }
 
-    // 2. Attack a Monster if we have >= 2 AP and meet requirements
+    // 2. Use The Gnawing Dread leader ability if discard has a Hero of a missing class
+    if (
+      state.partyLeaders[playerId]?.kind === 'leader-gnawing-dread' &&
+      !state.turnBuffs.gnawingDreadUsed &&
+      state.actionPointsRemaining >= 2 &&
+      state.discard.some((c) => c.type === 'hero' && c.class && !myClasses.has(c.class))
+    ) {
+      return { type: 'gnawingDreadSearch', playerId };
+    }
+
+    // 3. Attack a Monster if we have >= 2 AP and meet requirements
     if (state.actionPointsRemaining >= 2) {
       const attackable = state.monsterRow.find((m) => canAttackMonster(state, playerId, m));
       if (attackable) {
@@ -169,22 +226,24 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
       }
     }
 
-    // 3. Equip a beneficial Item to one of our Heroes
-    const myUnarmedHero = partyOf(state, playerId).find((h) => !h.equippedItem);
+    // 4. Equip a beneficial Item to one of our Heroes
     const itemInHand = hand.find((c) => c.type === 'item');
-    if (myUnarmedHero && itemInHand) {
-      return {
-        type: 'equipItem',
-        playerId,
-        cardId: itemInHand.id,
-        targetPlayerId: playerId,
-        heroCardId: myUnarmedHero.card.id,
-      };
+    if (itemInHand) {
+      const equipTarget = partyOf(state, playerId).find((h) => canEquipItemToHero(h, itemInHand));
+      if (equipTarget) {
+        return {
+          type: 'equipItem',
+          playerId,
+          cardId: itemInHand.id,
+          targetPlayerId: playerId,
+          heroCardId: equipTarget.card.id,
+        };
+      }
     }
 
-    // 4. Use an unexhausted Hero ability in our Party
+    // 5. Use an unexhausted Hero ability in our Party
     const usableHero = partyOf(state, playerId).find(
-      (h) => !h.usedThisTurn && h.equippedItem?.kind !== 'sealing-key' && h.card.kind !== 'napping-nibbles',
+      (h) => !h.usedThisTurn && !heroHasItemKind(h, 'sealing-key') && h.card.kind !== 'napping-nibbles',
     );
     if (usableHero) {
       return {
@@ -195,7 +254,7 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
       };
     }
 
-    // 5. Spend 1 AP to draw a card
+    // 6. Spend 1 AP to draw a card
     return { type: 'drawCard', playerId };
   }
 

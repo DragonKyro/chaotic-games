@@ -10,6 +10,7 @@ import { rngInt, shuffle } from '@/core/rng';
 import type {
   CsCard,
   CsCharacterDef,
+  CsExpansionId,
   CsHexId,
   CsHexTile,
   CsResource,
@@ -49,6 +50,61 @@ export const CS_CHARACTERS: readonly CsCharacterDef[] = [
     shadowAbilityText: 'Spend 4 Shadow Energy to deal 3 DMG to all enemies on an adjacent Hex tile.',
   },
 ];
+
+export const CS_ICE_STORM_CHARACTERS: readonly CsCharacterDef[] = [
+  {
+    id: 'talon',
+    lightName: 'Talon Lightfeather',
+    shadowName: 'Talon the Dark Storm',
+    homeHex: 'floating-temple',
+    shadowAbilityCost: 4,
+    shadowAbilityText: 'Spend 4 Shadow Energy to Stun each enemy on your current Hex tile.',
+    expansion: 'ice-storm',
+  },
+  {
+    id: 'nyx',
+    lightName: 'Nyx Frostpaw',
+    shadowName: 'Nyx the Blizzard',
+    homeHex: 'glimmering-woods',
+    shadowAbilityCost: 3,
+    shadowAbilityText: 'Spend 3 Shadow Energy to Freeze an enemy in range and deal 1 DMG to them.',
+    expansion: 'ice-storm',
+  },
+];
+
+export const CS_MOLTEN_ROCK_CHARACTERS: readonly CsCharacterDef[] = [
+  {
+    id: 'dread',
+    lightName: 'Dread Terrashell',
+    shadowName: 'Dread the Ironclad',
+    homeHex: 'cobble-cove',
+    shadowAbilityCost: 2,
+    shadowAbilityText: 'Spend 2 Shadow Energy to Fortify yourself (+2 Fortify shield) and deal 1 DMG to an enemy on your Hex.',
+    expansion: 'molten-rock',
+  },
+  {
+    id: 'ember',
+    lightName: 'Pyra Ashwing',
+    shadowName: 'Pyra the Inferno',
+    homeHex: 'molten-quarry',
+    shadowAbilityCost: 3,
+    shadowAbilityText: 'Spend 3 Shadow Energy to inflict Burn on all enemies on your current or adjacent Hex tile and deal 1 DMG.',
+    expansion: 'molten-rock',
+  },
+];
+
+export const CS_ALL_CHARACTERS: readonly CsCharacterDef[] = [
+  ...CS_CHARACTERS,
+  ...CS_ICE_STORM_CHARACTERS,
+  ...CS_MOLTEN_ROCK_CHARACTERS,
+];
+
+export function getCharactersForExpansions(expansions: readonly CsExpansionId[] = []): CsCharacterDef[] {
+  const out = [...CS_CHARACTERS];
+  if (expansions.includes('ice-storm')) out.push(...CS_ICE_STORM_CHARACTERS);
+  if (expansions.includes('molten-rock')) out.push(...CS_MOLTEN_ROCK_CHARACTERS);
+  return out;
+}
 
 export const CS_HEX_DEFS: readonly Omit<CsHexTile, 'faceUpCard'>[] = [
   {
@@ -116,11 +172,77 @@ export const CS_HEX_DEFS: readonly Omit<CsHexTile, 'faceUpCard'>[] = [
   },
 ];
 
-export function areHexesAdjacent(a: CsHexTile, b: CsHexTile): boolean {
+export const CS_ICE_STORM_HEX_DEFS: readonly Omit<CsHexTile, 'faceUpCard'>[] = [
+  {
+    id: 'floating-temple',
+    name: 'Floating Temple',
+    q: 1,
+    r: -2,
+    startTurnResource: 'blueGem',
+    hasMainDeckSlot: true,
+    effectText: 'Start turn here: +1 Blue Gem. (Talon Home)',
+    expansion: 'ice-storm',
+  },
+  {
+    id: 'glimmering-woods',
+    name: 'Glimmering Woods',
+    q: 1,
+    r: 1,
+    startTurnResource: 'purpleGem',
+    hasMainDeckSlot: true,
+    effectText: 'Start turn here: +1 Purple Gem. (Nyx Home)',
+    expansion: 'ice-storm',
+  },
+];
+
+export const CS_MOLTEN_ROCK_HEX_DEFS: readonly Omit<CsHexTile, 'faceUpCard'>[] = [
+  {
+    id: 'cobble-cove',
+    name: 'Cobble Cove',
+    q: -1,
+    r: 2,
+    startTurnResource: 'redGem',
+    hasMainDeckSlot: true,
+    effectText: 'Start turn here: +1 Red Gem. (Dread Home)',
+    expansion: 'molten-rock',
+  },
+  {
+    id: 'molten-quarry',
+    name: 'Molten Quarry',
+    q: -1,
+    r: -1,
+    startTurnResource: 'shadowFragment',
+    hasMainDeckSlot: true,
+    effectText: 'Start turn here: +1 Shadow Fragment. (Pyra Home)',
+    expansion: 'molten-rock',
+  },
+];
+
+export const CS_ALL_HEX_DEFS: readonly Omit<CsHexTile, 'faceUpCard'>[] = [
+  ...CS_HEX_DEFS,
+  ...CS_ICE_STORM_HEX_DEFS,
+  ...CS_MOLTEN_ROCK_HEX_DEFS,
+];
+
+export function getHexDefsForExpansions(
+  expansions: readonly CsExpansionId[] = [],
+): Omit<CsHexTile, 'faceUpCard'>[] {
+  const out = [...CS_HEX_DEFS];
+  if (expansions.includes('ice-storm')) out.push(...CS_ICE_STORM_HEX_DEFS);
+  if (expansions.includes('molten-rock')) out.push(...CS_MOLTEN_ROCK_HEX_DEFS);
+  return out;
+}
+
+export function hexDistance(a: CsHexTile, b: CsHexTile): number {
   const dq = a.q - b.q;
   const dr = a.r - b.r;
   const ds = -a.q - a.r - (-b.q - b.r);
-  return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(ds)) === 1;
+  return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(ds));
+}
+
+export function areHexesAdjacent(a: CsHexTile, b: CsHexTile): boolean {
+  if (!a || !b) return false;
+  return hexDistance(a, b) === 1;
 }
 
 export function isHexInSpellRange(
@@ -129,6 +251,7 @@ export function isHexInSpellRange(
   toId: CsHexId,
   range: 'same' | 'adjacent' | 'sameOrAdjacent' | 'any',
 ): boolean {
+  if (!hexes[fromId] || !hexes[toId]) return false;
   if (range === 'any') return true;
   if (range === 'same') return fromId === toId;
   const adj = areHexesAdjacent(hexes[fromId], hexes[toId]);
@@ -659,7 +782,734 @@ export const CS_COMPANION_DEFS: readonly CsMainCardDef[] = [
   },
 ];
 
-export function buildCsDecks(rng: RngState): {
+// ============================================================================
+// The Ice Storm Expansion Cards (26 Main Deck, 4 Companions, 4 Counterspells)
+// ============================================================================
+
+export const CS_ICE_STORM_MAIN_DECK_DEFS: readonly CsMainCardDef[] = [
+  // Attack Spells (17 cards)
+  {
+    kind: 'glacial-strike',
+    name: 'Glacial Strike',
+    type: 'attackSpell',
+    level: 2,
+    count: 1,
+    collectionCost: { blueGem: 2, blueOrb: 1 },
+    range: 'sameOrAdjacent',
+    inflictFreeze: true,
+    expansion: 'ice-storm',
+    castTiers: [
+      {
+        cost: { blueGem: 2 },
+        damage: 4,
+        inflictFreeze: true,
+        label: '2 Blue Gems → 4 DMG & Freeze',
+      },
+    ],
+    text: 'Level 2: Spend 2 Blue Gems to deal 4 DMG to an enemy in range and Freeze them.',
+  },
+  {
+    kind: 'frozen-flock',
+    name: 'Frozen Flock',
+    type: 'attackSpell',
+    level: 1,
+    count: 3,
+    collectionCost: { blueOrb: 1, anyGem: 1 },
+    range: 'sameOrAdjacent',
+    inflictFreeze: true,
+    expansion: 'ice-storm',
+    castTiers: [
+      {
+        cost: { blueOrb: 1 },
+        damage: 1,
+        inflictFreeze: true,
+        label: '1 Blue Orb → 1 DMG & Freeze',
+      },
+      {
+        cost: { blueOrb: 2 },
+        damage: 3,
+        inflictFreeze: true,
+        label: '2 Blue Orbs → 3 DMG & Freeze',
+      },
+    ],
+    text: 'Spend 1/2 Blue Orbs to deal 1/3 DMG to an enemy in range and Freeze them.',
+  },
+  {
+    kind: 'electric-twister',
+    name: 'Electric Twister',
+    type: 'attackSpell',
+    level: 1,
+    count: 3,
+    collectionCost: { anyOrb: 1, anyGem: 1 },
+    range: 'adjacent',
+    targetsAllOnHex: true,
+    inflictStun: true,
+    expansion: 'ice-storm',
+    castTiers: [
+      {
+        cost: { anyOrb: 2 },
+        damage: 2,
+        inflictStun: true,
+        label: '2 Orbs → 2 DMG & Stun Hex',
+      },
+    ],
+    text: 'Spend 2 Orbs to deal 2 DMG and Stun all enemies on an adjacent Hex.',
+  },
+  {
+    kind: 'coral-katana',
+    name: 'Coral Katana',
+    type: 'attackSpell',
+    level: 1,
+    count: 3,
+    collectionCost: { blueGem: 1, anyOrb: 1 },
+    range: 'same',
+    inflictStun: true,
+    expansion: 'ice-storm',
+    castTiers: [
+      {
+        cost: { blueGem: 1 },
+        damage: 2,
+        inflictStun: true,
+        label: '1 Blue Gem → 2 DMG & Stun',
+      },
+      {
+        cost: { blueGem: 2 },
+        damage: 4,
+        inflictStun: true,
+        label: '2 Blue Gems → 4 DMG & Stun',
+      },
+    ],
+    text: 'Spend 1/2 Blue Gems to deal 2/4 DMG to an enemy on your current Hex and Stun them.',
+  },
+  {
+    kind: 'shadow-swarm',
+    name: 'Shadow Swarm',
+    type: 'attackSpell',
+    level: 1,
+    count: 2,
+    collectionCost: { shadowFragment: 1, anyOrb: 1 },
+    range: 'adjacent',
+    expansion: 'ice-storm',
+    castTiers: [
+      { cost: { blueGem: 1 }, damage: 2, label: '1 Blue Gem → 2 DMG' },
+      { cost: { blueGem: 2 }, damage: 4, label: '2 Blue Gems → 4 DMG' },
+    ],
+    text: 'Spend 1/2 Blue Gems to deal 2/4 DMG to an enemy on an adjacent Hex.',
+  },
+  {
+    kind: 'blizzard-blast',
+    name: 'Blizzard Blast',
+    type: 'attackSpell',
+    level: 2,
+    count: 2,
+    collectionCost: { blueGem: 1, blueOrb: 2 },
+    range: 'adjacent',
+    targetsAllOnHex: true,
+    inflictFreeze: true,
+    expansion: 'ice-storm',
+    castTiers: [
+      {
+        cost: { blueOrb: 2 },
+        damage: 3,
+        inflictFreeze: true,
+        label: '2 Blue Orbs → 3 DMG & Freeze Hex',
+      },
+    ],
+    text: 'Level 2: Spend 2 Blue Orbs to deal 3 DMG and Freeze all enemies on an adjacent Hex.',
+  },
+  {
+    kind: 'frostbite-fang',
+    name: 'Frostbite Fang',
+    type: 'attackSpell',
+    level: 1,
+    count: 2,
+    collectionCost: { blueGem: 1, anyGem: 1 },
+    range: 'sameOrAdjacent',
+    inflictFreeze: true,
+    expansion: 'ice-storm',
+    castTiers: [
+      {
+        cost: { anyGem: 1, shadowFragment: 1 },
+        damage: 3,
+        inflictFreeze: true,
+        label: '1 Gem + 1 Shadow → 3 DMG & Freeze',
+      },
+    ],
+    text: 'Spend 1 Gem and 1 Shadow Fragment to deal 3 DMG to an enemy in range and Freeze them.',
+  },
+  {
+    kind: 'arctic-avalanche',
+    name: 'Arctic Avalanche',
+    type: 'attackSpell',
+    level: 3,
+    count: 1,
+    collectionCost: { blueGem: 2, anyOrb: 1, shadowFragment: 1 },
+    range: 'any',
+    inflictFreeze: true,
+    inflictStun: true,
+    expansion: 'ice-storm',
+    castTiers: [
+      {
+        cost: { blueGem: 2, shadowFragment: 1 },
+        damage: 5,
+        inflictFreeze: true,
+        inflictStun: true,
+        label: '2 Blue Gems + 1 Shadow → 5 DMG, Freeze & Stun',
+      },
+    ],
+    text: 'Level 3: Spend 2 Blue Gems and 1 Shadow Fragment to deal 5 DMG, Freeze, and Stun an enemy on any Hex.',
+  },
+
+  // Conversion Spells (5 cards)
+  {
+    kind: 'dark-duplication',
+    name: 'Dark Duplication',
+    type: 'conversionSpell',
+    level: 1,
+    count: 1,
+    collectionCost: { anyOrb: 1, shadowFragment: 1 },
+    expansion: 'ice-storm',
+    castTiers: [
+      {
+        cost: { shadowFragment: 1 },
+        damage: 0,
+        produce: ['shadowFragment', 'shadowFragment'],
+        label: '1 Shadow → 2 Shadow Fragments',
+      },
+    ],
+    text: 'Spend 1 Shadow Fragment in your Resource Pool to gain 2 Shadow Fragments.',
+  },
+  {
+    kind: 'gem-mutation',
+    name: 'Gem Mutation',
+    type: 'conversionSpell',
+    level: 1,
+    count: 1,
+    collectionCost: { anyGem: 2 },
+    expansion: 'ice-storm',
+    castTiers: [
+      {
+        cost: { anyGem: 1 },
+        damage: 0,
+        produce: ['purpleGem'],
+        heal: 1,
+        label: '1 Gem → 1 Purple Gem & Heal 1 HP',
+      },
+    ],
+    text: 'Turn 1 Gem into 1 Wild Purple Gem and gain 1 HP.',
+  },
+  {
+    kind: 'gemeration',
+    name: 'Gemeration',
+    type: 'conversionSpell',
+    level: 1,
+    count: 1,
+    collectionCost: { anyOrb: 2 },
+    expansion: 'ice-storm',
+    castTiers: [
+      {
+        cost: { shadowFragment: 1 },
+        damage: 0,
+        produce: ['purpleGem'],
+        label: '1 Shadow → 1 Purple Gem',
+      },
+    ],
+    text: 'Spend 1 Shadow Fragment to gain 1 Purple Gem.',
+  },
+  {
+    kind: 'orb-absorption',
+    name: 'Orb Absorption',
+    type: 'conversionSpell',
+    level: 1,
+    count: 1,
+    collectionCost: { anyOrb: 2 },
+    expansion: 'ice-storm',
+    castTiers: [
+      {
+        cost: { anyOrb: 1 },
+        damage: 0,
+        heal: 2,
+        label: '1 Orb → Heal 2 HP',
+      },
+    ],
+    text: 'Spend 1 Orb to gain 2 HP.',
+  },
+  {
+    kind: 'orbulence',
+    name: 'Orbulence',
+    type: 'conversionSpell',
+    level: 1,
+    count: 1,
+    collectionCost: { anyGem: 1, anyOrb: 1 },
+    expansion: 'ice-storm',
+    castTiers: [
+      {
+        cost: { shadowFragment: 1 },
+        damage: 0,
+        produce: ['purpleOrb', 'purpleOrb'],
+        label: '1 Shadow → 2 Purple Orbs',
+      },
+    ],
+    text: 'Spend 1 Shadow Fragment to gain 2 Purple Orbs.',
+  },
+
+  // Resource Cards (4 cards)
+  {
+    kind: 'res-shadow-fragment',
+    name: 'Shadow Fragment',
+    type: 'resource',
+    level: 1,
+    count: 2,
+    collectionCost: { anyOrb: 1, shadowFragment: 1 },
+    grantsResource: 'shadowFragment',
+    expansion: 'ice-storm',
+    text: 'At the start of your turn, add 1 Shadow Fragment to your Resource Pool.',
+  },
+  {
+    kind: 'res-purple-gem',
+    name: 'Purple Gem',
+    type: 'resource',
+    level: 1,
+    count: 2,
+    collectionCost: { anyGem: 1, anyOrb: 1 },
+    grantsResource: 'purpleGem',
+    expansion: 'ice-storm',
+    text: 'At the start of your turn, add 1 Purple Gem to your Resource Pool.',
+  },
+];
+
+export const CS_ICE_STORM_COUNTERSPELL_DEFS: readonly CsMainCardDef[] = [
+  {
+    kind: 'ice-wall',
+    name: 'Ice Wall',
+    type: 'counterspell',
+    level: 1,
+    count: 1,
+    collectionCost: { anyGem: 1, anyOrb: 1 },
+    expansion: 'ice-storm',
+    text: 'Reveal when an enemy deals DMG to you: reduce that DMG by 2 and Freeze the attacker.',
+  },
+  {
+    kind: 'frost-mirror',
+    name: 'Frost Mirror',
+    type: 'counterspell',
+    level: 1,
+    count: 1,
+    collectionCost: { anyGem: 1, anyOrb: 1 },
+    expansion: 'ice-storm',
+    text: 'Reveal when an enemy deals DMG to you: reduce that DMG by 1, deal 1 DMG back, and Freeze the attacker.',
+  },
+  {
+    kind: 'icy-fists',
+    name: 'Icy Fists',
+    type: 'counterspell',
+    level: 1,
+    count: 1,
+    collectionCost: { anyGem: 1, anyOrb: 1 },
+    expansion: 'ice-storm',
+    text: 'Reveal when an enemy deals DMG to you: deal 2 DMG back and Freeze the attacker.',
+  },
+  {
+    kind: 'shocking-waves',
+    name: 'Shocking Waves',
+    type: 'counterspell',
+    level: 1,
+    count: 1,
+    collectionCost: { anyGem: 1, anyOrb: 1 },
+    expansion: 'ice-storm',
+    text: 'Reveal when an enemy deals DMG to you: reduce that DMG by 1 and Stun the attacker.',
+  },
+];
+
+export const CS_ICE_STORM_COMPANION_DEFS: readonly CsMainCardDef[] = [
+  {
+    kind: 'undersea-healer',
+    name: 'Undersea Healer',
+    type: 'companion',
+    level: 1,
+    count: 1,
+    collectionCost: {},
+    expansion: 'ice-storm',
+    text: 'At the start of your turn, gain 1 HP.',
+  },
+  {
+    kind: 'mirror-crab',
+    name: 'Mirror Crab',
+    type: 'companion',
+    level: 1,
+    count: 1,
+    collectionCost: {},
+    expansion: 'ice-storm',
+    text: 'Whenever an enemy deals DMG to you, deal 1 DMG back to them.',
+  },
+  {
+    kind: 'dark-flutter',
+    name: 'Dark Flutter',
+    type: 'companion',
+    level: 1,
+    count: 1,
+    collectionCost: {},
+    expansion: 'ice-storm',
+    text: 'At the start of your turn, add 1 Shadow Fragment to your Resource Pool.',
+  },
+  {
+    kind: 'lil-shadow',
+    name: "Lil' Shadow",
+    type: 'companion',
+    level: 1,
+    count: 1,
+    collectionCost: {},
+    expansion: 'ice-storm',
+    text: 'Your Shadow Ability costs 1 fewer Shadow Energy (minimum 1).',
+  },
+];
+
+// ============================================================================
+// The Molten Rock Expansion Cards (26 Main Deck, 4 Companions, 4 Counterspells)
+// ============================================================================
+
+export const CS_MOLTEN_ROCK_MAIN_DECK_DEFS: readonly CsMainCardDef[] = [
+  // Attack Spells (17 cards)
+  {
+    kind: 'earth-shatter',
+    name: 'Earth Shatter',
+    type: 'attackSpell',
+    level: 2,
+    count: 2,
+    collectionCost: { redGem: 2, anyOrb: 1 },
+    range: 'adjacent',
+    targetsAllOnHex: true,
+    inflictBurn: true,
+    gainFortify: 1,
+    expansion: 'molten-rock',
+    castTiers: [
+      {
+        cost: { redGem: 2 },
+        damage: 3,
+        inflictBurn: true,
+        gainFortify: 1,
+        label: '2 Red Gems → 3 DMG, Burn Hex & +1 Fortify',
+      },
+    ],
+    text: 'Level 2: Spend 2 Red Gems to deal 3 DMG and Burn all enemies on an adjacent Hex, and gain +1 Fortify.',
+  },
+  {
+    kind: 'groundbreaker',
+    name: 'Groundbreaker',
+    type: 'attackSpell',
+    level: 1,
+    count: 3,
+    collectionCost: { redGem: 1, anyOrb: 1 },
+    range: 'sameOrAdjacent',
+    gainFortify: 1,
+    expansion: 'molten-rock',
+    castTiers: [
+      {
+        cost: { redGem: 1 },
+        damage: 2,
+        gainFortify: 1,
+        label: '1 Red Gem → 2 DMG & +1 Fortify',
+      },
+      {
+        cost: { redGem: 2 },
+        damage: 3,
+        gainFortify: 2,
+        label: '2 Red Gems → 3 DMG & +2 Fortify',
+      },
+    ],
+    text: 'Spend 1/2 Red Gems to deal 2/3 DMG to an enemy in range and gain +1/+2 Fortify.',
+  },
+  {
+    kind: 'supercharged-jewel',
+    name: 'Supercharged Jewel',
+    type: 'attackSpell',
+    level: 2,
+    count: 2,
+    collectionCost: { anyGem: 2, shadowFragment: 1 },
+    range: 'sameOrAdjacent',
+    inflictBurn: true,
+    expansion: 'molten-rock',
+    castTiers: [
+      {
+        cost: { anyGem: 2 },
+        damage: 4,
+        inflictBurn: true,
+        label: '2 Gems → 4 DMG & Burn',
+      },
+    ],
+    text: 'Level 2: Spend 2 Gems to deal 4 DMG to an enemy in range and inflict Burn.',
+  },
+  {
+    kind: 'vort-hex',
+    name: 'Vort-Hex',
+    type: 'attackSpell',
+    level: 1,
+    count: 3,
+    collectionCost: { redOrb: 1, anyGem: 1 },
+    range: 'sameOrAdjacent',
+    inflictBurn: true,
+    expansion: 'molten-rock',
+    castTiers: [
+      {
+        cost: { redOrb: 1 },
+        damage: 1,
+        inflictBurn: true,
+        label: '1 Red Orb → 1 DMG & Burn',
+      },
+      {
+        cost: { redOrb: 2 },
+        damage: 3,
+        inflictBurn: true,
+        label: '2 Red Orbs → 3 DMG & Burn',
+      },
+    ],
+    text: 'Spend 1/2 Red Orbs to deal 1/3 DMG to an enemy in range and inflict Burn.',
+  },
+  {
+    kind: 'draining-vines',
+    name: 'Draining Vines',
+    type: 'attackSpell',
+    level: 1,
+    count: 3,
+    collectionCost: { anyOrb: 1, shadowFragment: 1 },
+    range: 'sameOrAdjacent',
+    expansion: 'molten-rock',
+    castTiers: [
+      {
+        cost: { anyOrb: 1, shadowFragment: 1 },
+        damage: 2,
+        heal: 1,
+        label: '1 Orb + 1 Shadow → 2 DMG & Heal 1 HP',
+      },
+    ],
+    text: 'Spend 1 Orb and 1 Shadow Fragment to deal 2 DMG to an enemy in range and gain 1 HP.',
+  },
+  {
+    kind: 'pyro-burst',
+    name: 'Pyro Burst',
+    type: 'attackSpell',
+    level: 1,
+    count: 3,
+    collectionCost: { redOrb: 1, redGem: 1 },
+    range: 'same',
+    targetsAllOnHex: true,
+    inflictBurn: true,
+    expansion: 'molten-rock',
+    castTiers: [
+      {
+        cost: { redOrb: 1, redGem: 1 },
+        damage: 2,
+        inflictBurn: true,
+        label: '1 Red Orb + 1 Red Gem → 2 DMG & Burn Hex',
+      },
+    ],
+    text: 'Spend 1 Red Orb and 1 Red Gem to deal 2 DMG and Burn all enemies on your current Hex.',
+  },
+  {
+    kind: 'volcanic-cataclysm',
+    name: 'Volcanic Cataclysm',
+    type: 'attackSpell',
+    level: 3,
+    count: 1,
+    collectionCost: { redGem: 2, redOrb: 1, shadowFragment: 1 },
+    range: 'any',
+    inflictBurn: true,
+    gainFortify: 2,
+    expansion: 'molten-rock',
+    castTiers: [
+      {
+        cost: { redGem: 2, shadowFragment: 1 },
+        damage: 5,
+        inflictBurn: true,
+        gainFortify: 2,
+        label: '2 Red Gems + 1 Shadow → 5 DMG, Burn & +2 Fortify',
+      },
+    ],
+    text: 'Level 3: Spend 2 Red Gems and 1 Shadow Fragment to deal 5 DMG and Burn an enemy on any Hex, and gain +2 Fortify.',
+  },
+
+  // Conversion Spells (5 cards)
+  {
+    kind: 'iron-carapace',
+    name: 'Iron Carapace',
+    type: 'conversionSpell',
+    level: 1,
+    count: 2,
+    collectionCost: { anyGem: 1, anyOrb: 1 },
+    gainFortify: 2,
+    expansion: 'molten-rock',
+    castTiers: [
+      {
+        cost: { anyGem: 1 },
+        damage: 0,
+        gainFortify: 2,
+        label: '1 Gem → +2 Fortify',
+      },
+    ],
+    text: 'Spend 1 Gem to gain +2 Fortify shield.',
+  },
+  {
+    kind: 'molten-alchemy',
+    name: 'Molten Alchemy',
+    type: 'conversionSpell',
+    level: 1,
+    count: 1,
+    collectionCost: { redOrb: 1, anyGem: 1 },
+    expansion: 'molten-rock',
+    castTiers: [
+      {
+        cost: { cursedCrystal: 1 },
+        damage: 0,
+        produce: ['redGem'],
+        label: '1 Cursed Crystal → 1 Red Gem',
+      },
+    ],
+    text: 'Turn 1 Cursed Crystal in your Resource Pool into 1 Red Gem.',
+  },
+  {
+    kind: 'ember-infusion',
+    name: 'Ember Infusion',
+    type: 'conversionSpell',
+    level: 1,
+    count: 1,
+    collectionCost: { anyOrb: 2 },
+    expansion: 'molten-rock',
+    castTiers: [
+      {
+        cost: { anyOrb: 1 },
+        damage: 0,
+        produce: ['redGem', 'shadowFragment'],
+        label: '1 Orb → 1 Red Gem + 1 Shadow Fragment',
+      },
+    ],
+    text: 'Spend 1 Orb to gain 1 Red Gem and 1 Shadow Fragment.',
+  },
+  {
+    kind: 'magma-mend',
+    name: 'Magma Mend',
+    type: 'conversionSpell',
+    level: 1,
+    count: 1,
+    collectionCost: { anyGem: 1, shadowFragment: 1 },
+    gainFortify: 1,
+    expansion: 'molten-rock',
+    castTiers: [
+      {
+        cost: { redGem: 1 },
+        damage: 0,
+        heal: 2,
+        gainFortify: 1,
+        label: '1 Red Gem → Heal 2 HP & +1 Fortify',
+      },
+    ],
+    text: 'Spend 1 Red Gem to gain 2 HP and +1 Fortify shield.',
+  },
+
+  // Resource Cards (4 cards)
+  {
+    kind: 'res-molten-red-gem',
+    name: 'Molten Red Gem',
+    type: 'resource',
+    level: 1,
+    count: 2,
+    collectionCost: { redOrb: 1, anyOrb: 1 },
+    grantsResource: 'redGem',
+    expansion: 'molten-rock',
+    text: 'At the start of your turn, add 1 Red Gem to your Resource Pool.',
+  },
+  {
+    kind: 'res-purple-orb',
+    name: 'Purple Orb',
+    type: 'resource',
+    level: 1,
+    count: 2,
+    collectionCost: { anyGem: 1, anyOrb: 1 },
+    grantsResource: 'purpleOrb',
+    expansion: 'molten-rock',
+    text: 'At the start of your turn, add 1 Purple Orb to your Resource Pool.',
+  },
+];
+
+export const CS_MOLTEN_ROCK_COUNTERSPELL_DEFS: readonly CsMainCardDef[] = [
+  {
+    kind: 'magma-shield',
+    name: 'Magma Shield',
+    type: 'counterspell',
+    level: 1,
+    count: 2,
+    collectionCost: { anyGem: 1, anyOrb: 1 },
+    expansion: 'molten-rock',
+    text: 'Reveal when an enemy deals DMG to you: reduce that DMG by 2 and inflict Burn on the attacker.',
+  },
+  {
+    kind: 'smoke-screen',
+    name: 'Smoke Screen',
+    type: 'counterspell',
+    level: 1,
+    count: 1,
+    collectionCost: { anyGem: 1, anyOrb: 1 },
+    expansion: 'molten-rock',
+    text: 'Reveal when an enemy deals DMG to you: prevent all DMG and gain +1 Fortify shield.',
+  },
+  {
+    kind: 'molten-retaliation',
+    name: 'Molten Retaliation',
+    type: 'counterspell',
+    level: 1,
+    count: 1,
+    collectionCost: { anyGem: 1, anyOrb: 1 },
+    expansion: 'molten-rock',
+    text: 'Reveal when an enemy deals DMG to you: deal 1 DMG back, inflict Burn on the attacker, and gain +1 Fortify shield.',
+  },
+];
+
+export const CS_MOLTEN_ROCK_COMPANION_DEFS: readonly CsMainCardDef[] = [
+  {
+    kind: 'ravaging-draco',
+    name: 'Ravaging Draco',
+    type: 'companion',
+    level: 1,
+    count: 1,
+    collectionCost: {},
+    expansion: 'molten-rock',
+    text: 'Each time you Cast an Attack Spell, inflict Burn on the target(s).',
+  },
+  {
+    kind: 'scaled-alchemist',
+    name: 'Scaled Alchemist',
+    type: 'companion',
+    level: 1,
+    count: 1,
+    collectionCost: {},
+    expansion: 'molten-rock',
+    text: 'At the start of your turn, gain +1 Fortify shield.',
+  },
+  {
+    kind: 'hammerhead-harvester',
+    name: 'Hammerhead Harvester',
+    type: 'companion',
+    level: 1,
+    count: 1,
+    collectionCost: {},
+    expansion: 'molten-rock',
+    text: 'At the start of your turn, add 1 Red Gem to your Resource Pool.',
+  },
+  {
+    kind: 'vital-shroom',
+    name: 'Vital Shroom',
+    type: 'companion',
+    level: 1,
+    count: 1,
+    collectionCost: {},
+    expansion: 'molten-rock',
+    text: 'Each time you Protect, gain 1 HP and +1 Fortify shield.',
+  },
+];
+
+export function buildCsDecks(
+  rng: RngState,
+  expansions: readonly CsExpansionId[] = [],
+): {
   mainDeck: CsCard[];
   counterspellDeck: CsCard[];
   companionDeck: CsCard[];
@@ -680,6 +1530,11 @@ export function buildCsDecks(rng: RngState): {
           range: d.range,
           targetsAllOnHex: d.targetsAllOnHex,
           grantsResource: d.grantsResource,
+          inflictStun: d.inflictStun,
+          inflictFreeze: d.inflictFreeze,
+          inflictBurn: d.inflictBurn,
+          gainFortify: d.gainFortify,
+          expansion: d.expansion,
           text: d.text,
         });
       }
@@ -687,9 +1542,24 @@ export function buildCsDecks(rng: RngState): {
     return out;
   };
 
+  const mainDefs: CsMainCardDef[] = [...CS_MAIN_DECK_DEFS];
+  const counterDefs: CsMainCardDef[] = [...CS_COUNTERSPELL_DEFS];
+  const companionDefs: CsMainCardDef[] = [...CS_COMPANION_DEFS];
+
+  if (expansions.includes('ice-storm')) {
+    mainDefs.push(...CS_ICE_STORM_MAIN_DECK_DEFS);
+    counterDefs.push(...CS_ICE_STORM_COUNTERSPELL_DEFS);
+    companionDefs.push(...CS_ICE_STORM_COMPANION_DEFS);
+  }
+  if (expansions.includes('molten-rock')) {
+    mainDefs.push(...CS_MOLTEN_ROCK_MAIN_DECK_DEFS);
+    counterDefs.push(...CS_MOLTEN_ROCK_COUNTERSPELL_DEFS);
+    companionDefs.push(...CS_MOLTEN_ROCK_COMPANION_DEFS);
+  }
+
   return {
-    mainDeck: shuffle(rng, expand(CS_MAIN_DECK_DEFS)),
-    counterspellDeck: shuffle(rng, expand(CS_COUNTERSPELL_DEFS)),
-    companionDeck: shuffle(rng, expand(CS_COMPANION_DEFS)),
+    mainDeck: shuffle(rng, expand(mainDefs)),
+    counterspellDeck: shuffle(rng, expand(counterDefs)),
+    companionDeck: shuffle(rng, expand(companionDefs)),
   };
 }

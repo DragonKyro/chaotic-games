@@ -14,7 +14,11 @@ export type HtsBaseClass =
   | 'guardian'
   | 'ranger'
   | 'thief'
-  | 'wizard';
+  | 'wizard'
+  | 'warrior'
+  | 'druid'
+  | 'berserker'
+  | 'necromancer';
 
 export const HTS_BASE_CLASSES: readonly HtsBaseClass[] = [
   'fighter',
@@ -25,6 +29,19 @@ export const HTS_BASE_CLASSES: readonly HtsBaseClass[] = [
   'wizard',
 ];
 
+export const HTS_ALL_CLASSES: readonly HtsBaseClass[] = [
+  'fighter',
+  'bard',
+  'guardian',
+  'ranger',
+  'thief',
+  'wizard',
+  'warrior',
+  'druid',
+  'berserker',
+  'necromancer',
+];
+
 export type HtsCardType =
   | 'partyLeader'
   | 'hero'
@@ -33,7 +50,8 @@ export type HtsCardType =
   | 'magic'
   | 'modifier'
   | 'challenge'
-  | 'monster';
+  | 'monster'
+  | 'gift';
 
 export interface HtsCard {
   id: number;
@@ -42,10 +60,16 @@ export interface HtsCard {
   type: HtsCardType;
   class: HtsBaseClass | null;
   text: string;
-  /** Roll threshold for a Hero's ability (e.g. 7 means 7+). */
+  /** Roll threshold for a Hero's ability (e.g. 7 means 7+, or <=7 when rollLow is true). */
   abilityThreshold: number | null;
+  /** When true (Druid Heroes), the ability roll succeeds when total <= abilityThreshold. */
+  rollLow?: boolean;
+  /** Maximum number of Item cards that can be equipped to this Hero (default 1; 2 for some Warriors/Berserkers). */
+  maxItems?: number;
   /** Allowed signed values for a Modifier card (e.g. [2, -2] or [4]). */
   modifierChoices: number[] | null;
+  /** Optional expansion identifier. */
+  expansion?: HtsExpansionId;
 }
 
 export interface HtsMonster {
@@ -67,6 +91,8 @@ export interface HtsMonster {
 export interface HtsPartyHero {
   card: HtsCard;
   equippedItem: HtsCard | null;
+  /** Additional equipped items when a Hero can hold 2+ items (Warriors/Berserkers/Bottomless Bag). */
+  extraItems?: HtsCard[];
   usedThisTurn: boolean;
 }
 
@@ -101,6 +127,8 @@ export interface HtsPendingRoll {
   /** Hero card id (for heroAbility) or Monster card id (for monsterAttack). */
   sourceCardId: number;
   threshold: number;
+  /** When true (Druid Hero ability or low-roll effect), roll succeeds on <= threshold. */
+  rollLow?: boolean;
   modifiers: HtsAppliedModifier[];
   responderQueue: PlayerId[];
 }
@@ -118,7 +146,7 @@ export type HtsPrompt =
       optional: boolean;
       scope: 'own' | 'others' | 'any' | 'specificPlayer';
       specificPlayerId?: PlayerId;
-      mode: 'destroy' | 'sacrifice' | 'steal' | 'swapGive' | 'bounceItem';
+      mode: 'destroy' | 'sacrifice' | 'steal' | 'swapGive' | 'bounceItem' | 'stealItem';
       effectTag?: string;
     }
   | {
@@ -137,8 +165,10 @@ export type HtsPrompt =
         | 'bearyWiseDiscard'
         | 'greedyCheeksGive'
         | 'slipperyPawsDiscard'
+        | 'barkHexerDiscard'
         | 'playFreeHero'
         | 'playFreeItem'
+        | 'playFreeItemsUpTo2'
         | 'playFreeMagic'
         | 'snowballFreeMagic'
         | 'endOfTurnLimit';
@@ -156,6 +186,7 @@ export type HtsPrompt =
         | 'buttonsPull'
         | 'luckyBuckyPull'
         | 'slyPickingsPull'
+        | 'wildBuckPull'
         | 'plunderingPumaPull'
         | 'slipperyPawsPull'
         | 'dodgyDealerTrade'
@@ -163,9 +194,12 @@ export type HtsPrompt =
         | 'hopperSacrifice'
         | 'sharpFoxLook'
         | 'silentShadowSteal'
+        | 'buckOmensSteal'
+        | 'blindingBladeStealItems'
         | 'tipsyTootieSwap'
         | 'meowzioSteal'
-        | 'forcedExchangeTarget';
+        | 'forcedExchangeTarget'
+        | 'giftBagBanditSteal';
       sourceHeroId?: number;
     }
   | {
@@ -174,7 +208,7 @@ export type HtsPrompt =
       reason: string;
       optional: boolean;
       cards: HtsCard[];
-      source: 'discard' | 'opponentHand' | 'bearyWisePool';
+      source: 'discard' | 'opponentHand' | 'bearyWisePool' | 'discardReviveToParty' | 'discardReviveAndRoll' | 'discardPlayMagic';
       opponentId?: PlayerId;
     }
   | {
@@ -227,7 +261,7 @@ export const HTS_EXPANSIONS: readonly ExpansionMeta[] = [
   {
     id: 'here-to-sleigh',
     name: 'Here to Sleigh',
-    summary: 'Holiday-themed expansion.',
+    summary: 'Holiday-themed expansion with Festive Leaders, Holiday Heroes, Monsters, and Nice List Gifts.',
     verified: true,
   },
 ];
@@ -235,6 +269,8 @@ export const HTS_EXPANSIONS: readonly ExpansionMeta[] = [
 export interface HtsConfig extends ScaffoldConfig {
   expansions: HtsExpansionId[];
   monstersToWin: number;
+  /** Number of distinct classes needed in a Party to win (defaults to 7 with class expansions, 6 in base game). */
+  classesToWin?: number;
 }
 
 // ============================================================================
@@ -252,6 +288,9 @@ export interface HtsTurnBuffs {
   rollBonus: number;
   unchallengeable: boolean;
   shadowClawUsed: boolean;
+  nobleShamanUsed?: boolean;
+  gnawingDreadUsed?: boolean;
+  noOpponentModifiers?: boolean;
 }
 
 export interface HtsState extends GameStateShape {
@@ -266,6 +305,10 @@ export interface HtsState extends GameStateShape {
   partyLeaders: Record<PlayerId, HtsCard>;
   parties: Record<PlayerId, HtsPartyHero[]>;
   trophies: Record<PlayerId, HtsMonster[]>;
+
+  /** Here to Sleigh expansion: Nice Gifts collected by each player (3 Nice Gifts wins!) and remaining Gift deck. */
+  niceGifts: Record<PlayerId, HtsCard[]>;
+  giftDeck: HtsCard[];
 
   /** Protection flags lasting until the start of that player's next turn. */
   protectedFromSteal: Record<PlayerId, boolean>;
@@ -318,6 +361,9 @@ export type HtsAction =
       dice: [number, number];
     }
   | { type: 'shadowClawPull'; playerId: PlayerId; targetPlayerId: PlayerId }
+  | { type: 'nobleShamanAdjust'; playerId: PlayerId; delta: 1 | -1 }
+  | { type: 'gnawingDreadSearch'; playerId: PlayerId }
+  | { type: 'claimHolidayGift'; playerId: PlayerId }
   | { type: 'discardAndRedraw'; playerId: PlayerId }
   | {
       type: 'playChallenge';

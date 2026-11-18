@@ -44,10 +44,43 @@ export function Card({ kind, selected, disabled, size = 'md', onClick, footnote 
   );
 }
 
-/** A face-down card — other players' hands, and the deck itself. */
-export function FaceDownCard({ size = 'md', label }: { size?: 'sm' | 'md' | 'lg'; label?: string }) {
+/** A face-down card — other players' hands, cursed hands, and the deck itself. */
+export function FaceDownCard({
+  size = 'md',
+  label,
+  selected,
+  disabled,
+  onClick,
+}: {
+  size?: 'sm' | 'md' | 'lg';
+  label?: string;
+  selected?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+}) {
+  const interactive = !!onClick && !disabled;
+  const className = [
+    'ek-card',
+    `ek-card-${size}`,
+    'is-facedown',
+    selected ? 'is-selected' : '',
+    disabled ? 'is-disabled' : '',
+    interactive ? 'is-interactive' : '',
+  ].filter(Boolean).join(' ');
+
+  if (interactive) {
+    return (
+      <button type="button" className={className} onClick={onClick} aria-pressed={selected}>
+        <span className="ek-card-art">
+          <CardBack />
+        </span>
+        {label && <span className="ek-card-name">{label}</span>}
+      </button>
+    );
+  }
+
   return (
-    <div className={`ek-card ek-card-${size} is-facedown`}>
+    <div className={className}>
       <span className="ek-card-art">
         <CardBack />
       </span>
