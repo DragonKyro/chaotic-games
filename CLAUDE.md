@@ -304,7 +304,10 @@ Counterspell) and the player chooses what to give up, Resource cards are free
 to collect and spent for a token, used Counterspells go to the bottom of their
 deck. The AI travels toward where its spells can hurt someone, which fixed the
 old stalemate (seed `699613345` now ends in 106 moves). `finalScores` counts
-the players each caster outlasted.
+the players each caster outlasted. Five base items have no archived source and
+are kept as first built, so may be made up (marked UNCONFIRMED in `cards.ts`):
+Frill's Shadow Ability, Magma Hand, Sapphire Synthesis, Sharp Hedge and the
+Blue Orb resource card.
 
 **Expansions:** hexes, character names and the Ice Storm statuses are
 official, but the decks couldn't be sourced and are still the app's own —

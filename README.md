@@ -1,5 +1,7 @@
 # chaotic-games
 
+**▶ Play it live: <https://dragonkyro.github.io/chaotic-games/>**
+
 A multi-game web app for **chaotic take-that card games** — the family where you sabotage, interrupt, and blow up your friends rather than quietly optimize your own tableau. Hosted on GitHub Pages, with online rooms in a Firebase Realtime Database (no server code of our own).
 
 Infrastructure is lifted from the sibling [card-collecting](../card-collecting) project — same `GameModule` contract, same Firebase room netcode, same shell.
@@ -10,7 +12,14 @@ Infrastructure is lifted from the sibling [card-collecting](../card-collecting) 
 
 ## Expansions
 
-**Checked** = built from the official rules and card lists, and verified. **Unchecked** = not built, or not complete. Unchecked expansions that are still playable are labelled "unverified" in the lobby; locked ones can't be selected.
+Every expansion falls into one of four groups:
+
+- **[x] Done** — built from the official rules and card lists, and verified.
+- **[ ] ⚠ Made up** — playable, but some or all of its cards or rules were invented, not taken from the real product. The lobby labels these "unverified". Treat them as house variants until rebuilt.
+- **[ ] Incomplete** — the real content, but with parts missing or doing nothing.
+- **[ ] 🔒 Not in the game** — locked in the lobby; nothing to play yet.
+
+Even in finished games, a few rules no source could settle are marked UNCONFIRMED and listed in that game's in-app rules book.
 
 ### Exploding Kittens
 - [x] Base game
@@ -19,44 +28,43 @@ Infrastructure is lifted from the sibling [card-collecting](../card-collecting) 
 - [x] Barking Kittens
 - [x] Zombie Kittens
 - [x] Party Pack
-- [ ] Recipes for Disaster — placeholder; its 13 recipes aren't modeled
+- [ ] **Incomplete:** Recipes for Disaster — a stand-in that mixes the real Imploding, Streaking and Barking cards; its 13 recipes aren't modeled
 
 ### Unstable Unicorns
 - [x] 2nd Edition base deck
-- [ ] Original Base deck (Second Print) — exact card list, but about 14 cards it shares with the 2nd Edition still use 2nd Edition wording
-- [ ] Diamond Edition — rebuilt, except Reaper (its text was never archived, so it has no effect)
-- [ ] Control, Chaos and Travel editions — approximations (unverified)
-- [ ] NSFW, Rainbow Apocalypse, Dragons, Unicorns of Legend, Adventures, Christmas, Nightmares — approximations (unverified); the real card lists are recorded in `types.ts`
-- [ ] Uncut Unicorns — not a real product; invented (unverified)
+- [ ] **Incomplete:** Original Base deck (Second Print) — the exact card list, but about 14 cards it shares with the 2nd Edition still use 2nd Edition wording
+- [ ] **Incomplete:** Diamond Edition — rebuilt, except Reaper (its text was never archived, so it has no effect)
+- [ ] ⚠ **Made up:** Control, Chaos and Travel editions — a few real card names mixed with invented cards
+- [ ] ⚠ **Made up:** NSFW, Rainbow Apocalypse, Dragons, Unicorns of Legend, Adventures, Christmas, Nightmares — a few real card names (texts unconfirmed) mixed with invented cards; the real card lists are recorded in `types.ts` for a rebuild
+- [ ] ⚠ **Made up:** Uncut Unicorns — entirely invented; no such product exists (candidate for deletion)
 
 ### Here to Slay
 - [x] Base game
 - [x] Warriors & Druids
 - [x] Berserkers & Necromancers
-- [ ] Here to Sleigh — approximation (unverified); its rulesheet is only available as images
+- [ ] ⚠ **Made up:** Here to Sleigh — invented cards and gift rules, not the published Gift / Stockpile system (its rulesheet survives only as images)
 
 ### Casting Shadows
-- [x] Base game
-- [ ] The Ice Storm — hexes, characters and Freeze / Stun are official; the cards are reconstructed (unverified)
-- [ ] The Molten Rock — hexes and characters are official; the cards and the Burn / Fortify rules are reconstructed (unverified)
+- [x] Base game — except 5 items no archived source covers, kept as the app first built them and possibly made up: Frill's Shadow Ability, Magma Hand, Sapphire Synthesis, Sharp Hedge (each marked "(Unconfirmed text.)" in-game), and the Blue Orb resource card (copied from its three sister cards, so probably right)
+- [ ] ⚠ **Made up:** The Ice Storm — its hexes, character names and Freeze / Stun rules are official, but its deck is invented and Frost's ability is a placeholder
+- [ ] ⚠ **Made up:** The Molten Rock — its hexes and character names are official, but its deck and Burn / Fortify rules are invented, and Dread's and Ashe's abilities are placeholders
 
 ### Happy Little Dinosaurs
 - [x] Base game
 - [x] 5–6 Player Expansion
 - [x] Perils of Puberty
 - [x] Dating Disasters
-- [ ] Hazards Ahead — official card pool, but the Hazard tokens and 12 Hazard cards do nothing (its rulebook isn't online)
+- [ ] **Incomplete:** Hazards Ahead — the official card pool, but the Hazard tokens and its 12 Hazard cards do nothing (its rulebook isn't online)
 
 ### Doomlings
 - [x] Classic base game
 - [x] Castle Glass
 - [x] Overlush
 - [x] Imaginary Ends (the four creature sets)
-- [ ] Imaginary Ends: Magical Merchants — locked; the 40 trinkets and merchant Ages aren't built
-- [ ] Legends of Enderas — locked; attachments, Mythling spells and hidden Treasures aren't built
-- [ ] Upgrade — locked
-- [ ] Mokoko Village, Shadow Puppets, Nightflower Island — locked; no rulesheet in the sources
-- [ ] Special Edition — locked
+- [ ] 🔒 **Not in the game:** Imaginary Ends: Magical Merchants — the 40 trinkets and merchant Ages aren't built
+- [ ] 🔒 **Not in the game:** Legends of Enderas — attachments, Mythling spells and hidden Treasures aren't built
+- [ ] 🔒 **Not in the game:** Upgrade, Special Edition
+- [ ] 🔒 **Not in the game:** Mokoko Village, Shadow Puppets, Nightflower Island — no rulesheet in the sources
 
 ## The games
 
@@ -170,12 +178,12 @@ Online play runs through a **Firebase Realtime Database** shared with Kyle's oth
 Copied from card-collecting: `GameModule` contract, seeded RNG, Zustand stores, game-agnostic shell (picker / lobby / host / chat / rules modal), GitHub Pages deploy workflow. The original Trystero P2P layer was replaced on 2026-11-18 by card-collecting's Firebase Realtime Database rooms.
 
 ### Phase 1 — Game outlines ✅
-All six games scaffolded: `types.ts` per game carrying the state machine, action union, config and expansion list, plus a `module.ts` registered in the picker whose reducer throws. Expansion lists researched and verified (except Doomlings). Design notes record what's confirmed and what's a guess.
+All six games scaffolded: `types.ts` per game carrying the state machine, action union, config and expansion list, plus a `module.ts` registered in the picker whose reducer throws. Expansion lists drafted. The rules audit later found that many of the expansions' card pools had been invented; see Expansions for what has been rebuilt since and what is still made up.
 
 ### Phase 2 — Chaos primitives ✅ (via Exploding Kittens)
 Three engine capabilities the card-collecting games never needed. Each was built in the first game that needed it rather than speculatively:
 
-1. **Reaction windows** — built. Nope, Neigh, Challenge and Modifier are one shape: a card playable out of turn that answers a pending play and can itself be answered, resolving last-in-first-out. The implementation parks the play in `state.pending`, queues only players who actually hold an answer, and reopens the window every time one lands. Deterministic, no real-time race between peers. Still to generalise when reused: a *terminal* cancel (Super Neigh can't be Noped) and an *accumulating modify* (Here to Slay's dice modifiers adjust a roll instead of cancelling it).
+1. **Reaction windows** — built. Nope, Neigh, Challenge and Modifier are one shape: a card playable out of turn that answers a pending play and can itself be answered, resolving last-in-first-out. The implementation parks the play in `state.pending`, queues only players who actually hold an answer, and reopens the window every time one lands. Deterministic, no real-time race between peers. Since reused in two more variants: a *terminal* cancel (Super Neigh can't be answered) and an *accumulating modify* (Here to Slay's Modifiers adjust a roll instead of cancelling it).
 2. **Player elimination** — built. `eliminated: PlayerId[]` plus a turn advance that skips dead seats, and final scores ranked by who outlasted whom.
 3. **Secret deck order** — **decided: accept it.** Same friends-only honour stance as the sibling project; no host authority, no commit-and-reveal. What makes it work in practice is `knownTopCount` — a per-player count of how many top-of-deck cards that seat has legitimately earned sight of, via See the Future or by hiding a kitten itself. The UI renders the deck *only* through that, and the AI reads it *only* through that. See the note below.
 
@@ -185,7 +193,7 @@ Dice (Here to Slay, Casting Shadows) need no new primitive: a roll is public the
 See the status section above.
 
 ### Phase 4 — Remaining titles ✅
-Unstable Unicorns, Here to Slay, Casting Shadows, Happy Little Dinosaurs and Doomlings, with expansions (see Status for which are verified).
+Unstable Unicorns, Here to Slay, Casting Shadows, Happy Little Dinosaurs and Doomlings, with expansions (see Expansions for which are verified, incomplete, made up or locked).
 
 ### Phase 5 — Online rooms ✅
 Firebase Realtime Database rooms replaced peer-to-peer WebRTC (see Multiplayer model).
