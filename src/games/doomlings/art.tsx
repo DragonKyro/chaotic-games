@@ -358,7 +358,8 @@ function speciesCounts(traits: readonly DmTraitCard[]) {
     counts,
     total: traits.length,
     dominants: traits.filter((t) => t.dominant).length,
-    attachments: traits.filter((t) => t.isAttachment).length,
+    // Play-When traits (out-of-turn tricks) orbit the creature as little moons.
+    attachments: traits.filter((t) => t.playWhen).length,
     swarm: traits.some((t) => t.isSwarm),
   };
 }
@@ -558,14 +559,14 @@ export function GenePool({ size, max = 8, title }: { size: number; max?: number;
 // Marker glyphs (14×14) for the card's corner.
 // ============================================================================
 
-export type Mark = 'dominant' | 'action' | 'drop' | 'worldsEnd' | 'attachment' | 'shield' | 'swarm';
+export type Mark = 'dominant' | 'action' | 'drop' | 'worldsEnd' | 'playWhen' | 'shield' | 'swarm';
 
 export const MARK_LABEL: Record<Mark, string> = {
   dominant: 'Dominant',
   action: 'Action when played',
   drop: 'Drop of Life bonus',
   worldsEnd: "World's End effect",
-  attachment: 'Attachment',
+  playWhen: 'Play When — can be played out of turn',
   shield: 'Indestructible',
   swarm: 'Swarm',
 };
@@ -590,8 +591,14 @@ export function MarkIcon({ mark }: { mark: Mark }) {
         </g>
       );
       break;
-    case 'attachment':
-      body = <path d="M9.5 4.5 L5 9 a1.6 1.6 0 0 1 -2.3 -2.3 L7.6 1.8 a3 3 0 0 1 4.3 4.3 L6.6 11.4" fill="none" stroke="#ffd23f" strokeWidth={1.5} strokeLinecap="round" />;
+    case 'playWhen':
+      body = (
+        <g>
+          <circle cx={7} cy={7} r={5.5} fill="#ffd23f" stroke={INK} strokeWidth={1} />
+          <path d="M7 3.6 V7.6" stroke={INK} strokeWidth={1.6} strokeLinecap="round" />
+          <circle cx={7} cy={10.2} r={0.95} fill={INK} />
+        </g>
+      );
       break;
     case 'shield':
       body = <path d="M7 1.5 L12 3.5 V7 C12 10 9.6 12 7 13 C4.4 12 2 10 2 7 V3.5 Z" fill="#c7d0dd" stroke={INK} strokeWidth={1} />;
@@ -616,10 +623,10 @@ export function MarkIcon({ mark }: { mark: Mark }) {
 export function traitMarks(c: DmTraitCard, indestructible: boolean): Mark[] {
   const out: Mark[] = [];
   if (c.dominant) out.push('dominant');
-  if (c.actionTag) out.push('action');
-  if (c.dropOfLifeTag) out.push('drop');
-  if (c.worldsEndTag) out.push('worldsEnd');
-  if (c.isAttachment) out.push('attachment');
+  if (c.action) out.push('action');
+  if (c.dropOfLife) out.push('drop');
+  if (c.worldsEnd) out.push('worldsEnd');
+  if (c.playWhen) out.push('playWhen');
   if (indestructible) out.push('shield');
   if (c.isSwarm) out.push('swarm');
   return out;
@@ -640,13 +647,13 @@ function ageScene(a: Pick<DmAgeCard, 'kind' | 'ruleTag' | 'name'>): Scene {
   if (a.kind === 'birthOfLife') return 'birth';
   if (a.kind === 'catastrophe') {
     const n = a.name.toLowerCase();
-    if (/volcan|erupt|magma|lava|bigucky/.test(n)) return 'eruption';
-    if (/ice|glacier|frost|winter|freeze|snow/.test(n)) return 'ice';
+    if (/volcan|erupt|magma|lava|solar|flare/.test(n)) return 'eruption';
+    if (/ice|glaci|frost|winter|freeze|snow|melt/.test(n)) return 'ice';
     if (/virus|plague|pandemic|disease|retro|spore|mutat/.test(n)) return 'plague';
     if (/flood|tsunami|deluge|sea|ocean|wave/.test(n)) return 'flood';
     if (/goo|nano|swarm|overpopul/.test(n)) return 'goo';
-    if (/\bai\b|machine|deus|robot|tech|nuclear|takeover/.test(n)) return 'machine';
-    if (/impact|meteor|comet|asteroid|extinction|horsemen|apocal/.test(n)) return 'meteor';
+    if (/\bai\b|machine|deus|robot|tech|nuclear|takeover|pulse/.test(n)) return 'machine';
+    if (/impact|meteor|comet|asteroid|extinction|horsemen|apocal|big one/.test(n)) return 'meteor';
     return CATASTROPHE_SCENES[hashString(a.name) % CATASTROPHE_SCENES.length]!;
   }
   switch (a.ruleTag) {
@@ -659,12 +666,21 @@ function ageScene(a: Pick<DmAgeCard, 'kind' | 'ruleTag' | 'name'>): Scene {
     case 'maxFaceValue3': return 'glacier';
     case 'protectTraitPiles': return 'forest';
     case 'stabilizeTo4': return 'stars';
-    case 'plusOneGenePoolPerm': return 'sunrise';
-    case 'allDraw1':
-    case 'allDraw2': return 'wind';
-    case 'allDiscard1': return 'comets';
-    case 'allSuppress1': return 'fog';
-    case 'noDominants': return 'crown';
+    case 'reason':
+    case 'awakening':
+    case 'prosperity': return 'sunrise';
+    case 'northernWinds': return 'wind';
+    case 'cometShowers': return 'comets';
+    case 'dracula': return 'fog';
+    case 'birthOfAHero':
+    case 'messiah': return 'crown';
+    case 'nietzsche':
+    case 'enlightenment':
+    case 'galacticDrift': return 'stars';
+    case 'flourish':
+    case 'naturalHarmony': return 'forest';
+    case 'highTides': return 'calm';
+    case 'alienTerraform': return 'rift';
     default: return 'drift';
   }
 }

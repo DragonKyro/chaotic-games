@@ -6,83 +6,44 @@ Infrastructure is lifted from the sibling [card-collecting](../card-collecting) 
 
 ## Status
 
-**All 6 base games AND all 30 expansions are implemented and playable** — hot-seat, online with friends, or against heuristic AIs, each with its own original art direction, lobby expansion/edition/player settings, in-app rules books, and verified official card lists and frequencies (242 tests passing).
+**All six base games are implemented, playable and audited against official sources** — hot-seat, online with friends, or against heuristic AIs, each with its own original art direction, lobby settings and an in-app rules book (433 tests passing). A rules audit (2026-11-19) checked every game's components, setup, turns, card effects, reactions and scoring, and made sure every decision the rules give a player is actually offered to them.
 
-| Game | Players | Expansions modelled as toggles | State |
-|---|---|---|---|
-| **Exploding Kittens** | 2–10 | Imploding, Streaking, Barking, Zombie, Party Pack, Recipes for Disaster | ✅ **Base game + all 6 expansions playable** |
-| **Unstable Unicorns** | 2–8 | Uncut, NSFW, Rainbow Apocalypse, Dragons, Unicorns of Legend, Adventures, Christmas, Nightmares (+ 6 Base Editions) | ✅ **Base game + all 8 expansions & 6 editions playable** |
-| **Here to Slay** | 2–6 | Warriors & Druids, Berserkers & Necromancers, Here to Sleigh | ✅ **Base game + all 3 expansions playable** |
-| **Happy Little Dinosaurs** | 2–6 | Hazards Ahead, Dating Disasters, Perils of Puberty, 5–6 Player | ✅ **Base game + all 4 expansions playable** |
-| **Casting Shadows** | 2–6 | The Ice Storm, The Molten Rock | ✅ **Base game + both expansions playable** |
-| **Doomlings** | 2–6 | Overlush, Imaginary Ends, Legends of Enderas, Ancient Fates, Shadow Puppets, Castle Glass, Mokoko Village | ✅ **Base game + all 7 expansions playable** |
+Expansions are a mixed picture: much of the original expansion content turned out to be approximated or invented. What could be rebuilt from sources was; the rest is labelled "unverified" in the lobby, or locked.
 
-## Base Games & Expansions Implementation Checklist (TODOs)
+| Game | Base game | Expansions |
+|---|---|---|
+| Exploding Kittens | ✅ verified against the official rule-sheet PDFs | ✅ Imploding, Streaking, Barking, Zombie Kittens, Party Pack verified · ⚠ Recipes for Disaster: placeholder, recipes not modeled |
+| Unstable Unicorns | ✅ 2nd Edition verified; Original Base (Second Print) and Diamond Edition rebuilt to their inventories | ⚠ all 8 expansions and the Control / Chaos / Travel editions are approximations, flagged unverified (real card lists in `types.ts`) |
+| Here to Slay | ✅ verified against the official rulebook | ⚠ all 3 expansions are approximations, flagged unverified (their three Party Leaders are correct) |
+| Casting Shadows | ✅ rebuilt from the rulebook, hex reference sheet and card pages | ⚠ hexes and characters official, decks still the app's own, flagged unverified (official lists in `cards.ts`) |
+| Happy Little Dinosaurs | ✅ verified | ✅ 5–6 Player, Perils of Puberty, Dating Disasters verified · ⚠ Hazards Ahead partial (its tokens and Hazard cards are no-ops), unverified |
+| Doomlings | ✅ Classic (2nd edition) rebuilt from scratch and verified | ⛔ none implemented — the earlier seven were invented; the six published packs are listed but locked |
 
-- [x] **Exploding Kittens (Base Game + 6 Expansions)**
-  - [x] Official 56-card deck composition & setup (4 Exploding Kittens, 6 Defuses, 26 Action cards, 20 Cat cards)
-  - [x] Turn loop (play any number of cards, end turn by drawing), Attack turn-stacking, Skip
-  - [x] Reaction window for Nope (LIFO chains)
-  - [x] Defuse + secret kitten reinsertion at any deck index
-  - [x] Favor (victim chooses card to give), Pair (random steal), Triple (name a card kind to steal), Five Different (choose from discard)
-  - [x] Expansions: **Imploding Kittens** (Imploding Kitten face-up/down, Reverse, Draw from Bottom, Alter the Future, Targeted Attack, Feral Cat), **Streaking Kittens** (Streaking Kitten hold-kitten choice, Super Skip, See/Alter Future 5x, Swap Top & Bottom, Garbage Collection, Catomic Bomb, Mark, Curse of the Cat Butt), **Barking Kittens** (Barking Kittens, Alter the Future Now, Bury, Personal Attack, Share the Future, I'll Take That, Potluck, Tower of Power), **Zombie Kittens** (Zombie Kitten resurrection choice, Dig Deeper, Clone, Clairvoyance), **Party Pack** (up to 10 players), and **Recipes for Disaster**
-  - [x] Honest deck-knowledge tracking (`knownTopCount`), heuristic AI, UI, and 130 unit/integration tests
-- [x] **Unstable Unicorns (2nd Edition Base Game + 6 Editions + 8 Expansions)**
-  - [x] Official 2nd Edition Base Deck (13 Baby Unicorns, 22 Basic Unicorns, 30 Magical Unicorns, 25 Magic, 15 Instant, 14 Upgrade, 8 Downgrade)
-  - [x] Four-phase turn structure (Beginning of Turn triggers → Draw phase → Action phase: play 1 card or draw 1 → End of Turn: discard to hand limit)
-  - [x] Neigh / Super Neigh / Instant reaction window (LIFO stack + terminal Super Neigh + Yay / Slowdown / Ginormous Unicorn checks)
-  - [x] Continuous Stable modifiers computed dynamically on read (Pandamonium, Rainbow Aura, Queen Bee Unicorn, Yay, Slowdown, Broken Stable, Tiny Stable, Blinding Light, Nanny Cam, Black Knight Unicorn, Ginormous Unicorn, Dragon's Blessing)
-  - [x] Editions (`base-2nd`, `base` 1st Print, `control`, `chaos`, `diamond`, `travel`) & all 8 Expansions (**Rainbow Apocalypse**, **Dragons**, **Unicorns of Legend**, **Adventures** with *Unicorn Net* / *Redirect* / *Absorb and Reflect*, **Nightmares**, **Christmas**, **Uncut Unicorns**, **NSFW**)
-  - [x] Full player decision support for all optional triggers, targets, sacrifices, destroys, steals, deck searches, and nursery picks
-  - [x] AI driver, Thumbnail, functional GameView + LobbyConfig + RulesBook, and test suite
-- [x] **Here to Slay (Base Game + 3 Expansions)**
-  - [x] Official Base Deck (6 Party Leaders, 15 Monsters, 48 Heroes across 6 classes, 11 Items, 4 Cursed Items, 25 Modifiers, 13 Magic, 14 Challenges)
-  - [x] 3 Action Points per turn (1 AP draw, 1 AP play Hero/Item/Magic, 1 AP roll for Hero ability, 2 AP attack Monster, 3 AP discard all & draw 5, plus Shadow Claw / Mega Slime AP rules)
-  - [x] Challenge reaction window (1v1 2d6 duel with modifiers + Fist of Reason / Titan Wyvern / Bloodwing / Warworn Owlbear)
-  - [x] Roll Modifier window (any player may stack +4, +3/-1, +2/-2, +1/-3, -4 with user choice on dual-value modifiers and Protecting Horn / Noble Shaman)
-  - [x] Expansions: **Warriors & Druids** (Warrior & Druid classes, Druid `rollLow` ≤ threshold mechanics, multi-item equipping, *The Piercing Howl*, *The Noble Shaman*), **Berserkers & Necromancers** (Berserker & Necromancer classes, discard revival, *The Raging Manticore*, *The Gnawing Dread*), and **Here to Sleigh** (Holiday Leaders, Monsters, Heroes, and Nice List Gift win condition)
-  - [x] Full player decision support for all Hero abilities, Magic cards, Item equips, Monster penalties, and discards
-  - [x] AI driver, Thumbnail, functional GameView + LobbyConfig + Rules, and test suite
-- [x] **Happy Little Dinosaurs (Base Game + 4 Expansions)**
-  - [x] Official Base Deck (4 Dinosaur Traits: Stego, Nervous Rex, Cry Ceratops, Bad Luck Bronto; 28 Disaster cards across Natural, Predatory, Emotional, Meteor; 53 Point cards with weapon effects; 16 Instant cards)
-  - [x] Simultaneous face-down Point card selection + reveal + Instant reaction window (Score Booster, Score Sapper, Score Inversion, Disaster Insurance, Disaster Redirect)
-  - [x] Scoring & Disaster resolution (highest score gains points + trait bonus on 50-point Escape Route; lowest score takes Disaster card; tiebreaker rules; 3 same-type or 3 different-type Disasters = elimination)
-  - [x] Expansions: **5–6 Player Expansion** (Pterry Dactyl & Raging Raptor, 50 extra cards, and official 5–6 player top-2 scoring rule), **Perils of Puberty** (54 cards), **Dating Disasters** (53 cards), and **Hazards Ahead** (50 cards + 12-card Hazard Deck & Hazard Area penalties)
-  - [x] Full player decision support for Point card effects, Instant targets, and Hazard removals
-  - [x] AI driver, Thumbnail, functional GameView + LobbyConfig + Rules, and test suite
-- [x] **Casting Shadows (Base Game + 2 Expansions)**
-  - [x] Official Base Game components (4 Double-Sided Characters: Kit Gale, Haze Greentongue, Nuzzle Thornwood, Frill Lilypad; 7 Hex Tiles; 52 Main Deck cards; 10 Companions; 10 Counterspells; 5 Resource Dice)
-  - [x] 3-Phase turn loop: Phase 1 Resource Roll, Phase 2 Action Phase (4 AP: Travel, Cast, Reroll, Protect, Refresh, Collect), Phase 3 Shadow Absorption & Cursed Crystal damage
-  - [x] Shadow Form transformation + Companion summoning + Shadow Ability usage
-  - [x] Expansions: **The Ice Storm** (Talon Lightfeather, Nyx Frostpaw, Floating Temple & Glimmering Woods hexes, **Stun** & **Freeze** status effects, 26 Main Deck cards, 4 Companions, 4 Counterspells) and **The Molten Rock** (Dread Terrashell, Pyra Ashwing, Cobble Cove & Molten Quarry hexes, **Fortify** shields & **Burn** status effects, 26 Main Deck cards, 4 Companions, 4 Counterspells; up to 6 players)
-  - [x] Full player decision support for dice allocation/conversion, spell casting targets/ranges, Counterspell responses, and hex tile effects
-  - [x] AI driver, Thumbnail, functional GameView + LobbyConfig + Rules, and test suite
-- [x] **Doomlings (Base Game + 7 Expansions)**
-  - [x] Official Base Deck (Birth of Life, Ages, Catastrophes across 3 Eras, and unique Trait cards across Red, Blue, Green, Purple, Colorless including Dominants)
-  - [x] Age & Catastrophe engine (3 eras of 3 Ages + 1 Catastrophe each; active Age rule modifier; 3rd Catastrophe triggers World's End)
-  - [x] Turn loop (play a Trait, resolve Action effect, Stabilize hand to Gene Pool size)
-  - [x] Expansions: **Overlush**, **Imaginary Ends** (Dinolings, Mythlings, Techlings, Magical, Meaning of Life), **Legends of Enderas**, **Ancient Fates**, **Shadow Puppets**, **Castle Glass**, and **Mokoko Village** — adding **Multi-color traits**, **Attachment traits** (with host cascading), **Suppress** mechanics, **Swarm/Kidney** self-multiplying traits, and **Meaning of Life / Treasure Objectives**
-  - [x] Full player decision support for all trait actions, attachments/steals/swaps/suppresses, catastrophe choices, and World's End choices
-  - [x] AI driver, Thumbnail, functional GameView + LobbyConfig + Rules, and test suite
+### To do
 
-Expansion names were verified against the publishers' stores.
+- [ ] Rebuild Here to Slay's Warriors & Druids and Berserkers & Necromancers from their card lists
+- [ ] Source and rebuild Casting Shadows' Ice Storm and Molten Rock decks
+- [ ] Port Doomlings' six published expansions
+- [ ] Rebuild Unstable Unicorns' 8 expansions and the Control / Chaos / Travel editions
+- [ ] Find the rulebooks for Here to Sleigh and Hazards Ahead; model Recipes for Disaster's recipes
+- [ ] Settle the rules each game lists as unconfirmed in its in-app rules book
 
 ### Exploding Kittens
 
 Everything in the base game: the 56-card deck, drawing as the turn-ender, Defuse
 plus secret reinsertion, the Nope stack, Attack turn-stacking, Skip, Favor,
-Shuffle, See the Future, all three combos, and player elimination, plus all six
-expansions. 130 tests cover it, including complete AI-vs-AI games across 2–10
-players.
+Shuffle, See the Future, combos, and player elimination, plus five expansions,
+all checked against the publisher's rule sheets. 184 tests cover it, including
+complete AI-vs-AI games across 2–10 players.
 
 - **Card art** is original inline SVG — every card built from one shared cat-head primitive, in `CardArt.tsx`. No raster assets.
 - **The AI** plays to a risk model and is deliberately honest: it only reads the deck through what that seat has legitimately seen. See below.
 - **Rules** live in the app behind the 📖 button, including a card-count table and a note on every place the rules were ambiguous.
 
-Two calls we had to make, both documented in-app and in `cards.ts`:
+Two calls that are now confirmed by the official rule sheet:
 
-- **Combos work with any matching cards**, not just cats — the common reading of the rules. A lobby toggle restricts them to cats if your group plays it that way.
-- **Card counts were reconstructed, not read off the box.** Every rules source was unreachable at implementation time. The split totals 56 and cross-checks cleanly, but it deserves a spot-check: `BASE_DECK_COUNTS` in `cards.ts` is the single place to fix it.
+- **Combos work with any cards of the same title**, not just cats. A lobby toggle keeps cats-only as a house rule.
+- **The 56-card base deck counts** (`BASE_DECK_COUNTS` in `cards.ts`).
 
 ## Tech stack
 
@@ -168,6 +129,7 @@ Online play runs through a **Firebase Realtime Database** shared with Kyle's oth
 | `FIREBASE_LIVE=1 npx vitest run src/store/networkStore.live.test.ts` | Online play + security rules against the real Firebase project |
 | `npm run deploy:rules` | Deploy `database.rules.json`, merged into the shared database's live rules |
 | `npm run fix-lock` | After any `npm install`: point every lockfile URL at registry.npmjs.org |
+| `python scripts/fetchtext.py URL --archive` | Read a rules source through the Wayback Machine (cached, paced) |
 | `node scripts/render.mjs [shot…]` | Headless-Chrome screenshots into `art-renders/` (e.g. `home`, `ek-gallery`, `cs-game`; or `--url "?demo=doomlings&sub=…"`) |
 
 ## Project plan / roadmap
@@ -190,14 +152,17 @@ Dice (Here to Slay, Casting Shadows) need no new primitive: a roll is public the
 ### Phase 3 — Exploding Kittens base game ✅
 See the status section above.
 
-### Phase 4 — Remaining titles and every expansion ✅
-Unstable Unicorns, Here to Slay, Casting Shadows, Happy Little Dinosaurs and Doomlings, with all 30 expansions across the six games.
+### Phase 4 — Remaining titles ✅
+Unstable Unicorns, Here to Slay, Casting Shadows, Happy Little Dinosaurs and Doomlings, with expansions (see Status for which are verified).
 
 ### Phase 5 — Online rooms ✅
 Firebase Realtime Database rooms replaced peer-to-peer WebRTC (see Multiplayer model).
 
 ### Phase 6 — Look and feel ✅
 The shell's design system, the shared game-view kit, and an original art direction for each game (see Look and feel).
+
+### Phase 7 — Rules audit ✅
+Every game checked against official sources; base games fixed or rebuilt, expansions verified, rebuilt, flagged or locked (see Status).
 
 ## Decided: hidden deck order
 

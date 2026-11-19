@@ -7,13 +7,15 @@
 // play perfectly. It must not. The only legitimate windows into hidden
 // information are:
 //   - `drawDanger(state, me)` / `knownTopCards(state, me)` — what THIS seat
-//     knows about the top of the deck, from its own See the Future or from
-//     hiding a kitten itself.
-//   - `kittensInDeck(state)` — public: setup seeded (players - 1) and every
-//     explosion moves one to the discard pile.
+//     knows about the top of the deck, from its own See the Future, from
+//     hiding a card itself, or from watching with Clairvoyance.
+//   - `kittensInDeck(state)` — public: setup seeded a known number and every
+//     kitten that killed someone lies face up.
+//   - Cards this seat is shown by a prompt (its own peek, its Dig Deeper card,
+//     its Bury card).
 //   - Opponents' HAND SIZES, which are public. Never their contents.
-// Everything below is built from those three. An AI that cheats isn't just
-// unsporting, it's boring to play against.
+// A Cursed seat can't see its own hand either, so it picks face-down cards by
+// position. An AI that cheats isn't just unsporting, it's boring to play against.
 //
 // ============================================================================
 // Shape
@@ -27,10 +29,14 @@ import type { PlayerId } from '@/core/types';
 import { CARD_VALUE, isCatKind, isDefuseKind, needsTargetForKind } from './cards';
 import {
   availableCombos,
-  canHoldWithStreaking,
+  barkingNeedsTarget,
+  deadPlayerIds,
+  defuseCards,
   drawDanger,
   findCloneTargetKind,
+  isCursed,
   knownTopCards,
+  legalTargetsFor,
   playableSingles,
 } from './reducer';
 import type { EkAction, EkBaseCardKind, EkCard, EkState } from './types';
@@ -74,6 +80,12 @@ function opponentsByHandSize(s: EkState, me: PlayerId): PlayerId[] {
     .sort((a, b) => (s.hands[b]?.length ?? 0) - (s.hands[a]?.length ?? 0));
 }
 
+/** The dead player holding the fewest cards — the weakest rival to bring back or feed. */
+function weakestDead(s: EkState): PlayerId | null {
+  const dead = deadPlayerIds(s).sort((a, b) => (s.hands[a]?.length ?? 0) - (s.hands[b]?.length ?? 0));
+  return dead[0] ?? null;
+}
+
 /** Who draws next if we end our turn now. The victim of an Attack, or of a kitten on top. */
 function nextVictim(s: EkState, me: PlayerId): PlayerId | null {
   const live = livePlayerIds(s);
@@ -111,13 +123,12 @@ function keepValue(s: EkState, me: PlayerId, card: EkCard): number {
     return copies >= 2 ? 3.5 : base;
   }
   if (isDefuseKind(card.kind)) {
-    const copies = countDefuses(s, me);
-    return copies > 1 ? 8 : 10;
+    return countDefuses(s, me) > 1 ? 8 : 10;
   }
   return base;
 }
 
-/** The card we would least mind losing (avoiding giving an Exploding Kitten in Favor if possible). */
+/** The card we would least mind losing (never a held Exploding Kitten unless allowed). */
 function worstCard(s: EkState, me: PlayerId, allowKitten = false): EkCard | null {
   const h = hand(s, me);
   if (h.length === 0) return null;
@@ -125,6 +136,12 @@ function worstCard(s: EkState, me: PlayerId, allowKitten = false): EkCard | null
     ? h.filter((c) => c.kind !== 'explodingKitten')
     : h;
   return pool.reduce((worst, c) => (keepValue(s, me, c) < keepValue(s, me, worst) ? c : worst), pool[0]!);
+}
+
+/** A Cursed seat can't look at its hand: it takes whatever face-down card comes first. */
+function blindPick(s: EkState, me: PlayerId, avoid?: (c: EkCard) => boolean): EkCard | null {
+  const h = hand(s, me);
+  return (avoid ? h.find((c) => !avoid(c)) : undefined) ?? h[0] ?? null;
 }
 
 /** The card we would most like to gain. */
@@ -137,13 +154,20 @@ function bestCard(cards: EkCard[]): EkCard | null {
 // Main entry
 // ============================================================================
 
+/** With Zombie Kittens the dead still answer Nope and Clairvoyance windows and feed Grave Robbers. */
+const DEAD_PROMPTS: readonly EkState['subPhase'][] = ['awaitingNope', 'awaitingClairvoyance', 'awaitingDonation'];
+
 export function chooseAIAction(state: EkState, playerId: PlayerId): EkAction | null {
   if (state.phase === 'gameOver') return null;
-  if (!isLive(state, playerId)) return null;
+  if (!isLive(state, playerId)) {
+    if (!state.config.expansions.includes('zombie-kittens') || !DEAD_PROMPTS.includes(state.subPhase)) return null;
+  }
 
   switch (state.subPhase) {
     case 'awaitingNope': return decideNope(state, playerId);
+    case 'awaitingBlindTarget': return decideBlindTarget(state, playerId);
     case 'awaitingDefuse': return decideDefuse(state, playerId);
+    case 'awaitingClairvoyance': return decideClairvoyance(state, playerId);
     case 'awaitingKittenPlace': return decideKittenPlacement(state, playerId);
     case 'awaitingFavorGive': return decideFavorGive(state, playerId);
     case 'awaitingDiscardPick': return decideDiscardPick(state, playerId);
@@ -152,6 +176,7 @@ export function chooseAIAction(state: EkState, playerId: PlayerId): EkAction | n
     case 'awaitingBuryPlace': return decideBuryPlacement(state, playerId);
     case 'awaitingPotluckPick': return decidePotluckPick(state, playerId);
     case 'awaitingDigDeeper': return decideDigDeeper(state, playerId);
+    case 'awaitingDonation': return decideDonation(state, playerId);
     case 'awaitingAction': return decideTurn(state, playerId);
     default: return null;
   }
@@ -162,8 +187,8 @@ export function chooseAIAction(state: EkState, playerId: PlayerId): EkAction | n
 // ============================================================================
 
 function decideTurn(s: EkState, me: PlayerId): EkAction {
-  // If cursed, drawing a card immediately clears the curse without wasting cards blindly.
-  if (s.cursedPlayers?.includes(me)) {
+  // Cursed: every card would be a blind gamble. Drawing safely lifts the curse.
+  if (isCursed(s, me)) {
     return { type: 'drawCard', playerId: me };
   }
 
@@ -174,25 +199,36 @@ function decideTurn(s: EkState, me: PlayerId): EkAction {
   const defuses = countDefuses(s, me);
   const combos = availableCombos(s, me);
   const singles = playableSingles(s, me);
-  const has = (k: EkBaseCardKind) => singles.some((c) => c.kind === k);
+  const cloneAs = findCloneTargetKind(s);
+  /** The card to put down as `kind`: the real thing, or a Clone sitting on one. */
+  const cardFor = (kind: EkBaseCardKind): EkCard | undefined =>
+    singles.find((c) => c.kind === kind) ?? (cloneAs === kind ? singles.find((c) => c.kind === 'clone') : undefined);
+  const has = (k: EkBaseCardKind) => cardFor(k) !== undefined;
   const opponents = opponentsByHandSize(s, me);
   const richestOpponent = opponents[0];
 
   const play = (kind: EkBaseCardKind, extra?: Partial<Extract<EkAction, { type: 'playCards' }>>): EkAction => {
-    const defaultTarget = needsTargetForKind(kind) && richestOpponent ? { targetPlayerId: richestOpponent } : {};
+    let target: PlayerId | undefined;
+    if (needsTargetForKind(kind)) {
+      const legal = legalTargetsFor(s, me, kind);
+      target = kind === 'feedTheDead'
+        ? weakestDead(s) ?? legal[0]
+        : opponents.find((id) => legal.includes(id)) ?? legal.find((id) => id !== me) ?? legal[0];
+    }
     return {
       type: 'playCards',
       playerId: me,
-      cardIds: [firstOfKind(s, me, kind)!.id],
-      ...defaultTarget,
+      cardIds: [cardFor(kind)!.id],
+      ...(target ? { targetPlayerId: target } : {}),
       ...extra,
     };
   };
 
   // ---- Certain death on top of the deck -------------------------------------
   if (knowsTop && topIsKitten) {
-    // Attack / Targeted Attack is the best answer: we dodge the draw AND the victim inherits the kitten.
+    // Attack is the best answer: we dodge the draw AND the victim inherits the kitten.
     if (has('attack')) return play('attack');
+    if (has('attackOfTheDead')) return play('attackOfTheDead');
     if (has('targetedAttack') && richestOpponent) return play('targetedAttack', { targetPlayerId: richestOpponent });
     if (has('superSkip') && s.turnsRemaining > 1) return play('superSkip');
     if (has('skip')) return play('skip');
@@ -208,9 +244,10 @@ function decideTurn(s: EkState, me: PlayerId): EkAction {
     if (has('bury')) return play('bury');
     // Shuffling turns a certainty back into a gamble.
     if (has('shuffle')) return play('shuffle');
+    if (has('shuffleNow')) return play('shuffleNow');
     if (has('catomicBomb')) return play('catomicBomb');
-    // With a Defuse (or Streaking Kitten for an Exploding Kitten) we can eat it and re-hide/keep it.
-    if (known[0]?.kind === 'explodingKitten' && (defuses > 0 || canHoldWithStreaking(s, me))) {
+    // With a Defuse (or a free Streaking Kitten for an Exploding Kitten) we can eat it.
+    if (known[0]?.kind === 'explodingKitten' && (defuses > 0 || defuseCards(s, me).length > 0 || canStreak(s, me))) {
       return { type: 'drawCard', playerId: me };
     }
     // Last resort: try to buy an out. A steal might find a Skip or Defuse.
@@ -221,11 +258,11 @@ function decideTurn(s: EkState, me: PlayerId): EkAction {
 
   // ---- Known-safe top: draw greedily, it's free ------------------------------
   if (knowsTop && !topIsKitten) {
-    // Fire a pair first if it's cheap value — we're drawing safely either way.
     const greedy = tryValueCombo(s, me, combos);
     if (greedy) return greedy;
     if (has('towerOfPower')) return play('towerOfPower');
-    if (has('barkingKitten')) return play('barkingKitten');
+    const bark = tryBarking(s, me);
+    if (bark) return bark;
     return { type: 'drawCard', playerId: me };
   }
 
@@ -239,11 +276,12 @@ function decideTurn(s: EkState, me: PlayerId): EkAction {
     if (has('alterTheFuture5x')) return play('alterTheFuture5x');
     if (has('alterTheFutureNow')) return play('alterTheFutureNow');
     if (has('shareTheFuture')) return play('shareTheFuture');
-    if (has('clairvoyance')) return play('clairvoyance');
+    if (has('graveRobber')) return play('graveRobber');
   }
 
   if (danger >= DIRE && defuses < COMFORTABLE_DEFUSES) {
     if (has('attack')) return play('attack');
+    if (has('attackOfTheDead')) return play('attackOfTheDead');
     if (has('targetedAttack') && richestOpponent) return play('targetedAttack', { targetPlayerId: richestOpponent });
     if (has('superSkip')) return play('superSkip');
     if (has('skip')) return play('skip');
@@ -253,6 +291,7 @@ function decideTurn(s: EkState, me: PlayerId): EkAction {
     if (has('digDeeper')) return play('digDeeper');
     if (has('bury')) return play('bury');
     if (has('shuffle')) return play('shuffle');
+    if (has('shuffleNow')) return play('shuffleNow');
     const beg = tryToAcquire(s, me, combos);
     if (beg) return beg;
   }
@@ -266,6 +305,7 @@ function decideTurn(s: EkState, me: PlayerId): EkAction {
     if (has('skip')) return play('skip');
     if (has('reverse')) return play('reverse');
     if (has('attack')) return play('attack');
+    if (has('attackOfTheDead')) return play('attackOfTheDead');
     if (has('targetedAttack') && richestOpponent) return play('targetedAttack', { targetPlayerId: richestOpponent });
     if (has('digDeeper')) return play('digDeeper');
     if (has('drawFromTheBottom')) return play('drawFromTheBottom');
@@ -273,8 +313,8 @@ function decideTurn(s: EkState, me: PlayerId): EkAction {
 
   // ---- Low risk: build advantage --------------------------------------------
   if (has('towerOfPower')) return play('towerOfPower');
-  if (has('barkingKitten')) return play('barkingKitten');
-  if (has('clairvoyance') && !s.clairvoyantPlayers?.includes(me)) return play('clairvoyance');
+  const bark = tryBarking(s, me);
+  if (bark) return bark;
 
   const value = tryValueCombo(s, me, combos);
   if (value) return value;
@@ -287,15 +327,39 @@ function decideTurn(s: EkState, me: PlayerId): EkAction {
     if (has('mark') && targetWithCards) {
       return play('mark', { targetPlayerId: targetWithCards });
     }
-    if (has('curseOfTheCatButt') && targetWithCards && !s.cursedPlayers?.includes(targetWithCards)) {
+    if (has('curseOfTheCatButt') && targetWithCards && !isCursed(s, targetWithCards)) {
       return play('curseOfTheCatButt', { targetPlayerId: targetWithCards });
     }
-    if (has('illTakeThat') && richestOpponent && !s.illTakeThat?.[richestOpponent]) {
-      return play('illTakeThat', { targetPlayerId: richestOpponent });
+    const ittTarget = opponents.find((id) => !s.illTakeThat?.[id]);
+    if (has('illTakeThat') && ittTarget) {
+      return play('illTakeThat', { targetPlayerId: ittTarget });
+    }
+    if (has('feedTheDead') && opponents.some((id) => (s.hands[id]?.length ?? 0) > 0)) {
+      return play('feedTheDead');
     }
   }
 
   return { type: 'drawCard', playerId: me };
+}
+
+/** Holding a Streaking Kitten with room for one more Exploding Kitten. */
+function canStreak(s: EkState, me: PlayerId): boolean {
+  return countKind(s, me, 'streakingKitten') > countKind(s, me, 'explodingKitten');
+}
+
+/**
+ * Barking Kittens. Holding both (or one already in front of us): aim them at
+ * the richest opponent. Holding one: bark and hope someone has the other.
+ */
+function tryBarking(s: EkState, me: PlayerId): EkAction | null {
+  const barks = hand(s, me).filter((c) => c.kind === 'barkingKitten');
+  if (barks.length === 0) return null;
+  if (barkingNeedsTarget(s, me, barks.length)) {
+    const target = opponentsByHandSize(s, me)[0];
+    if (!target) return null;
+    return { type: 'playCards', playerId: me, cardIds: barks.map((c) => c.id), targetPlayerId: target };
+  }
+  return { type: 'playCards', playerId: me, cardIds: [barks[0]!.id] };
 }
 
 /**
@@ -310,6 +374,13 @@ function tryToAcquire(
   const targets = opponentsByHandSize(s, me).filter((id) => (s.hands[id]?.length ?? 0) > 0);
   const target = targets[0];
   if (!target) return null;
+  // Never trade lifelines (Defuses, Nopes, Streaking Kittens) for a random grab.
+  const h = hand(s, me);
+  const spendable = (ids: number[]) => ids.every((id) => {
+    const card = h.find((c) => c.id === id);
+    return !!card && CARD_VALUE[card.kind] < CARD_VALUE.nope;
+  });
+  combos = combos.filter((c) => spendable(c.cardIds));
 
   const demand: EkBaseCardKind = s.config.expansions.includes('zombie-kittens') ? 'zombieKitten' : 'defuse';
   const triple = combos.find((c) => c.kind === 'triple');
@@ -382,7 +453,7 @@ function decideNope(s: EkState, me: PlayerId): EkAction {
   const nopesSoFar = p.nopeCards.length;
   const wouldResolve = nopesSoFar % 2 === 0; // even = the play is currently live
   const card = p.cards[0];
-  const effectiveKind = card?.kind === 'clone' ? (p.clonedKind ?? findCloneTargetKind(s)) : card?.kind;
+  const effectiveKind = card?.kind === 'clone' ? p.clonedKind : card?.kind;
 
   let worth = 0;
 
@@ -397,7 +468,7 @@ function decideNope(s: EkState, me: PlayerId): EkAction {
 
   // An Attack aimed at whoever follows the attacker — if that's us, we inherit
   // two turns of drawing, which is how people die.
-  if (effectiveKind === 'attack' && nextVictim(s, p.byPlayerId) === me) {
+  if ((effectiveKind === 'attack' || effectiveKind === 'attackOfTheDead') && nextVictim(s, s.turnPlayerId) === me) {
     const danger = drawDanger(s, me);
     const defuses = countDefuses(s, me);
     worth = Math.max(worth, danger >= SCARY && defuses === 0 ? 9 : 6);
@@ -409,10 +480,10 @@ function decideNope(s: EkState, me: PlayerId): EkAction {
 
   // Deny an escape: if we know the deck's top is lethal, do not let them dodge it.
   const known = knownTopCards(s, me);
-  if (isLethalTopCard(s, known[0])
+  if (isLethalTopCard(s, known[0]) && p.byPlayerId === s.turnPlayerId
       && (effectiveKind === 'skip' || effectiveKind === 'superSkip' || effectiveKind === 'reverse'
-          || effectiveKind === 'attack' || effectiveKind === 'targetedAttack'
-          || effectiveKind === 'shuffle' || effectiveKind === 'drawFromTheBottom'
+          || effectiveKind === 'attack' || effectiveKind === 'targetedAttack' || effectiveKind === 'attackOfTheDead'
+          || effectiveKind === 'shuffle' || effectiveKind === 'shuffleNow' || effectiveKind === 'drawFromTheBottom'
           || effectiveKind === 'swapTopAndBottom')) {
     worth = Math.max(worth, 7);
   }
@@ -435,49 +506,76 @@ function decideNope(s: EkState, me: PlayerId): EkAction {
   return decline;
 }
 
+/** Clairvoyance only ever helps, and it is only playable here. */
+function decideClairvoyance(s: EkState, me: PlayerId): EkAction {
+  const card = firstOfKind(s, me, 'clairvoyance');
+  if (!card || isCursed(s, me)) return { type: 'declineClairvoyance', playerId: me };
+  return { type: 'playClairvoyance', playerId: me, cardId: card.id };
+}
+
 // ============================================================================
 // Forced decisions
 // ============================================================================
 
+function decideBlindTarget(s: EkState, me: PlayerId): EkAction | null {
+  const card = s.pendingBlindCard;
+  if (!card) return null;
+  const kind = card.kind === 'clone' ? findCloneTargetKind(s) ?? card.kind : card.kind;
+  const legal = kind === 'barkingKitten' ? livePlayerIds(s).filter((id) => id !== me) : legalTargetsFor(s, me, kind);
+  const target = kind === 'feedTheDead'
+    ? weakestDead(s) ?? legal[0]
+    : opponentsByHandSize(s, me).find((id) => legal.includes(id)) ?? legal[0];
+  if (!target) return null;
+  return { type: 'chooseBlindTarget', playerId: me, targetPlayerId: target };
+}
+
 function decideDefuse(s: EkState, me: PlayerId): EkAction | null {
-  if (s.pendingKitten?.kind === 'explodingKitten' && canHoldWithStreaking(s, me)) {
-    return { type: 'keepKitten', playerId: me };
+  const reviveChoice = weakestDead(s);
+  if (isCursed(s, me)) {
+    // Blind: flip the first face-down card and hope. Name who to revive up front,
+    // in case it turns out to be a Zombie Kitten.
+    const pick = blindPick(s, me);
+    return pick ? { type: 'playDefuse', playerId: me, cardId: pick.id, ...(reviveChoice ? { targetPlayerId: reviveChoice } : {}) } : null;
   }
-  const defuse = hand(s, me).find((c) => isDefuseKind(c.kind));
-  if (!defuse) return null;
-  if (defuse.kind === 'zombieKitten' && s.eliminated.length > 0) {
-    return {
-      type: 'playDefuse',
-      playerId: me,
-      cardId: defuse.id,
-      targetPlayerId: s.eliminated[0]!,
-    };
+  const options = defuseCards(s, me);
+  // A Clone sitting on a Zombie Kitten is the cheapest answer; keep the real thing.
+  const defuse = options.find((c) => c.kind === 'clone') ?? options[0];
+  if (!defuse) {
+    return s.config.expansions.includes('zombie-kittens') ? { type: 'declineDefuse', playerId: me } : null;
   }
-  return { type: 'playDefuse', playerId: me, cardId: defuse.id };
+  const revives = defuse.kind === 'zombieKitten' || defuse.kind === 'clone';
+  const revive = revives ? reviveChoice : null;
+  return { type: 'playDefuse', playerId: me, cardId: defuse.id, ...(revive ? { targetPlayerId: revive } : {}) };
 }
 
 /**
  * Where to hide the kitten. On top is devastating — but only if we aren't the
- * one drawing next. If we still owe turns, bury it instead.
+ * one drawing next. If we will draw again ourselves, bury it instead.
  */
 function decideKittenPlacement(s: EkState, me: PlayerId): EkAction {
   const deckSize = s.deck.length;
-  const weDrawNext = s.turnsRemaining > 1;
+  const turnContinues = s.defuseEndsTurn === false;
+  const turnOwnerDrawsNext = turnContinues || s.turnsRemaining > 1;
+  const nextDrawer = turnOwnerDrawsNext ? s.turnPlayerId : nextVictim(s, s.turnPlayerId);
 
-  if (weDrawNext) {
+  if (nextDrawer === me) {
     // Deep enough that we won't hit it on our remaining turns, but shallow
     // enough to still catch someone. Never the very bottom — that's often dead.
     const depth = Math.min(deckSize, Math.max(3, s.turnsRemaining + 1));
     return { type: 'placeKitten', playerId: me, index: depth };
   }
-
-  const victim = nextVictim(s, me);
-  if (victim) return { type: 'placeKitten', playerId: me, index: 0 };
+  if (nextDrawer) return { type: 'placeKitten', playerId: me, index: 0 };
   return { type: 'placeKitten', playerId: me, index: Math.min(2, deckSize) };
 }
 
 function decideFavorGive(s: EkState, me: PlayerId): EkAction | null {
-  const give = worstCard(s, me, false);
+  if (isCursed(s, me)) {
+    const pick = blindPick(s, me);
+    return pick ? { type: 'giveCard', playerId: me, cardId: pick.id } : null;
+  }
+  // Streaking: whoever receives an Exploding Kitten from our hand has to deal with it.
+  const kitten = firstOfKind(s, me, 'explodingKitten');
+  const give = kitten ?? worstCard(s, me, false);
   if (!give) return null;
   return { type: 'giveCard', playerId: me, cardId: give.id };
 }
@@ -492,11 +590,13 @@ function decideDiscardPick(s: EkState, me: PlayerId): EkAction | null {
 function decideFutureView(s: EkState, me: PlayerId): EkAction {
   const peek = s.peek;
   if (peek?.canReorder && peek.cards.length > 1) {
-    // Put safe/high-value cards first so our upcoming draw is safe, and push kittens down.
+    // Out of turn, push kittens to the top for the player about to draw; on our
+    // own turn, put safe/high-value cards first and push kittens down.
+    const ourTurn = s.turnPlayerId === me;
     const sorted = [...peek.cards].sort((a, b) => {
       const aLethal = isLethalTopCard(s, a) ? 1 : 0;
       const bLethal = isLethalTopCard(s, b) ? 1 : 0;
-      if (aLethal !== bLethal) return aLethal - bLethal;
+      if (aLethal !== bLethal) return ourTurn ? aLethal - bLethal : bLethal - aLethal;
       return CARD_VALUE[b.kind] - CARD_VALUE[a.kind];
     });
     const changed = sorted.some((c, i) => c.id !== peek.cards[i]?.id);
@@ -512,7 +612,11 @@ function decideFutureView(s: EkState, me: PlayerId): EkAction {
 }
 
 function decideGarbagePick(s: EkState, me: PlayerId): EkAction | null {
-  // If holding an Exploding Kitten via Streaking Kitten, dump the Exploding Kitten back into the deck!
+  if (isCursed(s, me)) {
+    const pick = blindPick(s, me);
+    return pick ? { type: 'garbagePick', playerId: me, cardId: pick.id } : null;
+  }
+  // If holding an Exploding Kitten via Streaking Kitten, dump it back into the deck!
   const heldKitten = firstOfKind(s, me, 'explodingKitten');
   if (heldKitten) {
     return { type: 'garbagePick', playerId: me, cardId: heldKitten.id };
@@ -525,7 +629,7 @@ function decideGarbagePick(s: EkState, me: PlayerId): EkAction | null {
 function decideBuryPlacement(s: EkState, me: PlayerId): EkAction {
   const deckSize = s.deck.length;
   const buryCard = s.pendingBury;
-  const isKitten = buryCard?.kind === 'explodingKitten' || buryCard?.kind === 'implodingKitten';
+  const isKitten = buryCard?.kind === 'explodingKitten' || (buryCard?.kind === 'implodingKitten' && s.implodingFaceUp);
   if (isKitten) {
     const index = s.turnsRemaining > 1 ? Math.min(deckSize, s.turnsRemaining + 1) : 0;
     return { type: 'placeBury', playerId: me, index };
@@ -535,6 +639,10 @@ function decideBuryPlacement(s: EkState, me: PlayerId): EkAction {
 }
 
 function decidePotluckPick(s: EkState, me: PlayerId): EkAction | null {
+  if (isCursed(s, me)) {
+    const pick = blindPick(s, me);
+    return pick ? { type: 'potluckPick', playerId: me, cardId: pick.id } : null;
+  }
   const heldKitten = firstOfKind(s, me, 'explodingKitten');
   if (heldKitten && s.turnPlayerId !== me) {
     return { type: 'potluckPick', playerId: me, cardId: heldKitten.id };
@@ -544,10 +652,27 @@ function decidePotluckPick(s: EkState, me: PlayerId): EkAction | null {
   return { type: 'potluckPick', playerId: me, cardId: give.id };
 }
 
+/** We have seen the top card. Keep it unless it would kill us. */
 function decideDigDeeper(s: EkState, me: PlayerId): EkAction | null {
-  const options = s.pendingDigDeeper?.cards ?? [];
-  if (options.length === 0) return null;
-  const safe = options.filter((c) => c.kind !== 'explodingKitten' && !(c.kind === 'implodingKitten' && s.implodingFaceUp));
-  const pick = bestCard(safe) ?? options[0]!;
-  return { type: 'pickDigDeeper', playerId: me, cardId: pick.id };
+  const card = s.pendingDigDeeper?.card;
+  if (!card) return null;
+  return { type: 'pickDigDeeper', playerId: me, keep: !isLethalTopCard(s, card) };
+}
+
+function decideDonation(s: EkState, me: PlayerId): EkAction | null {
+  const pd = s.pendingDonation;
+  if (!pd) return null;
+  const isKitten = (c: EkCard) => c.kind === 'explodingKitten';
+  if (isCursed(s, me)) {
+    const pick = blindPick(s, me, pd.kind === 'feedTheDead' ? isKitten : undefined);
+    return pick ? { type: 'donateCard', playerId: me, cardId: pick.id } : null;
+  }
+  if (pd.kind === 'graveRobber') {
+    const heldKitten = firstOfKind(s, me, 'explodingKitten');
+    const give = heldKitten ?? worstCard(s, me, true);
+    return give ? { type: 'donateCard', playerId: me, cardId: give.id } : null;
+  }
+  const give = worstCard(s, me, false);
+  if (!give || isKitten(give)) return null;
+  return { type: 'donateCard', playerId: me, cardId: give.id };
 }

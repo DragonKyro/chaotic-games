@@ -13,6 +13,7 @@ export const TYPE_META: Record<UuCardType, { label: string; frame: string; frame
   babyUnicorn: { label: 'Baby Unicorn', frame: '#d6a4ff', frame2: '#ffd0f2' },
   basicUnicorn: { label: 'Basic Unicorn', frame: '#7fd6ff', frame2: '#d4f6ff' },
   magicalUnicorn: { label: 'Magical Unicorn', frame: '#ff5fd2', frame2: '#ffd0f4' },
+  diamondUnicorn: { label: 'Diamond Unicorn', frame: '#9ff3ff', frame2: '#ffffff' },
   magic: { label: 'Magic', frame: '#5ff2b0', frame2: '#d4ffef' },
   instant: { label: 'Instant', frame: '#ff4d6d', frame2: '#ffc7d1' },
   upgrade: { label: 'Upgrade', frame: '#ffc94d', frame2: '#fff2c4' },
@@ -31,11 +32,11 @@ export function TypeGlyph({ type }: { type: UuCardType }) {
   const s = { stroke: INK, strokeWidth: 1.7, strokeLinejoin: 'round' as const, strokeLinecap: 'round' as const };
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      {(type === 'babyUnicorn' || type === 'basicUnicorn' || type === 'magicalUnicorn') && (
+      {(type === 'babyUnicorn' || type === 'basicUnicorn' || type === 'magicalUnicorn' || type === 'diamondUnicorn') && (
         <g {...s}>
           <path d={type === 'babyUnicorn' ? 'M9.5 20 L12 11 L14.5 20 Z' : 'M8.5 21 L12.5 2.5 L15 21 Z'} fill="#fff6b0" />
           <path d={type === 'babyUnicorn' ? 'M10.4 17 L13.6 16' : 'M9.6 16 L14.6 15 M10.6 11 L14 10.2'} fill="none" strokeWidth={1.1} />
-          {type === 'magicalUnicorn' && <path d="M19 4 L19.8 6.2 L22 7 L19.8 7.8 L19 10 L18.2 7.8 L16 7 L18.2 6.2 Z" fill="#fff" strokeWidth={1} />}
+          {(type === 'magicalUnicorn' || type === 'diamondUnicorn') && <path d="M19 4 L19.8 6.2 L22 7 L19.8 7.8 L19 10 L18.2 7.8 L16 7 L18.2 6.2 Z" fill="#fff" strokeWidth={1} />}
           {type === 'babyUnicorn' && <path d="M5 8 q-2 -2.5 -3.6 0 q-1.4 2.6 3.6 5 q5 -2.4 3.6 -5 q-1.6 -2.5 -3.6 0 Z" fill="#ff7ab8" strokeWidth={1.1} transform="translate(13 -3)" />}
         </g>
       )}
@@ -58,7 +59,7 @@ export function CardArt({ card }: { card: Pick<UuCard, 'kind' | 'type' | 'name'>
   return (
     <svg viewBox="0 0 100 100" className="uu-art" role="img" aria-label={card.name} preserveAspectRatio="xMidYMid slice">
       {isUnicornType(card.type) ? (
-        <UnicornPortrait kind={card.kind} type={card.type as 'babyUnicorn' | 'basicUnicorn' | 'magicalUnicorn'} id={id} />
+        <UnicornPortrait kind={card.kind} type={card.type === 'diamondUnicorn' ? 'magicalUnicorn' : (card.type as 'babyUnicorn' | 'basicUnicorn' | 'magicalUnicorn')} id={id} />
       ) : (
         <Emblem kind={card.kind} type={card.type} id={id} />
       )}

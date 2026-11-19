@@ -1,4 +1,4 @@
-// Doomlings — GameModule (Base Game + all 7 official Expansions implemented).
+// Doomlings — GameModule (Classic 2nd-edition base game; expansions not yet implemented).
 
 import type { GameModule } from '@/core/module';
 import type { Seat } from '@/core/types';
@@ -9,7 +9,7 @@ import type { DmAction, DmConfig, DmState } from './types';
 import { DmThumbnail } from './Thumbnail';
 
 const NAME = 'Doomlings';
-const VALID_EXPANSION_IDS = new Set(DM_EXPANSIONS.map((e) => e.id));
+const KNOWN_EXPANSIONS = new Map(DM_EXPANSIONS.map((e) => [e.id, e.name]));
 
 export const doomlingsModule: GameModule<DmState, DmAction, DmConfig> = {
   id: 'doomlings',
@@ -24,9 +24,8 @@ export const doomlingsModule: GameModule<DmState, DmAction, DmConfig> = {
   validateConfig: (config) => {
     const errors: string[] = [];
     for (const id of config.expansions ?? []) {
-      if (!VALID_EXPANSION_IDS.has(id)) {
-        errors.push(`Unknown Doomlings expansion: ${id}`);
-      }
+      const name = KNOWN_EXPANSIONS.get(id);
+      errors.push(name ? `${name} isn’t implemented yet.` : `Unknown Doomlings expansion: ${id}`);
     }
     return errors;
   },

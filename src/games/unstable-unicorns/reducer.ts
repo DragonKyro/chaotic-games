@@ -25,15 +25,10 @@ export function createInitialState(config: UuConfig, seed: number, seats: Seat[]
   const first = seats[0];
   if (!first) throw new Error('Unstable Unicorns needs at least one seat');
 
-  const { deck, nursery, hands, startingBabies } = dealUuSetup(seats, rngState, config);
+  const { deck, nursery, hands, vault } = dealUuSetup(seats, rngState, config);
   const stables: Record<PlayerId, UuStable> = {};
   for (const s of seats) {
-    const baby = startingBabies[s.id];
-    stables[s.id] = {
-      unicorns: baby ? [baby] : [],
-      upgrades: [],
-      downgrades: [],
-    };
+    stables[s.id] = { unicorns: [], upgrades: [], downgrades: [] };
   }
 
   const unicornsToWin = seats.length >= 6 ? 6 : 7;
@@ -50,6 +45,8 @@ export function createInitialState(config: UuConfig, seed: number, seats: Seat[]
     deck,
     discard: [],
     nursery,
+    vault,
+    lassoReturns: [],
     hands,
     stables,
 
@@ -70,6 +67,20 @@ export function createInitialState(config: UuConfig, seed: number, seats: Seat[]
   };
 
   pushLog(state, null, `${seats.length} players. First to ${unicornsToWin} Unicorns in their Stable wins!`, 'normal');
+  // "Each player must choose a Baby Unicorn card and place it in their Stable"
+  // (2nd Edition rulesheet). Babies differ only in name, but the name is what the
+  // deck-out tiebreak counts, so it is a real (if small) decision.
+  for (const s of seats) {
+    state.promptQueue.push({
+      kind: 'chooseFromPile',
+      playerId: s.id,
+      reason: 'Setup: choose a Baby Unicorn from the Nursery to start your Stable.',
+      optional: false,
+      pile: 'nursery',
+      filter: 'baby',
+      destination: 'stable',
+    });
+  }
   startTurn(state, first.id);
   return state;
 }
@@ -113,12 +124,7 @@ export function hasPandamonium(s: UuState, playerId: PlayerId): boolean {
 
 function hasRainbowAura(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsCurse(s, playerId)) return false;
-  return stableOf(s, playerId).upgrades.some((c) => c.kind === 'rainbow-aura' || c.kind === 'prismatic-shield');
-}
-
-function hasPrismaticShield(s: UuState, playerId: PlayerId): boolean {
-  if (hasDragonsCurse(s, playerId)) return false;
-  return stableOf(s, playerId).upgrades.some((c) => c.kind === 'prismatic-shield');
+  return stableOf(s, playerId).upgrades.some((c) => c.kind === 'rainbow-aura');
 }
 
 export function hasBrokenStable(s: UuState, playerId: PlayerId): boolean {
@@ -220,6 +226,19 @@ export function queenBeeOwner(s: UuState): PlayerId | null {
   return null;
 }
 
+/**
+ * Queen Bee Unicorn: "Basic Unicorn cards cannot enter any player's Stable except
+ * yours." This gates every way into a Stable — playing, bringing, stealing,
+ * moving — not just playing from hand.
+ */
+function canEnterStable(s: UuState, card: UuCard, destId: PlayerId): boolean {
+  if (card.type === 'basicUnicorn') {
+    const qb = queenBeeOwner(s);
+    if (qb && qb !== destId) return false;
+  }
+  return true;
+}
+
 /** How many Unicorns this player currently has toward the win condition. */
 export function unicornCount(s: UuState, playerId: PlayerId): number {
   if (hasPandamonium(s, playerId)) return 0;
@@ -230,8 +249,7 @@ export function unicornCount(s: UuState, playerId: PlayerId): number {
       !blinded &&
       (u.kind === 'ginormous-unicorn' ||
         u.kind === 'bahamuticorn' ||
-        u.kind === 'twin-dragoncorns' ||
-        u.kind === 'diamond-unicorn')
+        u.kind === 'twin-dragoncorns')
     ) {
       total += 2;
     } else {
@@ -279,6 +297,8 @@ export function validStableTargets(s: UuState, prompt: Extract<UuPrompt, { kind:
         if (card.type !== 'upgrade') continue;
       } else if (prompt.filter === 'downgrade') {
         if (card.type !== 'downgrade') continue;
+      } else if (prompt.filter === 'diamond') {
+        if (card.type !== 'diamondUnicorn') continue;
       } else if (prompt.filter === 'upgradeOrDowngrade') {
         if (card.type !== 'upgrade' && card.type !== 'downgrade') continue;
       } else if (prompt.filter === 'unicornOrUpgrade') {
@@ -293,6 +313,18 @@ export function validStableTargets(s: UuState, prompt: Extract<UuPrompt, { kind:
         if (!isDestroyOtherUpgrade && !isSacrificeOwnDowngrade) continue;
       } else if (prompt.filter === 'any') {
         if (isUnicornType(card.type) && hasPandamonium(s, ownerId)) continue;
+      }
+
+      // Diamond Edition rulesheet: "Diamond Unicorns cannot be destroyed,
+      // sacrificed, or returned to a player's hand." (Only the Diamond Phase sends
+      // them back to the Vault.)
+      if (card.type === 'diamondUnicorn' && (prompt.mode === 'sacrifice' || prompt.mode === 'destroy' || prompt.mode === 'bounce')) {
+        continue;
+      }
+
+      // A stolen card enters the thief's Stable, so Queen Bee can forbid it.
+      if ((prompt.mode === 'steal' || prompt.mode === 'swapSteal') && !canEnterStable(s, card, prompt.playerId)) {
+        continue;
       }
 
       // Puppicorn cannot be sacrificed or destroyed unless blinded
@@ -319,14 +351,11 @@ export function validStableTargets(s: UuState, prompt: Extract<UuPrompt, { kind:
       const isDestroy =
         prompt.mode === 'destroy' ||
         (prompt.filter === 'destroyUpgradeOrSacrificeDowngrade' && ownerId !== prompt.playerId);
-      if (isDestroy && card.type === 'upgrade' && hasPrismaticShield(s, ownerId)) {
-        continue;
-      }
       if (isDestroy && isUnicornType(card.type)) {
         if (hasRainbowAura(s, ownerId)) continue;
         if (
           prompt.sourceType === 'magic' &&
-          (card.kind === 'magical-kittencorn' || card.kind === 'diamond-unicorn') &&
+          card.kind === 'magical-kittencorn' &&
           !isBlinded(s, ownerId)
         ) {
           continue;
@@ -339,12 +368,17 @@ export function validStableTargets(s: UuState, prompt: Extract<UuPrompt, { kind:
   return results;
 }
 
+function pileOf(s: UuState, pile: Extract<UuPrompt, { kind: 'chooseFromPile' }>['pile']): UuCard[] {
+  return pile === 'discard' ? s.discard : pile === 'deck' ? s.deck : pile === 'vault' ? s.vault : s.nursery;
+}
+
 /**
- * Valid cards in a pile (`discard`, `deck`, or `nursery`) for a `chooseFromPile` prompt.
+ * Valid cards in a pile (`discard`, `deck`, `nursery`, or `vault`) for a `chooseFromPile` prompt.
  */
 export function validPileCards(s: UuState, prompt: Extract<UuPrompt, { kind: 'chooseFromPile' }>): UuCard[] {
-  const pile = prompt.pile === 'discard' ? s.discard : prompt.pile === 'deck' ? s.deck : s.nursery;
+  const pile = pileOf(s, prompt.pile);
   return pile.filter((c) => {
+    if (prompt.destination === 'stable' && !canEnterStable(s, c, prompt.playerId)) return false;
     if (prompt.filter === 'unicorn') return isUnicornType(c.type);
     if (prompt.filter === 'magic') return c.type === 'magic';
     if (prompt.filter === 'upgrade') return c.type === 'upgrade';
@@ -359,11 +393,35 @@ export function validPileCards(s: UuState, prompt: Extract<UuPrompt, { kind: 'ch
 }
 
 /**
+ * Players a `choosePlayer` prompt may pick. Shared by the reducer, UI, and AI.
+ */
+export function validPlayerTargets(s: UuState, prompt: Extract<UuPrompt, { kind: 'choosePlayer' }>): PlayerId[] {
+  return s.seats
+    .map((x) => x.id)
+    .filter((id) => {
+      if (!prompt.allowSelf && id === prompt.playerId) return false;
+      if (prompt.effectTag === 'reTargetDestination') return id !== prompt.movedFromPlayerId;
+      if (prompt.effectTag === 'unicornSwapTarget') {
+        if (id === prompt.movedFromPlayerId) return false;
+        const moved = prompt.movedFromPlayerId != null && prompt.movedCardId != null
+          ? findCardInStable(s, prompt.movedFromPlayerId, prompt.movedCardId)
+          : null;
+        return !moved || canEnterStable(s, moved, id);
+      }
+      // "Look at another player's hand. Choose a card" needs a hand to choose from.
+      if (prompt.effectTag === 'blatantThieveryLook') return handOf(s, id).length > 0;
+      return true;
+    });
+}
+
+/**
  * Valid cards in `playerId`'s hand for a `chooseCardsFromHand` prompt.
  */
 export function validHandCards(s: UuState, prompt: Extract<UuPrompt, { kind: 'chooseCardsFromHand' }>): UuCard[] {
   const hand = handOf(s, prompt.playerId);
+  const bringing = prompt.effectTag === 'rainbowUnicornBring' || prompt.effectTag === 'unicornBring';
   return hand.filter((c) => {
+    if (bringing && !canEnterStable(s, c, prompt.playerId)) return false;
     if (prompt.filter === 'unicorn') return isUnicornType(c.type);
     if (prompt.filter === 'basicUnicorn') return c.type === 'basicUnicorn';
     return true;
@@ -387,27 +445,48 @@ export function canPlayCardFromHand(s: UuState, playerId: PlayerId, card: UuCard
     return false;
   }
 
+  // Unicorn, Upgrade and Downgrade cards may be played into any player's Stable
+  // (wiki, "Unicorn Card": "You can play a Unicorn card in any player's Stable").
+  // Queen Bee leaves a Basic Unicorn exactly one legal Stable: hers.
   const dest = targetPlayerId ?? playerId;
-  if (card.type === 'basicUnicorn') {
-    const qb = queenBeeOwner(s);
-    if (qb && qb !== dest) return false;
-  }
+  if (!canEnterStable(s, card, dest)) return false;
   if (card.kind === 'extra-tail' || card.kind === 'rainbow-mane') {
     if (!hasBasicUnicornInStable(s, dest)) return false;
   }
 
-  // Magic cards with play requirements per official rules:
+  // Magic cards with play requirements. FAQ: a mandatory effect of the card you
+  // play must be possible for you ("in order to play any card that has an 'each
+  // player must do x' effect, you must be able to do x yourself"); Impossible
+  // Actions: "If you have a card in your hand that requires you to perform an
+  // impossible action, you may not play it." (Unicorn cards have no requirement.)
+  if (card.kind === 'mystical-vortex') {
+    return handOf(s, playerId).length - 1 >= 1;
+  }
+  if (card.kind === 'blatant-thievery') {
+    return s.seats.some((seat) => seat.id !== playerId && handOf(s, seat.id).length > 0);
+  }
+  // Requirements that name a card in a Stable go through validStableTargets, so
+  // cards that can't be returned / sacrificed (Puppicorn, Diamond Unicorns,
+  // Pandas...) don't count as satisfying them.
+  const anyTarget = (scope: 'own' | 'others', mode: 'bounce' | 'sacrifice') =>
+    validStableTargets(s, { kind: 'chooseStableCard', playerId, reason: '', optional: false, scope, filter: 'any', mode, sourceType: 'magic' }).length > 0;
   if (card.kind === 'back-kick') {
-    return s.seats.some((seat) => seat.id !== playerId && allCardsInStable(stableOf(s, seat.id)).length > 0);
+    return anyTarget('others', 'bounce');
+  }
+  if (card.kind === 'glitter-tornado') {
+    return anyTarget('own', 'bounce');
+  }
+  if (card.kind === 'two-for-one') {
+    return anyTarget('own', 'sacrifice');
   }
   if (card.kind === 'change-of-luck') {
     return handOf(s, playerId).length - 1 + Math.min(2, s.deck.length) >= 3;
   }
-  if (card.kind === 'glitter-tornado' || card.kind === 'two-for-one' || card.kind === 'nightmare-pact' || card.kind === 'gift-receipt') {
+  if (card.kind === 'nightmare-pact' || card.kind === 'gift-receipt') {
     return allCardsInStable(stableOf(s, playerId)).length > 0;
   }
   if (card.kind === 'kiss-of-life') {
-    return s.discard.some((c) => isUnicornType(c.type));
+    return s.discard.some((c) => isUnicornType(c.type) && canEnterStable(s, c, playerId));
   }
   if (card.kind === 'time-shift') {
     return s.discard.some((c) => isUnicornType(c.type) || c.type === 'upgrade');
@@ -420,7 +499,7 @@ export function canPlayCardFromHand(s: UuState, playerId: PlayerId, card: UuCard
   }
   if (card.kind === 'targeted-destruction') {
     const hasOtherUpgrade = s.seats.some(
-      (seat) => seat.id !== playerId && !hasPrismaticShield(s, seat.id) && stableOf(s, seat.id).upgrades.length > 0,
+      (seat) => seat.id !== playerId && stableOf(s, seat.id).upgrades.length > 0,
     );
     const hasOwnDowngrade = stableOf(s, playerId).downgrades.length > 0;
     return hasOtherUpgrade || hasOwnDowngrade;
@@ -525,10 +604,8 @@ export function canPlayCardFromHand(s: UuState, playerId: PlayerId, card: UuCard
     return s.deck.length > 0;
   }
   if (card.kind === 'unicorn-shrinkray') {
-    return (
-      s.nursery.length > 0 &&
-      s.seats.some((seat) => seat.id !== playerId && !hasPandamonium(s, seat.id) && stableOf(s, seat.id).unicorns.length > 0)
-    );
+    // "Choose any player. Move all of that player's Unicorn cards to the discard pile..."
+    return s.seats.some((seat) => !hasPandamonium(s, seat.id) && stableOf(s, seat.id).unicorns.length > 0);
   }
   if (card.kind === 'unicorn-swap') {
     if (hasPandamonium(s, playerId) || stableOf(s, playerId).unicorns.length === 0) return false;
@@ -563,26 +640,30 @@ function endGameByDeckExhaustion(s: UuState) {
   s.pending = null;
   s.promptQueue = [];
 
-  // Tiebreaker per rulebook: most Unicorns, then total letters in Unicorn card names.
-  let bestPlayer: PlayerId | null = null;
-  let bestScore = -1;
+  // 2nd Edition rulesheet, "The End of the Game": most Unicorns wins; a tie is
+  // broken by the most letters in the names of the tied players' Unicorn cards;
+  // a tie on both means everyone loses.
   const scores: Record<PlayerId, number> = {};
-
+  const combined: Record<PlayerId, number> = {};
   for (const seat of s.seats) {
     const count = unicornCount(s, seat.id);
     const letters = hasPandamonium(s, seat.id)
       ? 0
       : stableOf(s, seat.id).unicorns.reduce((sum, u) => sum + u.name.replace(/[^a-zA-Z]/g, '').length, 0);
-    const combined = count * 1000 + letters;
     scores[seat.id] = count;
-    if (combined > bestScore) {
-      bestScore = combined;
-      bestPlayer = seat.id;
-    }
+    combined[seat.id] = count * 1000 + letters;
   }
+  const best = Math.max(...s.seats.map((x) => combined[x.id] ?? 0));
+  const leaders = s.seats.filter((x) => combined[x.id] === best);
   s.finalScores = scores;
-  s.winnerId = bestPlayer;
-  pushLog(s, bestPlayer, `The deck ran out! ${seatName(s, bestPlayer)} wins on Unicorn count / name length!`, 'good');
+  if (leaders.length === 1) {
+    const winner = leaders[0]!.id;
+    s.winnerId = winner;
+    pushLog(s, winner, `The deck ran out! ${seatName(s, winner)} wins with the biggest herd.`, 'good');
+  } else {
+    s.winnerId = null;
+    pushLog(s, null, 'The deck ran out with a tie on Unicorns and on letters in their names. Everyone loses. Ouch.', 'danger');
+  }
 }
 
 function checkWinCondition(s: UuState): boolean {
@@ -616,7 +697,18 @@ function startTurn(s: UuState, playerId: PlayerId) {
   s.extraTurnPending = false;
   s.skipToEndOfTurn = false;
   s.subPhase = 'beginningOfTurn';
-  s.resumePhase = 'draw';
+  s.resumePhase = s.config.edition === 'diamond' ? 'diamond' : 'draw';
+
+  // Puppicorn (Original Base, Second Print): "Each time any player begins their
+  // turn, move this card to that player's Stable." Its holder's Blinding Light /
+  // Pandamonium switch the effect off.
+  for (const seat of s.seats) {
+    if (seat.id === playerId || isBlinded(s, seat.id) || hasPandamonium(s, seat.id)) continue;
+    for (const pup of stableOf(s, seat.id).unicorns.filter((u) => u.kind === 'puppicorn')) {
+      removeFromStable(s, seat.id, pup.id, 'move', { toPlayerId: playerId, sourceType: 'unicorn' });
+      pushLog(s, playerId, `Puppicorn wandered over to ${seatName(s, playerId)}'s Stable.`, 'normal');
+    }
+  }
 
   // Queue Beginning-of-Turn triggers in the player's Stable:
   const st = stableOf(s, playerId);
@@ -729,6 +821,13 @@ function advanceFlow(s: UuState) {
     s.resumePhase = 'endOfTurn';
   }
 
+  if (s.resumePhase === 'diamond') {
+    s.resumePhase = 'draw';
+    rollDiamondPhase(s);
+    advanceFlow(s);
+    return;
+  }
+
   if (s.resumePhase === 'draw') {
     s.subPhase = 'draw';
     s.activePlayerId = s.turnPlayerId;
@@ -763,6 +862,58 @@ function advanceFlow(s: UuState) {
       return;
     }
     finishTurn(s);
+  }
+}
+
+/**
+ * Diamond Edition, Diamond Phase: "Roll the Diamond dice, and perform the action
+ * corresponding to the roll result" — four faces, four actions, numbered here in
+ * rulesheet order (the die is fair, so the face-to-action mapping can't matter).
+ * A roll is public the instant it happens; only the choice of card is a decision.
+ */
+function rollDiamondPhase(s: UuState) {
+  const me = s.turnPlayerId;
+  const roll = rngInt(s.rngState, 4) + 1;
+  const othersHold = s.seats.some((x) => x.id !== me && stableOf(s, x.id).unicorns.some((u) => u.type === 'diamondUnicorn'));
+  const who = seatName(s, me);
+  if (roll === 1 || (roll === 2 && !othersHold)) {
+    pushLog(s, me, `${who} rolled the Diamond dice: take a Diamond Unicorn from the Vault${roll === 2 ? ' (no one else has one)' : ''}.`, 'normal');
+    s.promptQueue.push({
+      kind: 'chooseFromPile',
+      playerId: me,
+      reason: 'Diamond Phase: move a Diamond Unicorn from the Vault into your Stable.',
+      optional: false,
+      pile: 'vault',
+      filter: 'unicorn',
+      destination: 'stable',
+    });
+  } else if (roll === 2) {
+    pushLog(s, me, `${who} rolled the Diamond dice: take another player's Diamond Unicorn.`, 'normal');
+    s.promptQueue.push({
+      kind: 'chooseStableCard',
+      playerId: me,
+      reason: "Diamond Phase: move a Diamond Unicorn from another player's Stable into your Stable.",
+      optional: false,
+      scope: 'others',
+      filter: 'diamond',
+      mode: 'steal',
+      sourceType: 'unicorn',
+    });
+  } else {
+    const own = roll === 4;
+    pushLog(s, me, `${who} rolled the Diamond dice: return ${own ? 'one of your' : "another player's"} Diamond Unicorns to the Vault.`, 'normal');
+    s.promptQueue.push({
+      kind: 'chooseStableCard',
+      playerId: me,
+      reason: own
+        ? 'Diamond Phase: return a Diamond Unicorn from your Stable to the Vault.'
+        : "Diamond Phase: return a Diamond Unicorn from another player's Stable to the Vault.",
+      optional: false,
+      scope: own ? 'own' : 'others',
+      filter: 'diamond',
+      mode: 'toVault',
+      sourceType: 'unicorn',
+    });
   }
 }
 
@@ -826,8 +977,8 @@ function isPromptImpossible(s: UuState, p: UuPrompt): boolean {
       return handOf(s, p.playerId).length === 0 || s.nursery.length === 0;
     }
     if (c.kind === 'zombie-unicorn') {
-      const hasUniInHand = handOf(s, p.playerId).some((x) => isUnicornType(x.type));
-      return !hasUniInHand || !s.discard.some((x) => isUnicornType(x.type));
+      // The discarded Unicorn itself becomes a legal pick from the discard pile.
+      return !handOf(s, p.playerId).some((x) => isUnicornType(x.type));
     }
     if (c.kind === 'angel-unicorn') {
       return !s.discard.some((x) => isUnicornType(x.type));
@@ -894,10 +1045,7 @@ function isPromptImpossible(s: UuState, p: UuPrompt): boolean {
       return !hasBasicUnicornInStable(s, p.playerId) || !handOf(s, p.playerId).some((x) => x.type === 'basicUnicorn');
     }
     if (c.kind === 'summoning-ritual') {
-      return (
-        handOf(s, p.playerId).filter((x) => isUnicornType(x.type)).length < 2 ||
-        !s.discard.some((x) => isUnicornType(x.type))
-      );
+      return handOf(s, p.playerId).filter((x) => isUnicornType(x.type)).length < 2;
     }
     return false;
   }
@@ -919,6 +1067,9 @@ function isPromptImpossible(s: UuState, p: UuPrompt): boolean {
   if (p.kind === 'chooseFromOpponentHand') {
     return handOf(s, p.targetPlayerId).length === 0;
   }
+  if (p.kind === 'choosePlayer') {
+    return validPlayerTargets(s, p).length === 0;
+  }
   if (p.kind === 'oraclePeek') {
     return p.cards.length === 0;
   }
@@ -930,13 +1081,15 @@ function finishTurn(s: UuState) {
   const idx = s.seats.findIndex((x) => x.id === s.turnPlayerId);
   const nextSeat = s.seats[(idx + 1) % s.seats.length]!;
 
-  // Puppicorn moves to the next player's Stable at the end of turn (if not blinded)
-  if (!isBlinded(s, s.turnPlayerId) && !hasPandamonium(s, s.turnPlayerId)) {
-    const puppies = stableOf(s, s.turnPlayerId).unicorns.filter((u) => u.kind === 'puppicorn');
-    for (const pup of puppies) {
-      removeFromStable(s, s.turnPlayerId, pup.id, 'move', { toPlayerId: nextSeat.id, sourceType: 'unicorn' });
-      pushLog(s, s.turnPlayerId, `Puppicorn wandered over to ${nextSeat.name}'s Stable!`, 'normal');
-    }
+  // Unicorn Lasso (Original Base): "At the end of your turn, return that Unicorn
+  // card to the Stable from which you stole it." A Unicorn that has since left
+  // the thief's Stable is no longer bound to the effect.
+  const lassoed = (s.lassoReturns ?? []).filter((r) => r.thiefId === s.turnPlayerId);
+  s.lassoReturns = (s.lassoReturns ?? []).filter((r) => r.thiefId !== s.turnPlayerId);
+  for (const r of lassoed) {
+    if (!stableOf(s, r.thiefId).unicorns.some((u) => u.id === r.cardId)) continue;
+    removeFromStable(s, r.thiefId, r.cardId, 'move', { toPlayerId: r.fromPlayerId, sourceType: 'upgrade' });
+    pushLog(s, r.thiefId, `Unicorn Lasso returned the stolen Unicorn to ${seatName(s, r.fromPlayerId)}.`, 'normal');
   }
   if (checkWinCondition(s)) return;
 
@@ -1000,7 +1153,7 @@ function enterStable(s: UuState, playerId: PlayerId, card: UuCard, triggerEnterE
   // Enter-Stable effects on Magical Unicorns (unless blinded or suppressed by Dragon Skies / Hex)
   if (
     triggerEnterEffects &&
-    card.type === 'magicalUnicorn' &&
+    (card.type === 'magicalUnicorn' || card.type === 'diamondUnicorn') &&
     !isBlinded(s, playerId) &&
     !hasDragonSkies(s, playerId) &&
     !hasHex(s, playerId)
@@ -1015,7 +1168,7 @@ function removeFromStable(
   s: UuState,
   ownerId: PlayerId,
   cardId: number,
-  reason: 'sacrifice' | 'destroy' | 'bounce' | 'steal' | 'move',
+  reason: 'sacrifice' | 'destroy' | 'bounce' | 'steal' | 'move' | 'vault',
   opts?: {
     toPlayerId?: PlayerId;
     sourceType?: 'magic' | 'unicorn' | 'upgrade' | 'downgrade';
@@ -1098,6 +1251,10 @@ function removeFromStable(
   }
 
   // Destination routing
+  if (reason === 'vault') {
+    s.vault.push(card);
+    return;
+  }
   if ((reason === 'steal' || reason === 'move') && opts?.toPlayerId) {
     enterStable(s, opts.toPlayerId, card, true);
     return;
@@ -1310,11 +1467,12 @@ function queueMagicalUnicornEnterEffect(s: UuState, playerId: PlayerId, card: Uu
       });
       break;
     case 'mermaid-unicorn':
+      // 2nd Edition text has no "may": the return is mandatory (skipped only if impossible).
       s.promptQueue.push({
         kind: 'chooseStableCard',
         playerId,
-        reason: "Mermaid Unicorn: you may return a card in another player's Stable to their hand.",
-        optional: true,
+        reason: "Mermaid Unicorn: return a card in another player's Stable to their hand.",
+        optional: false,
         scope: 'others',
         filter: 'any',
         mode: 'bounce',
@@ -1348,7 +1506,9 @@ function queueMagicalUnicornEnterEffect(s: UuState, playerId: PlayerId, card: Uu
       break;
     }
     case 'necromancer-unicorn':
-      if (handOf(s, playerId).filter((c) => isUnicornType(c.type)).length >= 2 && s.discard.some((c) => isUnicornType(c.type))) {
+      // The 2 discarded Unicorns land in the discard pile first, so they are
+      // themselves eligible to be brought back: only the cost needs checking.
+      if (handOf(s, playerId).filter((c) => isUnicornType(c.type)).length >= 2) {
         s.promptQueue.push({
           kind: 'chooseCardsFromHand',
           playerId,
@@ -1623,7 +1783,6 @@ function queueMagicalUnicornEnterEffect(s: UuState, playerId: PlayerId, card: Uu
     case 'extreme-adventurer-unicorn':
     case 'santaicorn':
     case 'hangover-unicorn':
-    case 'crystal-narwhal':
       drawCards(s, playerId, 2);
       pushLog(s, playerId, `${seatName(s, playerId)} drew 2 cards from ${card.name}.`, 'good');
       break;
@@ -1664,6 +1823,41 @@ function queueMagicalUnicornEnterEffect(s: UuState, playerId: PlayerId, card: Uu
           effectTag: 'dominatrixForceSacrifice',
         });
       }
+      break;
+    // Diamond Edition — Diamond Unicorns (Reaper: text unconfirmed, no effect).
+    case 'prismawing':
+      if (handOf(s, playerId).length > 0) {
+        s.promptQueue.push({
+          kind: 'chooseCardsFromHand',
+          playerId,
+          reason: 'Prismawing: you may DISCARD a card, then DRAW 3 cards.',
+          count: 1,
+          optional: true,
+          filter: 'any',
+          effectTag: 'prismawingDiscard',
+        });
+      }
+      break;
+    case 'shimmerblade':
+      s.promptQueue.push({
+        kind: 'choosePlayer',
+        playerId,
+        reason: "Shimmerblade: you may look at another player's hand (and then may take a card from it).",
+        optional: true,
+        allowSelf: false,
+        effectTag: 'shimmerbladeLook',
+      });
+      break;
+    case 'sparklestar':
+      s.promptQueue.push({
+        kind: 'chooseFromPile',
+        playerId,
+        reason: 'Sparklestar: you may add a Magic card from the discard pile to your hand.',
+        optional: true,
+        pile: 'discard',
+        filter: 'magic',
+        destination: 'hand',
+      });
       break;
     case 'hells-steedicorn':
       s.promptQueue.push({
@@ -2092,9 +2286,9 @@ function resolveMagicEffect(s: UuState, byPlayerId: PlayerId, card: UuCard) {
       s.promptQueue.push({
         kind: 'choosePlayer',
         playerId: byPlayerId,
-        reason: "Unicorn Shrinkray: choose another player to replace all of their Unicorns with Baby Unicorns from the Nursery.",
+        reason: "Unicorn Shrinkray: choose any player — all of their Unicorns go to the discard pile and are replaced by Baby Unicorns from the Nursery.",
         optional: false,
-        allowSelf: false,
+        allowSelf: true,
         effectTag: 'shrinkrayTarget',
       });
       break;
@@ -2109,20 +2303,6 @@ function resolveMagicEffect(s: UuState, byPlayerId: PlayerId, card: UuCard) {
           pile: 'discard',
           filter: 'unicornOrUpgrade',
           destination: 'hand',
-        });
-      }
-      break;
-    case 'diamond-dust':
-      drawCards(s, byPlayerId, 2);
-      if (s.phase !== 'gameOver') {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Diamond Dust: you may bring a Unicorn card from the discard pile into your Stable.',
-          optional: true,
-          pile: 'discard',
-          filter: 'unicorn',
-          destination: 'stable',
         });
       }
       break;
@@ -2310,12 +2490,10 @@ function handlePlayCard(s: UuState, a: Extract<UuAction, { type: 'playCard' }>) 
   if (idx < 0) throw new Error('card not in hand');
   const card = hand[idx]!;
 
-  // Determine target Stable owner:
-  let targetPlayerId: PlayerId = a.targetPlayerId ?? a.playerId;
-  if (card.type === 'basicUnicorn') {
-    const qb = queenBeeOwner(s);
-    if (qb) targetPlayerId = qb;
-  }
+  // Target Stable owner. Unspecified means your own Stable — except a Basic
+  // Unicorn under Queen Bee, whose only legal Stable is the Queen Bee's.
+  const qb = card.type === 'basicUnicorn' ? queenBeeOwner(s) : null;
+  const targetPlayerId: PlayerId = a.targetPlayerId ?? qb ?? a.playerId;
 
   if (!canPlayCardFromHand(s, a.playerId, card, targetPlayerId)) {
     throw new Error(`cannot legally play ${card.name} right now`);
@@ -2567,12 +2745,13 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
         s.promptQueue.unshift({
           kind: 'chooseStableCard',
           playerId: prompt.playerId,
-          reason: 'Unicorn Lasso: choose a Unicorn card to STEAL.',
+          reason: 'Unicorn Lasso: choose a Unicorn card to STEAL until the end of your turn.',
           optional: true,
           scope: 'others',
           filter: 'unicorn',
           mode: 'steal',
           sourceType: 'upgrade',
+          effectTag: 'unicornLassoSteal',
         });
       } else if (c.kind === 'caffeine-overload') {
         s.promptQueue.unshift({
@@ -2666,9 +2845,7 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
 
       if (prompt.effectTag === 'rainbowUnicornBring' || prompt.effectTag === 'unicornBring') {
         const u = chosen[0]!;
-        const qb = u.type === 'basicUnicorn' ? queenBeeOwner(s) : null;
-        const dest = qb ?? prompt.playerId;
-        enterStable(s, dest, u, true);
+        enterStable(s, prompt.playerId, u, true);
         pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} brought ${u.name} into Stable.`, 'good');
       } else {
         s.discard.push(...chosen);
@@ -2679,6 +2856,9 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
           prompt.effectTag === 'zombieDiscard' ||
           prompt.effectTag === 'summoningRitualDiscard'
         ) {
+          // Zombie Unicorn: "...bring it directly into your Stable, then immediately
+          // skip to your End of Turn Phase."
+          if (prompt.effectTag === 'zombieDiscard') s.skipToEndOfTurn = true;
           s.promptQueue.unshift({
             kind: 'chooseFromPile',
             playerId: prompt.playerId,
@@ -2719,6 +2899,8 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
           pushLog(s, null, 'Mystical Vortex shuffled the discard pile into the deck.', 'normal');
         } else if (prompt.effectTag === 'clawMachineDiscard') {
           drawCards(s, prompt.playerId, 1);
+        } else if (prompt.effectTag === 'prismawingDiscard') {
+          drawCards(s, prompt.playerId, 3);
         } else if (prompt.effectTag === 'stableArtilleryDiscard') {
           s.promptQueue.unshift({
             kind: 'chooseStableCard',
@@ -2768,6 +2950,13 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
           `${seatName(s, prompt.playerId)} ${mode === 'sacrifice' ? 'sacrificed' : 'destroyed'} ${target.card.name}.`,
           'normal',
         );
+        advanceFlow(s);
+        return;
+      }
+
+      if (prompt.mode === 'toVault') {
+        removeFromStable(s, target.ownerId, target.card.id, 'vault');
+        pushLog(s, prompt.playerId, `${target.card.name} went back to the Vault from ${seatName(s, target.ownerId)}'s Stable.`, 'normal');
         advanceFlow(s);
         return;
       }
@@ -2838,6 +3027,8 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
         pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} stole ${target.card.name} from ${seatName(s, target.ownerId)}!`, 'good');
         if (prompt.effectTag === 'cutthroatSteal') {
           drawCards(s, target.ownerId, 1);
+        } else if (prompt.effectTag === 'unicornLassoSteal') {
+          (s.lassoReturns ??= []).push({ cardId: target.card.id, fromPlayerId: target.ownerId, thiefId: prompt.playerId });
         }
       } else if (prompt.mode === 'bounce') {
         removeFromStable(s, target.ownerId, target.card.id, 'bounce', { sourceType: prompt.sourceType });
@@ -3007,11 +3198,8 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
         return;
       }
       const targetId = a.targetPlayerId;
-      if (!targetId || !s.seats.some((st) => st.id === targetId)) {
+      if (!targetId || !validPlayerTargets(s, prompt).includes(targetId)) {
         throw new Error('invalid target player');
-      }
-      if (!prompt.allowSelf && targetId === prompt.playerId) {
-        throw new Error('cannot choose yourself');
       }
 
       if (prompt.effectTag === 'americornPull') {
@@ -3072,6 +3260,16 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
           }
           pushLog(s, prompt.playerId, `Unicorn Shrinkray shrank ${seatName(s, targetId)}'s Stable into Baby Unicorns!`, 'danger');
         }
+      } else if (prompt.effectTag === 'shimmerbladeLook') {
+        if (handOf(s, targetId).length > 0) {
+          s.promptQueue.unshift({
+            kind: 'chooseFromOpponentHand',
+            playerId: prompt.playerId,
+            targetPlayerId: targetId,
+            reason: `Shimmerblade: you may take a card from ${seatName(s, targetId)}'s hand.`,
+            optional: true,
+          });
+        }
       } else if (prompt.effectTag === 'blatantThieveryLook') {
         if (handOf(s, targetId).length > 0) {
           s.promptQueue.unshift({
@@ -3119,6 +3317,11 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
     }
 
     case 'chooseFromOpponentHand': {
+      if (a.decline) {
+        if (!prompt.optional) throw new Error('you must take a card');
+        advanceFlow(s);
+        return;
+      }
       const victimHand = handOf(s, prompt.targetPlayerId);
       const idx = victimHand.findIndex((c) => c.id === a.targetCardId);
       if (idx < 0) throw new Error('chosen card not in target player hand');
@@ -3142,7 +3345,7 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
       const chosen = valid.find((c) => c.id === a.targetCardId);
       if (!chosen) throw new Error('chosen card is not valid in pile');
 
-      const pile = prompt.pile === 'discard' ? s.discard : prompt.pile === 'deck' ? s.deck : s.nursery;
+      const pile = pileOf(s, prompt.pile);
       const idx = pile.findIndex((c) => c.id === chosen.id);
       if (idx >= 0) pile.splice(idx, 1);
 

@@ -3,7 +3,7 @@
 
 import { createRng, rngInt, shuffle } from '@/core/rng';
 import type { PlayerId, Seat } from '@/core/types';
-import { dealHtsSetup, HTS_ALL_PARTY_LEADERS, HTS_PARTY_LEADERS } from './cards';
+import { dealHtsSetup } from './cards';
 import type {
   HtsAction,
   HtsBaseClass,
@@ -13,12 +13,20 @@ import type {
   HtsPartyHero,
   HtsPendingRoll,
   HtsPrompt,
+  HtsRollRecord,
   HtsState,
 } from './types';
 import { cloneState, pushLog, seatName } from '@/core/state';
 
-const HAND_LIMIT = 7;
+/** Cards dealt to each player once the leader draft is done (rulebook). There is no hand limit. */
+const STARTING_HAND = 5;
 
+/**
+ * Classes needed for the "full Party" win. 6 in the base game; the Warriors &
+ * Druids rulesheet raises it to 7 "when playing with this expansion". The
+ * 7 for Berserkers & Necromancers, and for both class expansions together, is
+ * unconfirmed (the lobby lets the host pick 6–8).
+ */
 export function getClassesToWin(config: HtsConfig): number {
   if (typeof config.classesToWin === 'number' && config.classesToWin > 0) {
     return config.classesToWin;
@@ -38,27 +46,33 @@ export function createInitialState(config: HtsConfig, seed: number, seats: Seat[
   const first = seats[0];
   if (!first) throw new Error('Here to Slay needs at least one seat');
 
-  const { deck, monsterRow, monsterDeck, hands, partyLeaders, giftDeck } = dealHtsSetup(
+  const { deck, monsterRow, monsterDeck, leaderPool, giftDeck } = dealHtsSetup(
     seats,
     rngState,
     config.expansions,
   );
   const classesToWin = getClassesToWin(config);
+  // Leader draft: picked in reverse seat order so the first seat picks last
+  // and — "whoever picked their Party Leader card last gets to go first" —
+  // takes the first turn.
+  const draftOrder = [...seats].reverse().map((s) => s.id);
 
   const state: HtsState = {
     phase: 'playing',
     seats,
-    activePlayerId: first.id,
+    activePlayerId: draftOrder[0]!,
     finalScores: null,
     rngState,
 
-    subPhase: 'awaitingAction',
+    subPhase: 'choosingLeaders',
+    leaderDraft: { order: draftOrder, pool: leaderPool },
+    lastRoll: null,
     deck,
     discard: [],
     monsterRow,
     monsterDeck,
-    hands,
-    partyLeaders,
+    hands: Object.fromEntries(seats.map((s) => [s.id, []])),
+    partyLeaders: {},
     parties: Object.fromEntries(seats.map((s) => [s.id, []])),
     trophies: Object.fromEntries(seats.map((s) => [s.id, []])),
     niceGifts: Object.fromEntries(seats.map((s) => [s.id, []])),
@@ -92,10 +106,49 @@ export function createInitialState(config: HtsConfig, seed: number, seats: Seat[
   pushLog(
     state,
     null,
-    `${seats.length} players. Slay ${config.monstersToWin} Monsters or assemble ${classesToWin} classes${config.expansions.includes('here-to-sleigh') ? ' (or 3 Nice Gifts)' : ''} to win!`,
+    `${seats.length} players. Slay ${config.monstersToWin} Monsters or end your turn with ${classesToWin} classes${config.expansions.includes('here-to-sleigh') ? ' (or 3 Nice Gifts)' : ''} to win!`,
     'normal',
   );
+  autoPickForcedLeader(state);
   return state;
+}
+
+/** Deal the starting hands from the top of the deck, in seat order. */
+function dealStartingHands(s: HtsState) {
+  for (const seat of s.seats) {
+    s.hands[seat.id] = s.deck.splice(0, STARTING_HAND);
+  }
+}
+
+function finishLeaderDraft(s: HtsState) {
+  s.leaderDraft = null;
+  dealStartingHands(s);
+  s.subPhase = 'awaitingAction';
+  s.activePlayerId = s.turnPlayerId;
+  s.actionPointsRemaining = 3;
+  pushLog(s, s.turnPlayerId, `Every Party has its leader. ${seatName(s, s.turnPlayerId)} picked last and goes first.`, 'normal');
+}
+
+function assignLeader(s: HtsState, playerId: PlayerId, leader: HtsCard) {
+  const draft = s.leaderDraft!;
+  draft.pool = draft.pool.filter((c) => c.id !== leader.id);
+  draft.order.shift();
+  s.partyLeaders[playerId] = leader;
+  pushLog(s, playerId, `${seatName(s, playerId)} leads with ${leader.name}.`, 'normal');
+}
+
+/** The last picker facing a single leader has no decision to make. */
+function autoPickForcedLeader(s: HtsState) {
+  const draft = s.leaderDraft;
+  if (!draft) return;
+  while (draft.order.length > 0 && draft.pool.length === 1) {
+    assignLeader(s, draft.order[0]!, draft.pool[0]!);
+  }
+  if (draft.order.length === 0 || draft.pool.length === 0) {
+    finishLeaderDraft(s);
+    return;
+  }
+  s.activePlayerId = draft.order[0]!;
 }
 
 // ============================================================================
@@ -194,14 +247,19 @@ export function partyClasses(s: HtsState, playerId: PlayerId): Set<HtsBaseClass>
   return classes;
 }
 
+/**
+ * Party requirement to ATTACK (rulebook): a class symbol is met by a Hero of
+ * that class *or* your Party Leader; each generic symbol needs a Hero of any
+ * class, and the Party Leader never counts as a Hero. One Hero can't pay for
+ * two symbols. `requiredHeroes` counts every symbol, class one included.
+ */
 export function canAttackMonster(s: HtsState, playerId: PlayerId, monster: HtsMonster): boolean {
   const party = partyOf(s, playerId);
-  if (party.length < monster.requiredHeroes) return false;
-  if (monster.requiredClass) {
-    const classes = partyClasses(s, playerId);
-    if (!classes.has(monster.requiredClass)) return false;
+  if (!monster.requiredClass) return party.length >= monster.requiredHeroes;
+  if (s.partyLeaders[playerId]?.class === monster.requiredClass) {
+    return party.length >= monster.requiredHeroes - 1;
   }
-  return true;
+  return party.length >= monster.requiredHeroes && party.some((h) => heroEffectiveClass(h) === monster.requiredClass);
 }
 
 function canDestroyPartyHero(s: HtsState, ownerId: PlayerId): boolean {
@@ -220,6 +278,8 @@ export function validHeroTargets(
   prompt: Extract<HtsPrompt, { kind: 'chooseHeroTarget' }>,
 ): { ownerId: PlayerId; hero: HtsPartyHero }[] {
   const results: { ownerId: PlayerId; hero: HtsPartyHero }[] = [];
+  const item = prompt.mode === 'equipItem' ? handOf(s, prompt.playerId).find((c) => c.id === prompt.itemCardId) : undefined;
+  if (prompt.mode === 'equipItem' && !item) return results;
   for (const seat of s.seats) {
     const ownerId = seat.id;
     if (prompt.scope === 'own' && ownerId !== prompt.playerId) continue;
@@ -231,6 +291,9 @@ export function validHeroTargets(
 
     for (const h of partyOf(s, ownerId)) {
       if ((prompt.mode === 'bounceItem' || prompt.mode === 'stealItem') && heroEquippedItems(h).length === 0) continue;
+      if (prompt.mode === 'returnCursedItem' && !heroEquippedItems(h).some((i) => i.type === 'cursedItem')) continue;
+      if (prompt.mode === 'equipItem' && !canEquipItemToHero(h, item)) continue;
+      if (prompt.mode === 'steal' && prompt.sourceHeroId === h.card.id) continue;
       results.push({ ownerId, hero: h });
     }
   }
@@ -252,13 +315,15 @@ export function computeRollTotals(s: HtsState, r: HtsPendingRoll): { actorTotal:
   if (hasTrophy(s, r.byPlayerId, 'monster-anuran-cauldron')) {
     actorTotal += 1;
   }
+  // The Piercing Howl: "Each time you roll, +1 to your roll for each Item card
+  // equipped to a Hero card in your Party." Every roll, either side of a Challenge.
+  const howl = (id: PlayerId) => (s.partyLeaders[id]?.kind === 'leader-piercing-howl' ? countPartyEquippedItems(s, id) : 0);
+  actorTotal += howl(r.byPlayerId);
+  if (r.challengerId) challengerTotal += howl(r.challengerId);
   if (r.reason === 'heroAbility') {
     const leaderKind = s.partyLeaders[r.byPlayerId]?.kind;
     if (leaderKind === 'leader-charismatic-song') actorTotal += 1;
     if (leaderKind === 'leader-holly-spirit') actorTotal += 1;
-    if (leaderKind === 'leader-piercing-howl') {
-      actorTotal += countPartyEquippedItems(s, r.byPlayerId);
-    }
     if (hasTrophy(s, r.byPlayerId, 'monster-dark-dragon-king')) actorTotal += 1;
     if (hasTrophy(s, r.byPlayerId, 'monster-frostbite-krampus')) actorTotal += 1;
 
@@ -293,15 +358,18 @@ export function computeRollTotals(s: HtsState, r: HtsPendingRoll): { actorTotal:
     }
   }
 
+  // Abyss Queen: "Each time another player plays a Modifier card on one of
+  // your rolls, +1 to your roll." (A leader's adjustment is not a Modifier card.)
   for (const mod of r.modifiers) {
+    const isCard = mod.card.type === 'modifier';
     if (mod.targetSide === 'challenger') {
       challengerTotal += mod.amount;
-      if (r.challengerId && mod.playerId !== r.challengerId && hasTrophy(s, r.challengerId, 'monster-abyss-queen')) {
+      if (isCard && r.challengerId && mod.playerId !== r.challengerId && hasTrophy(s, r.challengerId, 'monster-abyss-queen')) {
         challengerTotal += 1;
       }
     } else {
       actorTotal += mod.amount;
-      if (mod.playerId !== r.byPlayerId && hasTrophy(s, r.byPlayerId, 'monster-abyss-queen')) {
+      if (isCard && mod.playerId !== r.byPlayerId && hasTrophy(s, r.byPlayerId, 'monster-abyss-queen')) {
         actorTotal += 1;
       }
     }
@@ -312,7 +380,9 @@ export function computeRollTotals(s: HtsState, r: HtsPendingRoll): { actorTotal:
 
 function drawCards(s: HtsState, playerId: PlayerId, count: number): HtsCard[] {
   const drawn: HtsCard[] = [];
-  for (let i = 0; i < count; i++) {
+  let remaining = count;
+  while (remaining > 0) {
+    remaining--;
     if (s.deck.length === 0 && s.discard.length > 0) {
       s.deck = shuffle(s.rngState, s.discard);
       s.discard = [];
@@ -322,13 +392,45 @@ function drawCards(s: HtsState, playerId: PlayerId, count: number): HtsCard[] {
     handOf(s, playerId).push(c);
     drawn.push(c);
 
-    // Trophy passive triggers on draw:
+    // Rex Major: "Each time you DRAW a Modifier card, you may reveal it, then
+    // DRAW a second card." Revealed (logged) and taken automatically.
     if (c.type === 'modifier' && hasTrophy(s, playerId, 'monster-rex-major')) {
-      if (s.deck.length > 0) {
-        const bonus = s.deck.shift()!;
-        handOf(s, playerId).push(bonus);
-        pushLog(s, playerId, `Rex Major: ${seatName(s, playerId)} drew a Modifier and drew an extra card!`, 'good');
-      }
+      pushLog(s, playerId, `Rex Major: ${seatName(s, playerId)} reveals ${c.name} and draws another card.`, 'good');
+      remaining++;
+    }
+  }
+
+  // Malamammoth / Orthus: "Each time you DRAW an Item (Magic) card, you may
+  // play it immediately." Only on your own turn — Items and Magic are played on
+  // your turn. The prompt opens on every draw, Item or not, so its appearance
+  // doesn't tell the table what was drawn.
+  if (drawn.length > 0 && playerId === s.turnPlayerId) {
+    const ids = drawn.map((c) => c.id);
+    if (hasTrophy(s, playerId, 'monster-malamammoth')) {
+      s.promptQueue.push({
+        kind: 'chooseCardsFromHand',
+        playerId,
+        reason: 'Malamammoth: if you drew an Item card, you may play it immediately.',
+        count: 1,
+        optional: true,
+        filter: 'item',
+        effectTag: 'playFreeItem',
+        onlyCardIds: ids,
+        keepIfEmpty: true,
+      });
+    }
+    if (hasTrophy(s, playerId, 'monster-orthus')) {
+      s.promptQueue.push({
+        kind: 'chooseCardsFromHand',
+        playerId,
+        reason: 'Orthus: if you drew a Magic card, you may play it immediately.',
+        count: 1,
+        optional: true,
+        filter: 'magic',
+        effectTag: 'playFreeMagic',
+        onlyCardIds: ids,
+        keepIfEmpty: true,
+      });
     }
   }
   return drawn;
@@ -359,41 +461,58 @@ function claimNiceGift(s: HtsState, playerId: PlayerId) {
   pushLog(s, playerId, `🎁 ${seatName(s, playerId)} claimed Nice Gift: ${gift.name} (${niceGiftsOf(s, playerId).length}/3)!`, 'good');
 }
 
+/**
+ * Here to Slay has no points: one player wins, everyone else loses. So the
+ * shell's ranking is winner 1, everyone else 0 (tied for second).
+ */
+function endGame(s: HtsState, winnerId: PlayerId, reason: string) {
+  s.phase = 'gameOver';
+  s.subPhase = 'gameOver';
+  s.activePlayerId = null;
+  s.winnerId = winnerId;
+  s.pendingPlay = null;
+  s.pendingRoll = null;
+  s.promptQueue = [];
+  s.finalScores = Object.fromEntries(s.seats.map((st) => [st.id, st.id === winnerId ? 1 : 0]));
+  pushLog(s, winnerId, `🏆 ${seatName(s, winnerId)} wins Here to Slay by ${reason}!`, 'good');
+}
+
+/**
+ * Wins that land the moment they happen: SLAY the third Monster (rulebook
+ * "Option 1"), and the unverified Here to Sleigh gift count. Checked once the
+ * current effect has fully resolved.
+ */
 function checkWinCondition(s: HtsState): boolean {
   if (s.phase === 'gameOver') return true;
   if (s.pendingPlay || s.pendingRoll || s.promptQueue.length > 0) return false;
 
-  const classesNeeded = getClassesToWin(s.config);
   const sleighEnabled = s.config.expansions.includes('here-to-sleigh');
-
   for (const seat of s.seats) {
     const monsterCount = trophiesOf(s, seat.id).length;
-    const classesCount = partyClasses(s, seat.id).size;
-    const giftCount = niceGiftsOf(s, seat.id).length;
-    if (
-      monsterCount >= s.config.monstersToWin ||
-      classesCount >= classesNeeded ||
-      (sleighEnabled && giftCount >= 3)
-    ) {
-      s.phase = 'gameOver';
-      s.subPhase = 'gameOver';
-      s.activePlayerId = null;
-      s.winnerId = seat.id;
-      s.finalScores = Object.fromEntries(
-        s.seats.map((st) => [
-          st.id,
-          trophiesOf(s, st.id).length * 10 + partyClasses(s, st.id).size + niceGiftsOf(s, st.id).length * 5,
-        ]),
-      );
-      const reason =
-        monsterCount >= s.config.monstersToWin
-          ? `slaying ${monsterCount} Monsters`
-          : sleighEnabled && giftCount >= 3
-            ? `collecting ${giftCount} Nice List Gifts`
-            : `assembling a full ${classesNeeded}-class Party`;
-      pushLog(s, seat.id, `🏆 ${seat.name} wins Here to Slay by ${reason}!`, 'good');
+    if (monsterCount >= s.config.monstersToWin) {
+      endGame(s, seat.id, `slaying ${monsterCount} Monsters`);
       return true;
     }
+    const giftCount = niceGiftsOf(s, seat.id).length;
+    if (sleighEnabled && giftCount >= 3) {
+      endGame(s, seat.id, `collecting ${giftCount} Nice List Gifts`);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Rulebook "Option 2: End your turn with a full Party" — only the player whose
+ * turn is ending, and only at the end of it. A full Party mid-turn (or on
+ * somebody else's turn) has to survive until then.
+ */
+function checkEndOfTurnWin(s: HtsState): boolean {
+  if (checkWinCondition(s)) return true;
+  const classesNeeded = getClassesToWin(s.config);
+  if (partyClasses(s, s.turnPlayerId).size >= classesNeeded) {
+    endGame(s, s.turnPlayerId, `ending their turn with a full ${classesNeeded}-class Party`);
+    return true;
   }
   return false;
 }
@@ -403,6 +522,13 @@ function advanceFlow(s: HtsState) {
 
   while (s.promptQueue.length > 0) {
     const front = s.promptQueue[0]!;
+    if (front.kind === 'step') {
+      s.promptQueue.shift();
+      runStep(s, front);
+      // A step can open a play (and so a Challenge window) of its own.
+      if (s.pendingPlay || s.pendingRoll) return;
+      continue;
+    }
     if (isPromptImpossible(s, front)) {
       s.promptQueue.shift();
       continue;
@@ -422,11 +548,24 @@ function advanceFlow(s: HtsState) {
   s.activePlayerId = s.turnPlayerId;
 }
 
+function runStep(s: HtsState, p: Extract<HtsPrompt, { kind: 'step' }>) {
+  const st = p.step;
+  if (st.type === 'draw') {
+    drawCards(s, p.playerId, st.count);
+  } else if (st.type === 'moveHero') {
+    if (partyOf(s, st.fromPlayerId).some((h) => h.card.id === st.heroCardId)) {
+      removeHeroFromParty(s, st.fromPlayerId, st.heroCardId, 'move', { toPlayerId: st.toPlayerId });
+      pushLog(s, p.playerId, `${seatName(s, st.toPlayerId)} receives a Hero from ${seatName(s, st.fromPlayerId)}'s Party.`, 'normal');
+    }
+  }
+}
+
 function isPromptImpossible(s: HtsState, p: HtsPrompt): boolean {
   if (p.kind === 'chooseHeroTarget') {
     return validHeroTargets(s, p).length === 0;
   }
   if (p.kind === 'chooseCardsFromHand') {
+    if (p.keepIfEmpty) return false;
     const valid = validHandCardsForPrompt(s, p);
     return valid.length === 0;
   }
@@ -444,9 +583,15 @@ export function validHandCardsForPrompt(
   p: Extract<HtsPrompt, { kind: 'chooseCardsFromHand' }>,
 ): HtsCard[] {
   const hand = handOf(s, p.playerId);
+  const playsItem = p.effectTag === 'playFreeItem' || p.effectTag === 'playFreeItemsUpTo2';
   return hand.filter((c) => {
+    if (p.onlyCardIds && !p.onlyCardIds.includes(c.id)) return false;
     if (p.filter === 'hero') return c.type === 'hero';
-    if (p.filter === 'item') return c.type === 'item' || c.type === 'cursedItem';
+    if (p.filter === 'item') {
+      if (c.type !== 'item' && c.type !== 'cursedItem') return false;
+      // An Item must be equipped the moment it is played: it needs a Hero that can take it.
+      return !playsItem || s.seats.some((st) => partyOf(s, st.id).some((h) => canEquipItemToHero(h, c)));
+    }
     if (p.filter === 'magic') return c.type === 'magic';
     return true;
   });
@@ -482,17 +627,20 @@ function removeHeroFromParty(
     stealEquippedItemToHand?: PlayerId;
     skipSabretoothCheck?: boolean;
   },
-) {
+): 'done' | 'deferred' | 'saved' | 'missing' {
   const party = partyOf(s, ownerId);
   const idx = party.findIndex((h) => h.card.id === heroCardId);
-  if (idx < 0) return;
+  if (idx < 0) return 'missing';
   const hero = party[idx]!;
 
   // Corrupted Sabretooth check: "Each time you would DESTROY a Hero card, you may STEAL that Hero card instead."
+  // (Only if the Hero could be stolen — Calming Voice / Roaryal Guard block it.)
   if (
     reason === 'destroy' &&
     opts?.byPlayerId &&
+    opts.byPlayerId !== ownerId &&
     hasTrophy(s, opts.byPlayerId, 'monster-corrupted-sabretooth') &&
+    canStealPartyHero(s, ownerId) &&
     !opts?.skipSabretoothCheck
   ) {
     s.promptQueue.unshift({
@@ -500,8 +648,9 @@ function removeHeroFromParty(
       playerId: opts.byPlayerId,
       ownerId,
       heroCardId,
+      stealItemToHand: !!opts.stealEquippedItemToHand,
     });
-    return;
+    return 'deferred';
   }
 
   // Decoy Doll check on sacrifice or destroy
@@ -509,7 +658,7 @@ function removeHeroFromParty(
     const doll = removeItemFromHero(hero, (i) => i.kind === 'decoy-doll');
     if (doll) s.discard.push(doll);
     pushLog(s, ownerId, `Decoy Doll sacrificed itself to save ${hero.card.name}!`, 'good');
-    return;
+    return 'saved';
   }
 
   party.splice(idx, 1);
@@ -519,7 +668,7 @@ function removeHeroFromParty(
     if (destId) {
       partyOf(s, destId).push(hero);
     }
-    return;
+    return 'done';
   }
 
   // Destroy or Sacrifice
@@ -548,30 +697,81 @@ function removeHeroFromParty(
     }
     const destroyerId = opts?.byPlayerId;
     if (destroyerId) {
-      if (s.partyLeaders[destroyerId]?.kind === 'leader-raging-manticore') {
-        drawCards(s, destroyerId, 2);
-        pushLog(s, destroyerId, `The Raging Manticore: ${seatName(s, destroyerId)} drew 2 cards for destroying a Hero!`, 'good');
-      }
       if (hasTrophy(s, destroyerId, 'monster-venomous-gemini')) {
         drawCards(s, destroyerId, 1);
         pushLog(s, destroyerId, `Venomous Gemini: ${seatName(s, destroyerId)} drew a card for destroying a Hero!`, 'good');
       }
     }
   }
+  return 'done';
 }
 
 // ============================================================================
 // Challenge & Modifier Windows
 // ============================================================================
 
+/** Seat ids clockwise, starting with `from`. */
+function seatsFrom(s: HtsState, from: PlayerId): PlayerId[] {
+  const ids = s.seats.map((st) => st.id);
+  const i = Math.max(0, ids.indexOf(from));
+  return [...ids.slice(i), ...ids.slice(0, i)];
+}
+
+/**
+ * Who may CHALLENGE a card being played: every other player holding a
+ * Challenge card, clockwise from the player's left. A card can only be
+ * challenged once, so the window closes after the first Challenge lands.
+ */
 function buildChallengeQueue(s: HtsState, byPlayerId: PlayerId, card: HtsCard): PlayerId[] {
   if (s.turnBuffs.unchallengeable && byPlayerId === s.turnPlayerId) return [];
   if ((card.type === 'item' || card.type === 'cursedItem') && hasTrophy(s, byPlayerId, 'monster-warworn-owlbear')) {
     return [];
   }
-  return s.seats
-    .map((st) => st.id)
-    .filter((id) => id !== byPlayerId && handOf(s, id).some((c) => c.type === 'challenge'));
+  return seatsFrom(s, byPlayerId).filter((id) => id !== byPlayerId && handOf(s, id).some((c) => c.type === 'challenge'));
+}
+
+/**
+ * Put a Hero / Item / Magic card "into play" — from an action point or from an
+ * effect that plays a card from your hand "immediately". Either way it is
+ * played from your hand, so it can be Challenged (rulebook: "when that player
+ * attempts to play a Hero, Item, or Magic card from their hand"). The caller
+ * must not run advanceFlow afterwards: resolution does that.
+ */
+function beginPlay(s: HtsState, by: PlayerId, card: HtsCard, target?: { playerId: PlayerId; heroCardId: number }) {
+  s.pendingPlay = {
+    byPlayerId: by,
+    card,
+    targetPlayerId: target?.playerId ?? (card.type === 'hero' ? by : null),
+    targetHeroCardId: target?.heroCardId ?? null,
+    responderQueue: [],
+  };
+  openOrResolvePlay(s);
+}
+
+/** Take an Item from hand and play it onto a Hero (the target was chosen through a prompt). */
+function playItemFromHand(s: HtsState, by: PlayerId, itemCardId: number, ownerId: PlayerId, heroCardId: number) {
+  const hand = handOf(s, by);
+  const idx = hand.findIndex((c) => c.id === itemCardId);
+  if (idx < 0) throw new Error('item card not in hand');
+  const card = hand.splice(idx, 1)[0]!;
+  const hero = partyOf(s, ownerId).find((h) => h.card.id === heroCardId);
+  pushLog(s, by, `${seatName(s, by)} played ${card.name} on ${hero?.card.name ?? 'a Hero'}.`, 'normal');
+  beginPlay(s, by, card, { playerId: ownerId, heroCardId });
+}
+
+/** Ask `by` where the Item goes ("you must immediately equip it to a Hero card"). */
+function queueEquipTarget(s: HtsState, by: PlayerId, item: HtsCard, front: boolean) {
+  const prompt: HtsPrompt = {
+    kind: 'chooseHeroTarget',
+    playerId: by,
+    reason: `Equip ${item.name}: choose the Hero to wear it${item.type === 'cursedItem' ? ' (cursed — best given away)' : ''}.`,
+    optional: false,
+    scope: 'any',
+    mode: 'equipItem',
+    itemCardId: item.id,
+  };
+  if (front) s.promptQueue.unshift(prompt);
+  else s.promptQueue.push(prompt);
 }
 
 function openOrResolvePlay(s: HtsState) {
@@ -633,25 +833,37 @@ function resolvePendingPlay(s: HtsState, cancelled: boolean) {
   advanceFlow(s);
 }
 
-function buildModifierQueue(s: HtsState, excludePlayerId?: PlayerId): PlayerId[] {
-  return s.seats
-    .map((st) => st.id)
-    .filter((id) => {
-      if (id === excludePlayerId) return false;
-      if (s.turnBuffs.noOpponentModifiers && id !== s.turnPlayerId) return false;
-      const hasModifierCard = handOf(s, id).some((c) => c.type === 'modifier');
-      const canUseNobleShaman =
-        id === s.turnPlayerId &&
-        s.partyLeaders[id]?.kind === 'leader-noble-shaman' &&
-        !s.turnBuffs.nobleShamanUsed;
-      return hasModifierCard || canUseNobleShaman;
-    });
+function canPlayModifiers(s: HtsState, id: PlayerId): boolean {
+  return !(s.turnBuffs.noOpponentModifiers && id !== s.turnPlayerId);
 }
 
-function openOrResolveRoll(s: HtsState, justModifiedBy?: PlayerId) {
+/**
+ * The Noble Shaman: "Once per turn on each player's turn, you may choose any
+ * player's roll. -1 to that roll." Not a Modifier card, so a no-Modifiers
+ * effect doesn't stop it.
+ */
+export function canUseNobleShaman(s: HtsState, id: PlayerId): boolean {
+  return s.partyLeaders[id]?.kind === 'leader-noble-shaman' && !s.turnBuffs.nobleShamanUsed;
+}
+
+/**
+ * Everyone who could still change the roll, clockwise from the roller.
+ * "Each player may play any number of Modifier cards on the same roll", so the
+ * queue is rebuilt after every Modifier — including the player who just
+ * played one. It terminates: each play spends a card, each decline advances.
+ */
+function buildModifierQueue(s: HtsState, rollerId: PlayerId): PlayerId[] {
+  return seatsFrom(s, rollerId).filter((id) => {
+    if (!canPlayModifiers(s, id)) return false;
+    const hasModifierCard = handOf(s, id).some((c) => c.type === 'modifier');
+    return hasModifierCard || canUseNobleShaman(s, id);
+  });
+}
+
+function openOrResolveRoll(s: HtsState) {
   const r = s.pendingRoll;
   if (!r) throw new Error('openOrResolveRoll with no pendingRoll');
-  const queue = buildModifierQueue(s, justModifiedBy);
+  const queue = buildModifierQueue(s, r.byPlayerId);
   r.responderQueue = queue;
   const first = queue[0];
   if (!first) {
@@ -674,9 +886,13 @@ function resolvePendingRoll(s: HtsState) {
   }
 
   const { actorTotal, challengerTotal } = computeRollTotals(s, r);
+  const record = (subject: string, outcome: HtsRollRecord['outcome']) => {
+    s.lastRoll = { seq: (s.lastRoll?.seq ?? 0) + 1, roll: { ...r, responderQueue: [] }, actorTotal, challengerTotal, subject, outcome };
+  };
 
   if (r.reason === 'challengeDuel') {
     const challengerWon = challengerTotal >= actorTotal;
+    record(s.pendingPlay?.card.name ?? 'the card', challengerWon ? 'challengeWon' : 'cardStands');
     pushLog(
       s,
       r.byPlayerId,
@@ -689,9 +905,10 @@ function resolvePendingRoll(s: HtsState) {
 
   if (r.reason === 'heroAbility') {
     const hero = partyOf(s, r.byPlayerId).find((h) => h.card.id === r.sourceCardId);
-    const heroCard = hero?.card ?? HTS_PARTY_LEADERS[0];
+    const heroCard = hero?.card;
     const isLow = Boolean(r.rollLow ?? hero?.card.rollLow);
     const success = isLow ? actorTotal <= r.threshold : actorTotal >= r.threshold;
+    record(heroCard?.name ?? 'a Hero', success ? 'success' : 'failure');
     pushLog(
       s,
       r.byPlayerId,
@@ -752,12 +969,18 @@ function resolvePendingRoll(s: HtsState) {
 
     const slain = monster.slayOnLow ? actorTotal <= monster.slayThreshold : actorTotal >= monster.slayThreshold;
     const failed = monster.slayOnLow ? actorTotal >= monster.failThreshold : actorTotal <= monster.failThreshold;
+    record(monster.card.name, slain ? 'slain' : failed ? 'penalty' : 'nothing');
 
     if (slain) {
       s.monsterRow.splice(idx, 1);
       trophiesOf(s, r.byPlayerId).push(monster);
       if (monster.card.kind === 'monster-frostbite-krampus') {
         claimNiceGift(s, r.byPlayerId);
+      }
+      // The Raging Manticore: "Each time you SLAY a Monster card, DRAW 2 cards."
+      if (s.partyLeaders[r.byPlayerId]?.kind === 'leader-raging-manticore') {
+        drawCards(s, r.byPlayerId, 2);
+        pushLog(s, r.byPlayerId, `The Raging Manticore: ${seatName(s, r.byPlayerId)} draws 2 cards for the slay.`, 'good');
       }
       const replacement = s.monsterDeck.shift();
       if (replacement) s.monsterRow.push(replacement);
@@ -909,18 +1132,17 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
       });
       break;
     case 'fuzzy-cheeks':
+      // "DRAW a card and play a Hero card from your hand immediately." — not a "may".
       drawCards(s, byPlayerId, 1);
-      if (handOf(s, byPlayerId).some((c) => c.type === 'hero')) {
-        s.promptQueue.push({
-          kind: 'chooseCardsFromHand',
-          playerId: byPlayerId,
-          reason: 'Fuzzy Cheeks: you may play a Hero card from your hand immediately.',
-          count: 1,
-          optional: true,
-          filter: 'hero',
-          effectTag: 'playFreeHero',
-        });
-      }
+      s.promptQueue.push({
+        kind: 'chooseCardsFromHand',
+        playerId: byPlayerId,
+        reason: 'Fuzzy Cheeks: play a Hero card from your hand immediately.',
+        count: 1,
+        optional: false,
+        filter: 'hero',
+        effectTag: 'playFreeHero',
+      });
       break;
     case 'greedy-cheeks':
       for (const seat of s.seats) {
@@ -949,15 +1171,17 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
       break;
     case 'mellow-dee': {
       const drawn = drawCards(s, byPlayerId, 1);
-      if (drawn[0]?.type === 'hero') {
+      if (drawn.length > 0) {
         s.promptQueue.push({
           kind: 'chooseCardsFromHand',
           playerId: byPlayerId,
-          reason: 'Mellow Dee: you drew a Hero card! You may play it immediately.',
+          reason: 'Mellow Dee: if the card you drew is a Hero card, you may play it immediately.',
           count: 1,
           optional: true,
           filter: 'hero',
           effectTag: 'playFreeHero',
+          onlyCardIds: drawn.map((c) => c.id),
+          keepIfEmpty: true,
         });
       }
       break;
@@ -996,14 +1220,16 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
       }
       break;
     }
-    case 'holy-curselifter': {
-      const cursedHero = partyOf(s, byPlayerId).find((h) => h.equippedItem?.type === 'cursedItem');
-      if (cursedHero?.equippedItem) {
-        handOf(s, byPlayerId).push(cursedHero.equippedItem);
-        cursedHero.equippedItem = null;
-      }
+    case 'holy-curselifter':
+      s.promptQueue.push({
+        kind: 'chooseHeroTarget',
+        playerId: byPlayerId,
+        reason: 'Holy Curselifter: choose a Hero in your Party whose Cursed Item returns to your hand.',
+        optional: false,
+        scope: 'own',
+        mode: 'returnCursedItem',
+      });
       break;
-    }
     case 'iron-resolve':
       s.turnBuffs.unchallengeable = true;
       pushLog(s, byPlayerId, 'Iron Resolve: your cards cannot be challenged for the rest of your turn.', 'good');
@@ -1046,18 +1272,19 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
       break;
     }
     case 'hook':
-      drawCards(s, byPlayerId, 1);
-      if (handOf(s, byPlayerId).some((c) => c.type === 'item' || c.type === 'cursedItem')) {
-        s.promptQueue.push({
+      // "Play an Item card from your hand immediately and DRAW a card." — play first, then draw.
+      s.promptQueue.push(
+        {
           kind: 'chooseCardsFromHand',
           playerId: byPlayerId,
-          reason: 'Hook: you may play an Item card from your hand immediately.',
+          reason: 'Hook: play an Item card from your hand immediately (then DRAW a card).',
           count: 1,
-          optional: true,
+          optional: false,
           filter: 'item',
           effectTag: 'playFreeItem',
-        });
-      }
+        },
+        { kind: 'step', playerId: byPlayerId, step: { type: 'draw', count: 1 } },
+      );
       break;
     case 'lookie-rookie': {
       const items = s.discard.filter((c) => c.type === 'item' || c.type === 'cursedItem');
@@ -1075,29 +1302,33 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
     }
     case 'quick-draw': {
       const drawn = drawCards(s, byPlayerId, 2);
-      if (drawn.some((c) => c.type === 'item' || c.type === 'cursedItem')) {
+      if (drawn.length > 0) {
         s.promptQueue.push({
           kind: 'chooseCardsFromHand',
           playerId: byPlayerId,
-          reason: 'Quick Draw: you drew an Item card! You may play it immediately.',
+          reason: 'Quick Draw: if one of the cards you drew is an Item card, you may play it immediately.',
           count: 1,
           optional: true,
           filter: 'item',
           effectTag: 'playFreeItem',
+          onlyCardIds: drawn.map((c) => c.id),
+          keepIfEmpty: true,
         });
       }
       break;
     }
     case 'serious-grey':
-      drawCards(s, byPlayerId, 1);
-      s.promptQueue.push({
-        kind: 'chooseHeroTarget',
-        playerId: byPlayerId,
-        reason: 'Serious Grey: choose a Hero card to DESTROY.',
-        optional: false,
-        scope: 'others',
-        mode: 'destroy',
-      });
+      s.promptQueue.push(
+        {
+          kind: 'chooseHeroTarget',
+          playerId: byPlayerId,
+          reason: 'Serious Grey: choose a Hero card to DESTROY (then DRAW a card).',
+          optional: false,
+          scope: 'others',
+          mode: 'destroy',
+        },
+        { kind: 'step', playerId: byPlayerId, step: { type: 'draw', count: 1 } },
+      );
       break;
     case 'sharp-fox':
       s.promptQueue.push({
@@ -1236,7 +1467,7 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
           kind: 'chooseHeroTarget',
           playerId: byPlayerId,
           reason: 'Fluffy (1 of 2): choose a Hero card to DESTROY.',
-          optional: true,
+          optional: false,
           scope: 'others',
           mode: 'destroy',
         },
@@ -1244,7 +1475,7 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
           kind: 'chooseHeroTarget',
           playerId: byPlayerId,
           reason: 'Fluffy (2 of 2): choose a second Hero card to DESTROY.',
-          optional: true,
+          optional: false,
           scope: 'others',
           mode: 'destroy',
         },
@@ -1261,15 +1492,17 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
       break;
     case 'snowball': {
       const drawn = drawCards(s, byPlayerId, 1);
-      if (drawn[0]?.type === 'magic') {
+      if (drawn.length > 0) {
         s.promptQueue.push({
           kind: 'chooseCardsFromHand',
           playerId: byPlayerId,
-          reason: 'Snowball: you drew a Magic card! You may play it immediately and DRAW a second card.',
+          reason: 'Snowball: if the card you drew is a Magic card, you may play it immediately and DRAW a second card.',
           count: 1,
           optional: true,
           filter: 'magic',
           effectTag: 'snowballFreeMagic',
+          onlyCardIds: drawn.map((c) => c.id),
+          keepIfEmpty: true,
         });
       }
       break;
@@ -1859,15 +2092,17 @@ function resolveMagicEffect(s: HtsState, byPlayerId: PlayerId, card: HtsCard) {
       pushLog(s, byPlayerId, 'Forceful Winds returned every equipped Item card to its owner!', 'normal');
       break;
     case 'winds-of-change':
-      drawCards(s, byPlayerId, 1);
-      s.promptQueue.push({
-        kind: 'chooseHeroTarget',
-        playerId: byPlayerId,
-        reason: 'Winds of Change: choose a Hero with an equipped Item to return that Item to its owner.',
-        optional: true,
-        scope: 'any',
-        mode: 'bounceItem',
-      });
+      s.promptQueue.push(
+        {
+          kind: 'chooseHeroTarget',
+          playerId: byPlayerId,
+          reason: "Winds of Change: choose a Hero whose equipped Item returns to its owner's hand (then DRAW a card).",
+          optional: false,
+          scope: 'any',
+          mode: 'bounceItem',
+        },
+        { kind: 'step', playerId: byPlayerId, step: { type: 'draw', count: 1 } },
+      );
       break;
     case 'beast-call': {
       drawCards(s, byPlayerId, 1);
@@ -1926,52 +2161,25 @@ function requireTurnAction(s: HtsState, playerId: PlayerId, apCost: number) {
   if (s.actionPointsRemaining < apCost) throw new Error(`need ${apCost} AP (have ${s.actionPointsRemaining})`);
 }
 
+/**
+ * Leader draft (setup only). "Your Party Leader card remains in your Party for
+ * the duration of the game" — there is no way to change it afterwards.
+ */
 function handleChoosePartyLeader(s: HtsState, a: Extract<HtsAction, { type: 'choosePartyLeader' }>) {
-  const def = HTS_ALL_PARTY_LEADERS.find((l) => l.kind === a.leaderKind);
-  if (!def) throw new Error('unknown party leader');
-  s.partyLeaders[a.playerId] = {
-    id: s.partyLeaders[a.playerId]?.id ?? 1,
-    kind: def.kind,
-    name: def.name,
-    type: 'partyLeader',
-    class: def.class,
-    text: def.text,
-    abilityThreshold: null,
-    modifierChoices: null,
-    expansion: def.expansion,
-  };
-  pushLog(s, a.playerId, `${seatName(s, a.playerId)} selected Party Leader: ${def.name}.`, 'normal');
+  const draft = s.leaderDraft;
+  if (s.subPhase !== 'choosingLeaders' || !draft) throw new Error('Party Leaders are chosen at the start of the game');
+  if (draft.order[0] !== a.playerId) throw new Error('not your pick');
+  const leader = draft.pool.find((c) => c.kind === a.leaderKind);
+  if (!leader) throw new Error('that Party Leader is not available');
+  assignLeader(s, a.playerId, leader);
+  autoPickForcedLeader(s);
 }
 
 function handleDrawCard(s: HtsState, a: Extract<HtsAction, { type: 'drawCard' }>) {
   requireTurnAction(s, a.playerId, 1);
   s.actionPointsRemaining -= 1;
-  const drawn = drawCards(s, a.playerId, 1);
+  drawCards(s, a.playerId, 1);
   pushLog(s, a.playerId, `${seatName(s, a.playerId)} spent 1 AP to draw a card.`, 'normal');
-
-  const card = drawn[0];
-  if (card && (card.type === 'item' || card.type === 'cursedItem') && hasTrophy(s, a.playerId, 'monster-malamammoth')) {
-    s.promptQueue.push({
-      kind: 'chooseCardsFromHand',
-      playerId: a.playerId,
-      reason: 'Malamammoth: you drew an Item card and may play it immediately for free!',
-      count: 1,
-      optional: true,
-      filter: 'item',
-      effectTag: 'playFreeItem',
-    });
-  } else if (card && card.type === 'magic' && hasTrophy(s, a.playerId, 'monster-orthus')) {
-    s.promptQueue.push({
-      kind: 'chooseCardsFromHand',
-      playerId: a.playerId,
-      reason: 'Orthus: you drew a Magic card and may play it immediately for free!',
-      count: 1,
-      optional: true,
-      filter: 'magic',
-      effectTag: 'playFreeMagic',
-    });
-  }
-
   advanceFlow(s);
 }
 
@@ -1986,15 +2194,7 @@ function handlePlayHero(s: HtsState, a: Extract<HtsAction, { type: 'playHero' }>
   hand.splice(idx, 1);
   s.actionPointsRemaining -= 1;
   pushLog(s, a.playerId, `${seatName(s, a.playerId)} played Hero ${card.name}.`, 'normal');
-
-  s.pendingPlay = {
-    byPlayerId: a.playerId,
-    card,
-    targetPlayerId: a.playerId,
-    targetHeroCardId: null,
-    responderQueue: [],
-  };
-  openOrResolvePlay(s);
+  beginPlay(s, a.playerId, card);
 }
 
 function handleEquipItem(s: HtsState, a: Extract<HtsAction, { type: 'equipItem' }>) {
@@ -2009,18 +2209,8 @@ function handleEquipItem(s: HtsState, a: Extract<HtsAction, { type: 'equipItem' 
   if (!hero) throw new Error('target Hero not found');
   if (!canEquipItemToHero(hero, card)) throw new Error('target Hero cannot equip this Item');
 
-  hand.splice(idx, 1);
   s.actionPointsRemaining -= 1;
-  pushLog(s, a.playerId, `${seatName(s, a.playerId)} played ${card.name} on ${hero.card.name}.`, 'normal');
-
-  s.pendingPlay = {
-    byPlayerId: a.playerId,
-    card,
-    targetPlayerId: a.targetPlayerId,
-    targetHeroCardId: a.heroCardId,
-    responderQueue: [],
-  };
-  openOrResolvePlay(s);
+  playItemFromHand(s, a.playerId, card.id, a.targetPlayerId, a.heroCardId);
 }
 
 function handlePlayMagic(s: HtsState, a: Extract<HtsAction, { type: 'playMagic' }>) {
@@ -2034,15 +2224,7 @@ function handlePlayMagic(s: HtsState, a: Extract<HtsAction, { type: 'playMagic' 
   hand.splice(idx, 1);
   s.actionPointsRemaining -= 1;
   pushLog(s, a.playerId, `${seatName(s, a.playerId)} played Magic card ${card.name}.`, 'normal');
-
-  s.pendingPlay = {
-    byPlayerId: a.playerId,
-    card,
-    targetPlayerId: null,
-    targetHeroCardId: null,
-    responderQueue: [],
-  };
-  openOrResolvePlay(s);
+  beginPlay(s, a.playerId, card);
 }
 
 function handleUseHeroAbility(s: HtsState, a: Extract<HtsAction, { type: 'useHeroAbility' }>) {
@@ -2119,47 +2301,16 @@ function handleNobleShamanAdjust(s: HtsState, a: Extract<HtsAction, { type: 'nob
   if (s.partyLeaders[a.playerId]?.kind !== 'leader-noble-shaman') {
     throw new Error('your Party Leader is not The Noble Shaman');
   }
-  if (a.playerId !== s.turnPlayerId) {
-    throw new Error('The Noble Shaman ability can only be used on your turn');
-  }
-  if (s.turnBuffs.nobleShamanUsed) {
-    throw new Error('The Noble Shaman ability was already used this turn');
-  }
-  if (a.delta !== 1 && a.delta !== -1) {
-    throw new Error('Noble Shaman delta must be +1 or -1');
-  }
-
+  if (!canUseNobleShaman(s, a.playerId)) throw new Error('The Noble Shaman was already used this turn');
+  if (a.delta !== -1) throw new Error('The Noble Shaman gives -1 to a roll');
+  if (s.subPhase !== 'awaitingModifiers' || !s.pendingRoll) throw new Error('The Noble Shaman answers a roll');
+  const r = s.pendingRoll;
+  const side = a.targetSide === 'challenger' && r.challengerId ? 'challenger' : 'actor';
   s.turnBuffs.nobleShamanUsed = true;
-  if (s.subPhase === 'awaitingModifiers' && s.pendingRoll) {
-    s.pendingRoll.modifiers.push({
-      playerId: a.playerId,
-      card: s.partyLeaders[a.playerId]!,
-      amount: a.delta,
-      targetSide: 'actor',
-    });
-    pushLog(
-      s,
-      a.playerId,
-      `The Noble Shaman: ${seatName(s, a.playerId)} applied ${a.delta > 0 ? '+1' : '-1'} to the roll!`,
-      'good',
-    );
-    openOrResolveRoll(s, a.playerId);
-    return;
-  }
-
-  if (s.subPhase === 'awaitingAction') {
-    s.turnBuffs.rollBonus += a.delta;
-    pushLog(
-      s,
-      a.playerId,
-      `The Noble Shaman: ${seatName(s, a.playerId)} adjusted their turn roll bonus by ${a.delta > 0 ? '+1' : '-1'}!`,
-      'good',
-    );
-    advanceFlow(s);
-    return;
-  }
-
-  throw new Error(`cannot use Noble Shaman during ${s.subPhase}`);
+  r.modifiers.push({ playerId: a.playerId, card: s.partyLeaders[a.playerId]!, amount: -1, targetSide: side });
+  const whose = side === 'challenger' ? r.challengerId : r.byPlayerId;
+  pushLog(s, a.playerId, `The Noble Shaman: ${seatName(s, a.playerId)} gives ${seatName(s, whose)}'s roll -1.`, 'normal');
+  openOrResolveRoll(s);
 }
 
 function handleGnawingDreadSearch(s: HtsState, a: Extract<HtsAction, { type: 'gnawingDreadSearch' }>) {
@@ -2274,6 +2425,7 @@ function handlePlayModifier(s: HtsState, a: Extract<HtsAction, { type: 'playModi
   const r = s.pendingRoll;
   if (!r) throw new Error('no pendingRoll');
 
+  if (!canPlayModifiers(s, a.playerId)) throw new Error('no other player can play Modifier cards this turn');
   const hand = handOf(s, a.playerId);
   const idx = hand.findIndex((c) => c.id === a.cardId && c.type === 'modifier');
   if (idx < 0) throw new Error('Modifier card not in hand');
@@ -2311,7 +2463,7 @@ function handlePlayModifier(s: HtsState, a: Extract<HtsAction, { type: 'playModi
     amount >= 0 ? 'good' : 'danger',
   );
 
-  openOrResolveRoll(s, a.playerId);
+  openOrResolveRoll(s);
 }
 
 function handleDeclineModifier(s: HtsState, a: Extract<HtsAction, { type: 'declineModifier' }>) {
@@ -2334,6 +2486,7 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
   const prompt = s.promptQueue[0];
   if (!prompt) throw new Error('prompt queue empty');
   if (a.playerId !== prompt.playerId) throw new Error('not your prompt');
+  if (prompt.kind === 'step') throw new Error('nothing to decide');
 
   s.promptQueue.shift();
 
@@ -2375,10 +2528,22 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
       const target = valid.find((v) => v.hero.card.id === a.targetCardId);
       if (!target) throw new Error('invalid Hero target');
 
+      if (prompt.mode === 'equipItem') {
+        // Played from hand onto the chosen Hero — so it can be Challenged.
+        playItemFromHand(s, prompt.playerId, prompt.itemCardId!, target.ownerId, target.hero.card.id);
+        return;
+      }
       if (prompt.mode === 'bounceItem') {
         const removed = removeItemFromHero(target.hero, () => true);
         if (removed) {
           handOf(s, target.ownerId).push(removed);
+          pushLog(s, prompt.playerId, `${removed.name} returned to ${seatName(s, target.ownerId)}'s hand.`, 'normal');
+        }
+      } else if (prompt.mode === 'returnCursedItem') {
+        const removed = removeItemFromHero(target.hero, (i) => i.type === 'cursedItem');
+        if (removed) {
+          handOf(s, prompt.playerId).push(removed);
+          pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} lifted ${removed.name} off ${target.hero.card.name}.`, 'good');
         }
       } else if (prompt.mode === 'stealItem') {
         const removed = removeItemFromHero(target.hero, () => true);
@@ -2390,6 +2555,7 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
         removeHeroFromParty(s, target.ownerId, target.hero.card.id, 'move', {
           toPlayerId: prompt.specificPlayerId,
         });
+        pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} moved ${target.hero.card.name} to ${seatName(s, prompt.specificPlayerId)}'s Party.`, 'normal');
       } else if (prompt.mode === 'steal') {
         removeHeroFromParty(s, target.ownerId, target.hero.card.id, 'steal', {
           byPlayerId: prompt.playerId,
@@ -2404,16 +2570,16 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
           });
         }
       } else if (prompt.mode === 'sacrifice') {
-        removeHeroFromParty(s, target.ownerId, target.hero.card.id, 'sacrifice', {
+        const res = removeHeroFromParty(s, target.ownerId, target.hero.card.id, 'sacrifice', {
           byPlayerId: prompt.playerId,
         });
-        pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} sacrificed ${target.hero.card.name}.`, 'normal');
+        if (res === 'done') pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} sacrificed ${target.hero.card.name}.`, 'normal');
       } else if (prompt.mode === 'destroy') {
-        removeHeroFromParty(s, target.ownerId, target.hero.card.id, 'destroy', {
+        const res = removeHeroFromParty(s, target.ownerId, target.hero.card.id, 'destroy', {
           byPlayerId: prompt.playerId,
           stealEquippedItemToHand: prompt.effectTag === 'shurikittyDestroy' ? prompt.playerId : undefined,
         });
-        pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} destroyed ${target.hero.card.name}!`, 'danger');
+        if (res === 'done') pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} destroyed ${target.hero.card.name}!`, 'danger');
       }
 
       advanceFlow(s);
@@ -2428,11 +2594,25 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
       }
       const valid = validHandCardsForPrompt(s, prompt);
       const ids = a.cardIds ?? [];
+      if (new Set(ids).size !== ids.length) throw new Error('duplicate card');
+      if (ids.some((id) => !valid.some((c) => c.id === id))) throw new Error('that card cannot be chosen');
       if (prompt.upTo) {
         if (ids.length < 1 || ids.length > prompt.count) throw new Error('invalid card count');
       } else {
         const needed = Math.min(prompt.count, valid.length);
         if (ids.length !== needed) throw new Error(`must choose ${needed} card(s)`);
+      }
+
+      // Items stay in hand until their Hero is picked: they are played (and
+      // can be Challenged) only once they have somewhere to go.
+      if (prompt.effectTag === 'playFreeItem' || prompt.effectTag === 'playFreeItemsUpTo2') {
+        const hand = handOf(s, prompt.playerId);
+        for (const id of [...ids].reverse()) {
+          const item = hand.find((c) => c.id === id)!;
+          queueEquipTarget(s, prompt.playerId, item, true);
+        }
+        advanceFlow(s);
+        return;
       }
 
       const hand = handOf(s, prompt.playerId);
@@ -2444,24 +2624,21 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
       }
 
       if (prompt.effectTag === 'playFreeHero') {
-        const heroCard = chosen[0]!;
-        partyOf(s, prompt.playerId).push({ card: heroCard, equippedItem: null, usedThisTurn: false });
-        s.promptQueue.unshift({ kind: 'rollEnteredHero', playerId: prompt.playerId, heroCard });
-      } else if (prompt.effectTag === 'playFreeItem' || prompt.effectTag === 'playFreeItemsUpTo2') {
-        for (const item of chosen) {
-          const ownHero = partyOf(s, prompt.playerId).find((h) => canEquipItemToHero(h, item));
-          if (ownHero) {
-            equipItemOnHero(ownHero, item);
-          } else {
-            hand.push(item);
-          }
+        const heroCard = chosen[0];
+        if (heroCard) {
+          pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} played Hero ${heroCard.name}.`, 'normal');
+          beginPlay(s, prompt.playerId, heroCard);
+          return;
         }
       } else if (prompt.effectTag === 'playFreeMagic' || prompt.effectTag === 'snowballFreeMagic') {
-        const magic = chosen[0]!;
-        s.discard.push(magic);
-        resolveMagicEffect(s, prompt.playerId, magic);
-        if (prompt.effectTag === 'snowballFreeMagic') {
-          drawCards(s, prompt.playerId, 1);
+        const magic = chosen[0];
+        if (magic) {
+          if (prompt.effectTag === 'snowballFreeMagic') {
+            s.promptQueue.unshift({ kind: 'step', playerId: prompt.playerId, step: { type: 'draw', count: 1 } });
+          }
+          pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} played Magic card ${magic.name}.`, 'normal');
+          beginPlay(s, prompt.playerId, magic);
+          return;
         }
       } else if (prompt.effectTag === 'greedyCheeksGive' && prompt.toPlayerId) {
         handOf(s, prompt.toPlayerId).push(...chosen);
@@ -2482,12 +2659,13 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
       } else {
         s.discard.push(...chosen);
         if (prompt.effectTag === 'qiBearDiscard') {
+          // "For each card discarded, DESTROY a Hero card."
           for (let i = 0; i < chosen.length; i++) {
             s.promptQueue.unshift({
               kind: 'chooseHeroTarget',
               playerId: prompt.playerId,
-              reason: `Qi Bear (${i + 1} of ${chosen.length}): choose a Hero card to DESTROY.`,
-              optional: true,
+              reason: `Qi Bear (${chosen.length - i} of ${chosen.length}): choose a Hero card to DESTROY.`,
+              optional: false,
               scope: 'others',
               mode: 'destroy',
             });
@@ -2524,9 +2702,6 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
             scope: 'others',
             mode: 'steal',
           });
-        } else if (prompt.effectTag === 'endOfTurnLimit') {
-          finishTurnAdvance(s);
-          return;
         }
       }
 
@@ -2548,6 +2723,22 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
         if (pulled) handOf(s, prompt.playerId).push(pulled);
         return pulled ?? null;
       };
+      /** "If that card is a <type>, you may play it immediately" — always asked, so the prompt doesn't reveal the card. */
+      const mayPlayPulled = (card: HtsCard | null, filter: 'hero' | 'item' | 'magic', name: string) => {
+        if (!card) return;
+        const label = filter === 'hero' ? 'a Hero' : filter === 'item' ? 'an Item' : 'a Magic';
+        s.promptQueue.unshift({
+          kind: 'chooseCardsFromHand',
+          playerId: prompt.playerId,
+          reason: `${name}: if the card you pulled is ${label} card, you may play it immediately.`,
+          count: 1,
+          optional: true,
+          filter,
+          effectTag: filter === 'hero' ? 'playFreeHero' : filter === 'item' ? 'playFreeItem' : 'playFreeMagic',
+          onlyCardIds: [card.id],
+          keepIfEmpty: true,
+        });
+      };
 
       if (prompt.effectTag === 'bearClawPull') {
         const first = pullOne();
@@ -2561,60 +2752,34 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
           pullOne();
         }
       } else if (prompt.effectTag === 'luckyBuckyPull') {
-        const first = pullOne();
-        if (first?.type === 'hero') {
-          s.promptQueue.unshift({
-            kind: 'chooseCardsFromHand',
-            playerId: prompt.playerId,
-            reason: 'Lucky Bucky: you pulled a Hero card! You may play it immediately.',
-            count: 1,
-            optional: true,
-            filter: 'hero',
-            effectTag: 'playFreeHero',
-          });
-        }
+        mayPlayPulled(pullOne(), 'hero', 'Lucky Bucky');
       } else if (prompt.effectTag === 'buttonsPull') {
-        const first = pullOne();
-        if (first?.type === 'magic') {
-          s.promptQueue.unshift({
-            kind: 'chooseCardsFromHand',
-            playerId: prompt.playerId,
-            reason: 'Buttons: you pulled a Magic card! You may play it immediately.',
-            count: 1,
-            optional: true,
-            filter: 'magic',
-            effectTag: 'playFreeMagic',
-          });
-        }
+        mayPlayPulled(pullOne(), 'magic', 'Buttons');
       } else if (prompt.effectTag === 'slyPickingsPull') {
-        const first = pullOne();
-        if (first && (first.type === 'item' || first.type === 'cursedItem')) {
-          s.promptQueue.unshift({
-            kind: 'chooseCardsFromHand',
-            playerId: prompt.playerId,
-            reason: 'Sly Pickings: you pulled an Item card! You may play it immediately.',
-            count: 1,
-            optional: true,
-            filter: 'item',
-            effectTag: 'playFreeItem',
-          });
-        }
+        mayPlayPulled(pullOne(), 'item', 'Sly Pickings');
       } else if (prompt.effectTag === 'plunderingPumaPull') {
-        pullOne();
-        pullOne();
-        drawCards(s, targetId, 1);
+        const got = [pullOne(), pullOne()].filter((c): c is HtsCard => !!c);
+        pushLog(s, prompt.playerId, `Plundering Puma: ${seatName(s, prompt.playerId)} pulled ${got.length} card(s) from ${seatName(s, targetId)}.`, 'normal');
+        // "That player may DRAW a card." — their call.
+        s.promptQueue.unshift({
+          kind: 'confirm',
+          playerId: targetId,
+          reason: `Plundering Puma: ${seatName(s, prompt.playerId)} pulled cards from your hand. You may DRAW a card.`,
+          effectTag: 'plunderingPumaDraw',
+        });
       } else if (prompt.effectTag === 'slipperyPawsPull') {
-        const p1 = pullOne();
-        const p2 = pullOne();
-        if (p1 || p2) {
+        const pulled = [pullOne(), pullOne()].filter((c): c is HtsCard => !!c);
+        if (pulled.length > 0) {
+          // "…then DISCARD one of those cards."
           s.promptQueue.unshift({
             kind: 'chooseCardsFromHand',
             playerId: prompt.playerId,
-            reason: 'Slippery Paws: DISCARD 1 card.',
+            reason: 'Slippery Paws: DISCARD one of the cards you pulled.',
             count: 1,
             optional: false,
             filter: 'any',
             effectTag: 'slipperyPawsDiscard',
+            onlyCardIds: pulled.map((c) => c.id),
           });
         }
       } else if (prompt.effectTag === 'dodgyDealerTrade') {
@@ -2679,16 +2844,26 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
           claimNiceGift(s, prompt.playerId);
         }
       } else if (prompt.effectTag === 'tipsyTootieSwap' && prompt.sourceHeroId) {
-        removeHeroFromParty(s, prompt.playerId, prompt.sourceHeroId, 'move', { toPlayerId: targetId });
-        s.promptQueue.unshift({
-          kind: 'chooseHeroTarget',
-          playerId: prompt.playerId,
-          reason: `Tipsy Tootie: choose a Hero in ${seatName(s, targetId)}'s Party to STEAL.`,
-          optional: false,
-          scope: 'specificPlayer',
-          specificPlayerId: targetId,
-          mode: 'steal',
-        });
+        // "STEAL a Hero card from that player's Party and move Tipsy Tootie to
+        // that player's Party" — steal first (so Tootie can't be the one
+        // stolen back), then she moves.
+        s.promptQueue.unshift(
+          {
+            kind: 'chooseHeroTarget',
+            playerId: prompt.playerId,
+            reason: `Tipsy Tootie: choose a Hero in ${seatName(s, targetId)}'s Party to STEAL.`,
+            optional: false,
+            scope: 'specificPlayer',
+            specificPlayerId: targetId,
+            mode: 'steal',
+            sourceHeroId: prompt.sourceHeroId,
+          },
+          {
+            kind: 'step',
+            playerId: prompt.playerId,
+            step: { type: 'moveHero', heroCardId: prompt.sourceHeroId, fromPlayerId: prompt.playerId, toPlayerId: targetId },
+          },
+        );
       } else if (prompt.effectTag === 'meowzioSteal') {
         pullOne();
         s.promptQueue.unshift({
@@ -2773,12 +2948,10 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
       if (!picked) throw new Error('must pick one of the top 3 cards');
       handOf(s, prompt.playerId).push(picked);
       const rest = prompt.cards.filter((c) => c.id !== picked.id);
-      if (a.bullseyeTopOrder && a.bullseyeTopOrder.length === rest.length) {
-        const ordered = a.bullseyeTopOrder.map((id) => rest.find((c) => c.id === id)).filter((c): c is HtsCard => !!c);
-        s.deck.unshift(...(ordered.length === rest.length ? ordered : rest));
-      } else {
-        s.deck.unshift(...rest);
-      }
+      const order = a.bullseyeTopOrder;
+      const ordered = order && order.length === rest.length ? order.map((id) => rest.find((c) => c.id === id)) : null;
+      // "…return the other two to the top of the deck in any order."
+      s.deck.unshift(...(ordered && ordered.every((c) => !!c) && new Set(order).size === rest.length ? (ordered as HtsCard[]) : rest));
       advanceFlow(s);
       return;
     }
@@ -2790,10 +2963,12 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
 
     case 'corruptedSabretoothChoice': {
       if (a.decline) {
-        removeHeroFromParty(s, prompt.ownerId, prompt.heroCardId, 'destroy', {
+        const res = removeHeroFromParty(s, prompt.ownerId, prompt.heroCardId, 'destroy', {
           byPlayerId: prompt.playerId,
           skipSabretoothCheck: true,
+          stealEquippedItemToHand: prompt.stealItemToHand ? prompt.playerId : undefined,
         });
+        if (res === 'done') pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} destroyed the Hero.`, 'danger');
       } else {
         removeHeroFromParty(s, prompt.ownerId, prompt.heroCardId, 'steal', {
           byPlayerId: prompt.playerId,
@@ -2804,36 +2979,31 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
       advanceFlow(s);
       return;
     }
+
+    case 'confirm': {
+      if (prompt.effectTag === 'plunderingPumaDraw' && !a.decline) {
+        drawCards(s, prompt.playerId, 1);
+        pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} drew a card.`, 'normal');
+      }
+      advanceFlow(s);
+      return;
+    }
   }
 }
 
 function handleEndTurn(s: HtsState, a: Extract<HtsAction, { type: 'endTurn' }>) {
   if (s.subPhase !== 'awaitingAction') throw new Error(`cannot end turn during ${s.subPhase}`);
   if (a.playerId !== s.turnPlayerId) throw new Error('not your turn');
-
-  const hand = handOf(s, a.playerId);
-  if (hand.length > HAND_LIMIT) {
-    s.promptQueue.push({
-      kind: 'chooseCardsFromHand',
-      playerId: a.playerId,
-      reason: `End of turn: discard down to ${HAND_LIMIT} cards.`,
-      count: hand.length - HAND_LIMIT,
-      optional: false,
-      filter: 'any',
-      effectTag: 'endOfTurnLimit',
-    });
-    advanceFlow(s);
-    return;
-  }
-
+  // No hand limit in Here to Slay: the rulebook's turn simply ends.
   finishTurnAdvance(s);
 }
 
 function finishTurnAdvance(s: HtsState) {
-  if (checkWinCondition(s)) return;
+  if (checkEndOfTurnWin(s)) return;
 
-  for (const h of partyOf(s, s.turnPlayerId)) {
-    h.usedThisTurn = false;
+  // "Once per turn" is per turn, whoever's Party the Hero is in by now.
+  for (const seat of s.seats) {
+    for (const h of partyOf(s, seat.id)) h.usedThisTurn = false;
   }
 
   const idx = s.seats.findIndex((st) => st.id === s.turnPlayerId);

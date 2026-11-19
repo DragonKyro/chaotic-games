@@ -12,6 +12,7 @@ import {
   unicornCount,
   validHandCards,
   validPileCards,
+  validPlayerTargets,
   validStableTargets,
 } from './reducer';
 import { isUnicornType } from './types';
@@ -32,12 +33,11 @@ function cardPriority(c: UuCard): number {
   if (
     c.kind === 'ginormous-unicorn' ||
     c.kind === 'bahamuticorn' ||
-    c.kind === 'twin-dragoncorns' ||
-    c.kind === 'diamond-unicorn'
+    c.kind === 'twin-dragoncorns'
   ) {
     return 7.8;
   }
-  if (c.type === 'magicalUnicorn') return 7;
+  if (c.type === 'magicalUnicorn' || c.type === 'diamondUnicorn') return 7;
   if (c.type === 'upgrade') return 6;
   if (c.type === 'magic') return 5.5;
   if (c.type === 'basicUnicorn') return 4.5;
@@ -100,7 +100,6 @@ export function chooseAIAction(state: UuState, playerId: PlayerId): UuAction | n
         p.card.kind === 'chaos-storm' ||
         p.card.kind === 'bahamuticorn' ||
         p.card.kind === 'twin-dragoncorns' ||
-        p.card.kind === 'diamond-unicorn' ||
         p.card.kind === 'cutthroat-captain-unicorn';
 
       if (dangerousPlay) {
@@ -203,6 +202,13 @@ export function chooseAIAction(state: UuState, playerId: PlayerId): UuAction | n
           const picked = ownDowngrade ?? pool[0]!;
           return { type: 'resolvePrompt', playerId, targetCardId: picked.card.id };
         }
+        if (prompt.mode === 'moveSource') {
+          const pick =
+            valid.find((v) => v.ownerId !== playerId && v.card.type === 'upgrade') ??
+            valid.find((v) => v.ownerId === playerId && v.card.type === 'downgrade') ??
+            valid[0]!;
+          return { type: 'resolvePrompt', playerId, targetCardId: pick.card.id };
+        }
         if (prompt.effectTag?.startsWith('sharkSacrifice:') && prompt.optional) {
           // Only sacrifice Shark With a Horn if an opponent is close to winning
           const leader = leadingOpponent(state, playerId);
@@ -218,14 +224,35 @@ export function chooseAIAction(state: UuState, playerId: PlayerId): UuAction | n
       }
 
       case 'choosePlayer': {
-        const candidates = state.seats
-          .map((s) => s.id)
-          .filter((id) => (prompt.allowSelf ? true : id !== playerId) && id !== prompt.movedFromPlayerId);
-        const target =
-          candidates.find((id) => id !== playerId) ??
-          leadingOpponent(state, playerId) ??
-          candidates[0];
-        if (!target) return { type: 'resolvePrompt', playerId, decline: true };
+        // Only public information: Stable sizes and hand sizes.
+        const candidates = validPlayerTargets(state, prompt);
+        if (candidates.length === 0) return { type: 'resolvePrompt', playerId, decline: true };
+        const opponents = candidates.filter((id) => id !== playerId);
+        const byThreat = [...opponents].sort((a, b) => unicornCount(state, b) - unicornCount(state, a));
+        const byHand = [...opponents].sort((a, b) => handOf(state, b).length - handOf(state, a).length);
+        let target: PlayerId | undefined;
+        switch (prompt.effectTag) {
+          case 'americornPull':
+          case 'blatantThieveryLook':
+          case 'shimmerbladeLook':
+          case 'unfairBargainTrade':
+            target = byHand[0];
+            break;
+          case 'annoyingDiscard':
+            target = byThreat.find((id) => handOf(state, id).length > 0) ?? byThreat[0];
+            break;
+          case 'reTargetDestination': {
+            const moved = prompt.movedFromPlayerId && prompt.movedCardId != null
+              ? stableOf(state, prompt.movedFromPlayerId).upgrades.some((c) => c.id === prompt.movedCardId)
+              : false;
+            // An Upgrade comes home; a Downgrade goes to whoever is closest to winning.
+            target = moved && candidates.includes(playerId) ? playerId : byThreat[0];
+            break;
+          }
+          default:
+            target = byThreat[0];
+        }
+        target ??= candidates[0]!;
         return { type: 'resolvePrompt', playerId, targetPlayerId: target };
       }
 
@@ -242,7 +269,9 @@ export function chooseAIAction(state: UuState, playerId: PlayerId): UuAction | n
         if (valid.length === 0) {
           return { type: 'resolvePrompt', playerId, decline: true };
         }
-        const sorted = [...valid].sort((a, b) => cardPriority(b) - cardPriority(a));
+        // Babies only differ in name, and letters in names break deck-out ties.
+        const letters = (c: UuCard) => c.name.replace(/[^a-zA-Z]/g, '').length;
+        const sorted = [...valid].sort((a, b) => cardPriority(b) - cardPriority(a) || letters(b) - letters(a));
         return { type: 'resolvePrompt', playerId, targetCardId: sorted[0]!.id };
       }
 

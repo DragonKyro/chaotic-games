@@ -27,7 +27,14 @@ export const DINO_LOOK: Record<HldDinoId, DinoLook> = {
   stego: { body: '#ffcf3f', shade: '#c4950c', belly: '#fff1bd', accent: '#ff6b4a' },
   'pterry-dactyl': { body: '#36d6c8', shade: '#1d968c', belly: '#cbfbf6', accent: '#ffa94d' },
   'raging-raptor': { body: '#ff5f9e', shade: '#bd336b', belly: '#ffd2e4', accent: '#8b5cff' },
+  // Hazards Ahead boards reuse the closest silhouettes (Stego's plates, Bronto's long body) in their own colours.
+  'easygoing-anky': { body: '#9bd35a', shade: '#5e9a24', belly: '#e6f7c9', accent: '#c98a4a' },
+  'moody-mosasaur': { body: '#3fb7c9', shade: '#1f7d8c', belly: '#c9f1f6', accent: '#6b5cff' },
 };
+
+/** Boards without bespoke art borrow a silhouette. */
+const SILHOUETTE: Partial<Record<HldDinoId, HldDinoId>> = { 'easygoing-anky': 'stego', 'moody-mosasaur': 'bad-luck-bronto' };
+const speciesOf = (dino: HldDinoId) => SPECIES[dino] ?? SPECIES[SILHOUETTE[dino] ?? 'nervous-rex'] ?? SPECIES['nervous-rex']!;
 
 export type DinoMood = 'happy' | 'scared' | 'out';
 
@@ -68,7 +75,7 @@ export function DinoArt({ dino, mood = 'happy', className, title }: { dino: HldD
   return (
     <svg viewBox="0 0 120 100" className={className} role="img" aria-label={title ?? dino}>
       <ellipse cx={60} cy={93} rx={42} ry={5} fill={INK} opacity={0.18} />
-      {(SPECIES[dino] ?? SPECIES['nervous-rex']!)(look, mood)}
+      {speciesOf(dino)(look, mood)}
     </svg>
   );
 }
@@ -230,7 +237,7 @@ const SPECIES: Partial<Record<HldDinoId, (l: DinoLook, mood: DinoMood) => ReactN
 
 /** The dino's shapes alone (0 0 120 100), for nesting inside another drawing. */
 export function DinoShape({ dino, mood = 'happy' }: { dino: HldDinoId; mood?: DinoMood }) {
-  return <>{(SPECIES[dino] ?? SPECIES['nervous-rex']!)(DINO_LOOK[dino] ?? DINO_LOOK['nervous-rex'], mood)}</>;
+  return <>{speciesOf(dino)(DINO_LOOK[dino] ?? DINO_LOOK['nervous-rex'], mood)}</>;
 }
 
 /** A round token: the seat's colour behind the dino (plates, the track). */

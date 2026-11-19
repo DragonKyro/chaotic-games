@@ -471,6 +471,9 @@ button.hld-dino-card:hover { transform: translateY(-4px) rotate(-1deg); }
 .hld-target.is-on { background: #ff9f1c; box-shadow: 0 0 0 3px #ffd23f, 3px 3px 0 var(--hld-ink, #2a1d16); }
 .hld-target .hld-pick-dot { width: 14px; height: 14px; }
 .hld-target small { font-weight: 600; opacity: 0.75; }
+/* A Disaster offered as a choice (Ice Cream!, One Week Anniversary). */
+.hld-pick-btn { background: none; border: 3px solid transparent; border-radius: 14px; padding: 2px; cursor: pointer; }
+.hld-pick-btn:hover, .hld-pick-btn.is-on { border-color: #ff9f1c; box-shadow: 0 0 0 3px #ffd23f; }
 
 /* ==========================================================================
    FX: the meteor streak

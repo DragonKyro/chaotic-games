@@ -1,4 +1,36 @@
-// Unstable Unicorns — types for the implemented 2nd Edition Base Game.
+// Unstable Unicorns — types and design notes.
+//
+// RULES AUDIT (Nov 2026, sources: the Unstable Games Wiki via the Wayback
+// Machine — "Second Edition Rules", "FAQ", "Two Player Rules", the per-deck
+// "Cards In This Deck" / "Inventory List" pages, "Second Print and 2nd Edition
+// Comparisons", and the Gameplay Terminology pages Requirement / Impossible /
+// Pull / Stable / Play / Unicorn Card / Queen Bee Unicorn).
+//
+// Verified card-for-card (names, counts, 2nd Edition texts):
+//   - 'base-2nd'  2nd Edition Base Deck: 13 Babies + 114 cards (+ 8 reference cards).
+//   - 'diamond'   the same 114 + 13, plus 4 Diamond Unicorns in a Vault and a
+//                 Diamond Phase (d4). Reaper's printed text was never archived:
+//                 it is modeled as a Diamond Unicorn with NO effect (not modeled).
+// Composition verified, wording not:
+//   - 'base'      Original Base Deck, Second Print inventory (127 + 8). The nine
+//                 retired cards use their Second Print text; the cards it shares
+//                 with the 2nd Edition still use 2nd Edition wording, which differs
+//                 for Americorn, Annoying Flying, Chainsaw, Ginormous, Llamacorn,
+//                 Kittencorn, Mermaid, Seductive, Unicorn Phoenix, Back Kick,
+//                 Blatant Thievery, Targeted Destruction, Blinding Light, Slowdown.
+// NOT the printed decks (unofficial approximations, flagged in the lobby):
+//   - 'control', 'chaos': real decks are full ~140-card base games of their own
+//     (Ultimate Unicorns, new Basics such as Raccoonicorn...), not base + 5 cards.
+//   - 'travel': the real Travel deck is a cut-down 2nd Edition deck plus eight
+//     cards of its own (Annoying Traveling, Frequent Flyer, Friendly Local, Road
+//     Trip, Traveling Doctor, Up For Anything Unicorn; Souvenir Shop; Tourist Trap)
+//     and lists no Baby Unicorns.
+//   - every expansion in UU_EXPANSIONS: see the official contents noted there.
+//
+// Unconfirmed (code's reading kept): the deck "runs out" when someone must DRAW
+// from an empty deck; Pandas are also shielded from "a card" (not just "a
+// Unicorn card") effects; letters for the deck-out tiebreak are counted on the
+// names as listed here, e.g. "Basic Unicorn (Red)".
 
 import type { GameStateShape } from '@/core/module';
 import type { ExpansionConfig, ExpansionMeta, PlayerId } from '@/core/types';
@@ -12,13 +44,15 @@ export type UuCardType =
   | 'babyUnicorn'
   | 'basicUnicorn'
   | 'magicalUnicorn'
+  /** Diamond Edition only: kept in the Vault, never in the deck or a hand. */
+  | 'diamondUnicorn'
   | 'magic'
   | 'instant'
   | 'upgrade'
   | 'downgrade';
 
 export function isUnicornType(t: UuCardType): boolean {
-  return t === 'babyUnicorn' || t === 'basicUnicorn' || t === 'magicalUnicorn';
+  return t === 'babyUnicorn' || t === 'basicUnicorn' || t === 'magicalUnicorn' || t === 'diamondUnicorn';
 }
 
 export type UuCardKind =
@@ -230,10 +264,11 @@ export type UuCardKind =
   | 'hells-steedicorn'
   | 'chaos-storm'
   | 'altar-of-chaos'
-  | 'diamond-unicorn'
-  | 'crystal-narwhal'
-  | 'diamond-dust'
-  | 'prismatic-shield'
+  // Diamond Edition: the four Diamond Unicorns of the Vault
+  | 'prismawing'
+  | 'reaper'
+  | 'shimmerblade'
+  | 'sparklestar'
   | 'travel-unicorn';
 
 export interface UuCard {
@@ -295,6 +330,7 @@ export type UuPrompt =
         | 'fertileDiscard'
         | 'zombieDiscard'
         | 'summoningRitualDiscard'
+        | 'prismawingDiscard'
         | 'endOfTurnLimit';
       contextCardId?: number;
       afterContext?: {
@@ -317,8 +353,10 @@ export type UuPrompt =
         | 'downgrade'
         | 'upgradeOrDowngrade'
         | 'unicornOrUpgrade'
+        | 'diamond'
         | 'destroyUpgradeOrSacrificeDowngrade';
-      mode: 'sacrifice' | 'destroy' | 'steal' | 'bounce' | 'moveSource' | 'swapGive' | 'swapSteal';
+      /** `toVault`: Diamond Edition — return a Diamond Unicorn to the Vault. */
+      mode: 'sacrifice' | 'destroy' | 'steal' | 'bounce' | 'moveSource' | 'swapGive' | 'swapSteal' | 'toVault';
       sourceType: 'magic' | 'unicorn' | 'upgrade' | 'downgrade';
       effectTag?: string;
     }
@@ -336,6 +374,7 @@ export type UuPrompt =
         | 'reTargetDestination'
         | 'unicornSwapTarget'
         | 'shrinkrayTarget'
+        | 'shimmerbladeLook'
         | 'dominatrixForceSacrifice';
       movedCardId?: number;
       movedFromPlayerId?: PlayerId;
@@ -345,13 +384,15 @@ export type UuPrompt =
       playerId: PlayerId;
       targetPlayerId: PlayerId;
       reason: string;
+      /** Shimmerblade: "you may choose a card" — the look need not end in a take. */
+      optional?: boolean;
     }
   | {
       kind: 'chooseFromPile';
       playerId: PlayerId;
       reason: string;
       optional: boolean;
-      pile: 'discard' | 'deck' | 'nursery';
+      pile: 'discard' | 'deck' | 'nursery' | 'vault';
       filter:
         | 'unicorn'
         | 'magic'
@@ -402,60 +443,131 @@ export type UuEdition =
   | 'kids'
   | 'diamond';
 
+/**
+ * None of these card pools is the printed expansion: each mixes a few real card
+ * names (texts unconfirmed) with cards that don't exist. They stay playable, but
+ * are flagged unverified. Official contents, for the rebuild (wiki "Cards In This
+ * Deck", 2nd Edition prints):
+ *
+ * - Rainbow Apocalypse: Babies (Flowers, Sparkles); Basics Horse With An Ice Cream
+ *   Cone, Innocent Bunnicorn; Magical Adorable Flying Unicorn, Angel Unicorn, Cotton
+ *   Candy Llamacorn, Extremely Destructive Unicorn, Extremely Fertile Unicorn,
+ *   Frenchiecorn, Glitter Unicorn, Llamacorn, Magical Kittencorn, The Tiniest
+ *   Unicorn, Unicorn of Death / Famine / Pestilence / War, Unicorn Phoenix, Unicorn
+ *   Rainbow Princess, Zombie Unicorn; Magic A Cute Attack, Fire and Brimstone,
+ *   Heavenly Smite, Llamapocalypse, Overpopulation, Plague of Death, Storm of
+ *   Cuteness, Ultimate Destruction, Unicorn Nap, Unicorns of the Apocalypse, Zombie
+ *   Apocalypse; Instant Neigh, Thank You; Upgrades Rainbow Sprinkles, Special
+ *   Delivery; Downgrade Tiny Hooves.
+ * - Dragons: 6 Baby Dragoncorns (Black, Blue, Green, Orange, Pink, Red); Basics
+ *   Apprentice Unicorn, Dragon Cosplay Unicorn, High Roller Unicorn, Unicorn With a
+ *   Dragon Tattoo; Magical Angry Dragoncorn, Dragon Rider Unicorn, Dragon Slayer
+ *   Unicorn, Dragon Summoner Unicorn, Dragon Tamer Unicorn, Dragon Turtle Unicorn,
+ *   Dragon Unicorn, Friendly Dragoncorn, Mage Unicorn, Scaled Flying Unicorn; Magic
+ *   Dragon's Breath, Dragon's Fire, Dragon Kiss, Dragon-Scorched Stables; Instant
+ *   Neigh, Foul Beast; Upgrades Dragon's Blessing, Dragon's Fortune, Dragon
+ *   Protection; Downgrades Dragon's Curse, Dragon's Misfortune, Dragon Skies.
+ * - Unicorns of Legend: Babies Dwarficorn, Elficorn, Gnomicorn, Orcicorn; Basics
+ *   Guardsman, Blacksmith, Innkeeper, Noble Unicorn; Magical Beast Master Unicorn,
+ *   Berserkercorn, Charming Bardicorn, Divine Unicorn, Dwarficorn Artificer, Elficorn
+ *   Scout, Orcicorn Raider, Paladin Unicorn, Rogue Unicorn, Warlock Unicorn, Wizard
+ *   Unicorn; Magic Alignment Change, Chain Lightning, Fireball, Necromancy, Prismatic
+ *   Bray, Raze the Stables; Instants Neigh, M'Lord / Peasant / Scoundrel; Upgrades
+ *   Critical Hit, Extradimensional Saddlebag, Wall of Horns; Downgrades Divine
+ *   Peace, Hex, Medieval Sanitation.
+ * - Adventures: Babies (Fisherman, Forest, Pirate, Safari); Basics Eager
+ *   Adventurer, Glamping, Indoor Rockclimber, Land Lubber Unicorn; Magical Bungee
+ *   Jumping, Cutthroat Captain, Extreme Adventurer, Fearless, First Mer-mate,
+ *   Fisherman, Hornswoggler, Pillaging Pirate, Salty Seadogicorn, Stowaway,
+ *   Vagabond, Survivalist Unicorn; Magic Glowing Horn, Metal Detector, Mysterious
+ *   Compass, Silver Tongue, The Great Baby Heist, Unicorn Shovel; Instants Fishing
+ *   Rod, Flare Gun, Neigh, Mate!, Unicorn Net; Upgrades Ancient Ritual, Pit Covered
+ *   in Leaves, Royal Hooves, Unicorn Survival Kit; Downgrades Broken Sundial,
+ *   Extremely Small Backpack, The Black Spot, Unicorn Overboard.
+ * - Christmas: Babies (Elf, Gingerbread, Present); Basics Fa La Llamacorn, Mariah
+ *   Karaokecorn, Silly Chilly Unicorn, Sugar Crash Unicorn; Magical Festive Flying
+ *   Unicorn, Flying Krampuscorn, Friendly Snowmancorn, Helper Elficorn,
+ *   Not-So-Secret Santacorn, Nutcrackercorn, Procrastinating Shoppercorn, Unicorn
+ *   Caroler, White Elephantcorn, Winter Wondercorn; Magic Gift Receipt, Nog Wild,
+ *   Silver Lining; Instant Jingle All The Neigh; Upgrades Gift Inspector,
+ *   Gingerbread Stable, Ugly Holiday Sweater; Downgrades Humbug, Naughty List, Oh,
+ *   Deer, Uneaten Fruitcake.
+ * - Nightmares: Babies (Ghost, Horror, Look Back); Basics (Raincoat, Scared, School
+ *   Girl, Security Guard); Magical Chainsaw Massicorn, Clairvoyant Unicorn, Dancing
+ *   Clownicorn, Demonicorn, Jack the Reapercorn, Phantom Unicorn, Playful Puppet
+ *   Unicorn, Sweet Old Ladycorn, Unicorn Slasher, Vengeful Unicorn, Winged
+ *   Horrorcorn; Magic HEEEEERE'S STABBY, Possession, Reanimation, Supernatural
+ *   Selection, The Cornjuring; Instant Hex Neigh; Upgrades Ghost Guide, Magic
+ *   Elixir, Paranormal Affection, Poltergeist Swipe, Saved by the Sigil; Downgrades
+ *   Nightmare: Buried Alive / Currently Indisposed / Existential Dread / Exorcise
+ *   Regimen.
+ * - NSFW Expansion (2nd Print): 6 Babies (Bye Bye, Cannibal, Dumpster, Shotgun,
+ *   Tasty, Upside Down), 4 Basics, 9 Magical (incl. Polyamorous Unicorn, Naked
+ *   Narwhal), 6 Magic, 3 Instants (Hell Neigh!, Neigh, Bitch!, Neigh,
+ *   Motherfucker!), 3 Upgrades, 2 Downgrades.
+ * - "Uncut Unicorns" does not appear in the wiki's list of Unstable Unicorns
+ *   products at all.
+ */
 export const UU_EXPANSIONS: readonly ExpansionMeta[] = [
   {
     id: 'uncut-unicorns',
     name: 'Uncut Unicorns',
-    summary: 'Uncut Unicorn (+1 hand limit), Burlesque & Hangover Unicorns, Liquid Courage, Walk of Shame, Stage Fright.',
-    verified: true,
+    summary: 'Unofficial — not a listed Unstable Unicorns product; these cards are invented.',
+    verified: false,
   },
   {
     id: 'nsfw',
     name: 'NSFW',
-    summary: 'Dominatrix, Sugar Daddy & Polyamorous Unicorns, Spiked Harness, Ball and Chain, Hard Limit Neigh.',
-    verified: true,
+    summary: 'Approximation — a few real names (Polyamorous Unicorn) among invented cards; not the printed pack.',
+    verified: false,
   },
   {
     id: 'rainbow-apocalypse',
     name: 'Rainbow Apocalypse',
-    summary: 'Four Horsecorn, Unicorns of Famine/Pestilence/War/Death, Catastrophe, Rainbow Apocalypse, Neigh Thank You.',
-    verified: true,
+    summary: 'Approximation — real names (Unicorns of Death/Famine/Pestilence/War, Plague of Death) with unconfirmed texts, plus invented cards.',
+    verified: false,
   },
   {
     id: 'dragons',
     name: 'Dragons',
-    summary: "Bahamuticorn, Twin Dragoncorns, Dragon Riders, Dragon's Breath, Dragon's Blessing (ignores Downgrades), Dragon's Curse.",
-    verified: true,
+    summary: "Approximation — real names (Dragon's Blessing/Curse/Breath, Dragon Skies) with unconfirmed texts, plus invented cards.",
+    verified: false,
   },
   {
     id: 'unicorns-of-legend',
     name: 'Unicorns of Legend',
-    summary: 'Archangel Unicorn, Nine-Tailed Foxicorn, Mage Unicorn, Bardicorn, Paladincorn, Raze the Stables, Medieval Sanitation.',
-    verified: true,
+    summary: 'Approximation — mostly invented cards; the printed pack (Berserkercorn, Chain Lightning, Critical Hit...) is different.',
+    verified: false,
   },
   {
     id: 'adventures',
     name: 'Adventures',
-    summary: 'New Instant responses (Unicorn Net, Absorb & Reflect, Redirect, Flare Gun, Trapped Chest), Pirate & Adventurer Unicorns.',
-    verified: true,
+    summary: 'Approximation — real names (Unicorn Net, Flare Gun, Royal Hooves, The Black Spot) with unconfirmed texts, plus invented cards.',
+    verified: false,
   },
   {
     id: 'christmas',
     name: 'Christmas',
-    summary: 'Santaicorn, Reindeercorn, Flying Krampuscorn, Gingerbread Stable, Ugly Holiday Sweater, Gift Inspector, Jingle All The Neigh.',
-    verified: true,
+    summary: 'Approximation — real names (Gift Receipt, Ugly Holiday Sweater, Humbug) with unconfirmed texts, plus invented cards.',
+    verified: false,
   },
   {
     id: 'nightmares',
     name: 'Nightmares',
-    summary: 'Phantom Steedicorn, Vampirellacorn, Jack the Reapercorn, Nightmare Pact, Black Hole, Saved by the Sigil, Hex.',
-    verified: true,
+    summary: 'Approximation — mostly invented cards; the printed pack (Demonicorn, Possession, The Cornjuring...) is different.',
+    verified: false,
   },
 ];
 
 export interface UuConfig extends ExpansionConfig {
   expansions: UuExpansionId[];
   edition: UuEdition;
+  /**
+   * Official 2-player modifications (on unless set to false): remove the cards
+   * listed for the base deck and, in the 2nd Edition, hand each player a Neigh
+   * before dealing. Ignored at 3+ players.
+   */
+  twoPlayerRules?: boolean;
 }
 
 // ============================================================================
@@ -473,12 +585,20 @@ export type UuPhase =
 
 export interface UuState extends GameStateShape {
   subPhase: UuPhase;
-  /** The phase to resume once awaitingNeigh / awaitingPrompt finishes. */
-  resumePhase: 'beginningOfTurn' | 'draw' | 'action' | 'endOfTurn';
+  /**
+   * The phase to resume once awaitingNeigh / awaitingPrompt finishes. `diamond`
+   * is the Diamond Edition's Diamond Phase (roll the d4) between Beginning of
+   * Turn and Draw.
+   */
+  resumePhase: 'beginningOfTurn' | 'diamond' | 'draw' | 'action' | 'endOfTurn';
 
   deck: UuCard[];
   discard: UuCard[];
   nursery: UuCard[];
+  /** Diamond Edition: Diamond Unicorns not in any Stable (empty otherwise). */
+  vault: UuCard[];
+  /** Unicorn Lasso (Original Base): Unicorns to hand back at the end of the thief's turn. */
+  lassoReturns?: { cardId: number; fromPlayerId: PlayerId; thiefId: PlayerId }[];
 
   hands: Record<PlayerId, UuCard[]>;
   stables: Record<PlayerId, UuStable>;

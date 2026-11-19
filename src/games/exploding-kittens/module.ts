@@ -15,7 +15,7 @@ export const explodingKittensModule: GameModule<EkState, EkAction, EkConfig> = {
   name: NAME,
   tagline: 'Russian roulette with kittens. Draw, defuse, or die.',
   minPlayers: 2,
-  // Base game is 2–5; Imploding/Recipes supports up to 6; Party Pack supports up to 10.
+  // Original Edition 2–5; Imploding Kittens adds a 6th; the Party Pack core deck goes to 10.
   maxPlayers: 10,
   accent: '#ff4d4d',
 
@@ -23,8 +23,10 @@ export const explodingKittensModule: GameModule<EkState, EkAction, EkConfig> = {
 
   defaultConfig: (_seats: Seat[]): EkConfig => ({
     expansions: [],
-    handSize: 4,
+    // Every current rulebook: "deal 7 cards face down to each player … 7 cards + 1 Defuse".
+    handSize: 7,
     combosCatsOnly: false,
+    fiveDifferentCombo: false,
   }),
 
   validateConfig: (config, seats) => {
@@ -35,10 +37,12 @@ export const explodingKittensModule: GameModule<EkState, EkAction, EkConfig> = {
     const maxAllowed = maxPlayersForExpansions(config.expansions);
     const playerCount = seats?.length ?? 0;
     if (playerCount > maxAllowed) {
-      if (playerCount > 6) {
-        errors.push('7–10 players requires the Party Pack expansion.');
+      if (config.expansions.includes('zombie-kittens')) {
+        errors.push('Zombie Kittens has 5 Zombie Kittens — one per player — so it seats at most 5.');
+      } else if (playerCount > 6) {
+        errors.push('7–10 players needs the Party Pack core deck.');
       } else {
-        errors.push('6 players requires Imploding Kittens, Party Pack, or Recipes for Disaster.');
+        errors.push('6 players needs Imploding Kittens or the Party Pack.');
       }
     }
     return errors;

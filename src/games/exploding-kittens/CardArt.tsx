@@ -791,6 +791,58 @@ function ClairvoyanceArt() {
   );
 }
 
+/** A small lightning bolt in the corner: the NOW mark (same as Alter the Future NOW). */
+function NowBolt() {
+  return <path d="M18,12 L10,32 L24,32 L16,52 L36,26 L22,26 Z" fill="#ffd24a" stroke={INK} strokeWidth={2} />;
+}
+
+function FeedTheDeadArt() {
+  return (
+    <g>
+      {/* A zombie kitten tucking into a bowl: the head sits behind the bowl's rim. */}
+      <g transform="translate(19,8) scale(0.66)">
+        <CatHead fur="#7bc67b" eyes="glow" open whiskers={false} />
+      </g>
+      <path d="M14,60 a36,28 0 0 0 72,0 Z" fill="#3a3752" stroke={INK} strokeWidth={2.6} />
+      <path d="M30,74 Q50,82 70,74" fill="none" stroke="#5a5675" strokeWidth={3} strokeLinecap="round" />
+      <NowBolt />
+    </g>
+  );
+}
+
+function GraveRobberArt() {
+  return (
+    <g>
+      <path d="M30,88 L30,40 Q30,20 50,20 Q70,20 70,40 L70,88 Z" fill="#8c8a9e" stroke={INK} strokeWidth={2.6} strokeLinejoin="round" />
+      <path d="M42,46 L58,46 M50,38 L50,62" stroke={INK} strokeWidth={3} strokeLinecap="round" />
+      <ellipse cx={50} cy={88} rx={38} ry={8} fill="#8b5a2b" stroke={INK} strokeWidth={2.4} />
+      <g transform="translate(52,44) scale(0.42)">
+        <CatHead fur={FUR.grey} eyes="shifty" whiskers={false} />
+      </g>
+    </g>
+  );
+}
+
+function AttackOfTheDeadArt() {
+  return (
+    <g>
+      <AttackArt />
+      <g transform="translate(54,50) scale(0.44)">
+        <CatHead fur="#7bc67b" eyes="glow" open whiskers={false} />
+      </g>
+    </g>
+  );
+}
+
+function ShuffleNowArt() {
+  return (
+    <g>
+      <ShuffleArt />
+      <NowBolt />
+    </g>
+  );
+}
+
 // ============================================================================
 // Registry
 // ============================================================================
@@ -840,6 +892,10 @@ const ART: Record<EkBaseCardKind, () => ReactElement> = {
   digDeeper: DigDeeperArt,
   clone: CloneArt,
   clairvoyance: ClairvoyanceArt,
+  feedTheDead: FeedTheDeadArt,
+  graveRobber: GraveRobberArt,
+  attackOfTheDead: AttackOfTheDeadArt,
+  shuffleNow: ShuffleNowArt,
 };
 
 /** Accent colour behind the art, per card. Keeps kinds distinguishable at a glance. */
@@ -888,6 +944,10 @@ export const CARD_ACCENT: Record<EkBaseCardKind, string> = {
   digDeeper: '#5e4526',
   clone: '#3b526b',
   clairvoyance: '#38477a',
+  feedTheDead: '#3f6b3a',
+  graveRobber: '#4d4a5e',
+  attackOfTheDead: '#7a2f2a',
+  shuffleNow: '#2f4f80',
 };
 
 export function CardArt({ kind }: { kind: EkBaseCardKind }) {

@@ -3,7 +3,8 @@
 // Hidden information: only `localPlayerId`'s hand is ever rendered (cards
 // shown to a player by Sharp Fox / Bullseye come from their own prompt). The
 // deck is only ever a count. Dice are public: every roll goes through the
-// roll tray — live while a modifier window is open, and afterwards for a few
+// roll tray — live while a modifier window is open, and afterwards (from the
+// state's public `lastRoll`, so every device sees every roll) for a few
 // seconds with its verdict.
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -15,16 +16,15 @@ import {
   TurnCue, useFx, usePulse,
 } from '@/ui/kit';
 import { LeaderBanner } from './art';
-import { getPartyLeadersForExpansions } from './cards';
 import {
   ApLanterns, ClassSlots, FaceDownCard, HtsCardView, MonsterCard, Pennant, TrophyRow, rollLabel,
 } from './Card';
 import {
-  canAttackMonster, canEquipItemToHero, computeRollTotals, getClassesToWin, handOf, heroEquippedItems, heroHasItemKind,
+  canAttackMonster, canEquipItemToHero, canUseNobleShaman, computeRollTotals, getClassesToWin, handOf, heroEquippedItems, heroHasItemKind,
   niceGiftsOf, partyClasses, partyOf, trophiesOf, validHandCardsForPrompt, validHeroTargets,
 } from './reducer';
 import { CLASS_META, WaxSeal } from './sigils';
-import type { HtsAction, HtsCard, HtsConfig, HtsExpansionId, HtsMonster, HtsPartyHero, HtsPendingRoll, HtsPrompt, HtsState } from './types';
+import type { HtsAction, HtsCard, HtsConfig, HtsExpansionId, HtsMonster, HtsPartyHero, HtsPendingRoll, HtsPrompt, HtsRollRecord, HtsState } from './types';
 import { HTS_EXPANSIONS } from './types';
 
 function rollClient2d6(): [number, number] {
@@ -85,16 +85,6 @@ interface ViewProps {
   dispatch: (action: HtsAction) => void;
 }
 
-/** A roll the tray can show after it resolved: someone's window closing, or this device's own throw. */
-interface RecentRoll {
-  key: number;
-  roll: HtsPendingRoll;
-  actorTotal: number;
-  challengerTotal: number;
-  /** Name of the hero / monster / card rolled for. */
-  subject: string;
-}
-
 const PROMPT_WAIT: Record<HtsPrompt['kind'], string> = {
   rollEnteredHero: 'is rolling for a new hero',
   chooseHeroTarget: 'is choosing a hero',
@@ -104,6 +94,8 @@ const PROMPT_WAIT: Record<HtsPrompt['kind'], string> = {
   bullseyePeek: 'is peeking at the deck',
   peekHandAck: 'is peeking at a hand',
   corruptedSabretoothChoice: 'is deciding to steal or destroy',
+  confirm: 'is deciding',
+  step: 'is resolving an effect',
 };
 
 function maxAp(s: HtsState, id: PlayerId): number {
@@ -120,31 +112,23 @@ function rollSubject(s: HtsState, r: HtsPendingRoll): string {
   return 'a hero';
 }
 
-/** Did a resolved roll succeed? (Duels: did the card survive the challenge.) */
-function verdict(s: HtsState, rr: RecentRoll): { good: boolean; label: string } {
-  const r = rr.roll;
-  if (r.reason === 'challengeDuel') {
-    const challengerWon = rr.challengerTotal >= rr.actorTotal;
-    return { good: !challengerWon, label: challengerWon ? 'Challenge won!' : 'Card stands!' };
-  }
-  if (r.reason === 'monsterAttack') {
-    const m = s.monsterRow.find((x) => x.card.id === r.sourceCardId) ?? s.seats.flatMap((st) => trophiesOf(s, st.id)).find((x) => x.card.id === r.sourceCardId);
-    if (m) {
-      const slain = m.slayOnLow ? rr.actorTotal <= m.slayThreshold : rr.actorTotal >= m.slayThreshold;
-      const failed = m.slayOnLow ? rr.actorTotal >= m.failThreshold : rr.actorTotal <= m.failThreshold;
-      return slain ? { good: true, label: 'Slain!' } : failed ? { good: false, label: 'Mauled!' } : { good: false, label: 'It holds…' };
-    }
-  }
-  const ok = r.rollLow ? rr.actorTotal <= r.threshold : rr.actorTotal >= r.threshold;
-  return { good: ok, label: ok ? 'Success!' : 'Failed' };
-}
+/** The verdict of a resolved roll, as recorded by the reducer. */
+const VERDICT: Record<HtsRollRecord['outcome'], { good: boolean; label: string }> = {
+  success: { good: true, label: 'Success!' },
+  failure: { good: false, label: 'Failed' },
+  slain: { good: true, label: 'Slain!' },
+  penalty: { good: false, label: 'Mauled!' },
+  nothing: { good: false, label: 'It holds…' },
+  challengeWon: { good: false, label: 'Challenge won!' },
+  cardStands: { good: true, label: 'Card stands!' },
+};
 
 export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   const [selectedHandId, setSelectedHandId] = useState<number | null>(null);
   const [picked, setPicked] = useState<number[]>([]);
   const [clawArmed, setClawArmed] = useState(false);
-  const [recent, setRecent] = useState<RecentRoll | null>(null);
-  const rollCounter = useRef(0);
+  // The last resolved roll lingers on the tray for a few seconds.
+  const [shownRollSeq, setShownRollSeq] = useState<number | null>(null);
   const fx = useFx();
   const [shaking, shake] = usePulse(520);
 
@@ -170,30 +154,15 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
     setClawArmed(false);
   }
 
-  /** Throw dice for one of this device's own rolls, and remember them for the tray. */
-  function throwDice(make: (dice: [number, number]) => HtsAction, roll: Omit<HtsPendingRoll, 'dice' | 'modifiers' | 'responderQueue' | 'challengerId' | 'challengerDice'>, subject: string) {
-    const dice = rollClient2d6();
-    const pending: HtsPendingRoll = { ...roll, dice, challengerId: null, challengerDice: null, modifiers: [], responderQueue: [] };
-    const { actorTotal } = computeRollTotals(s, pending);
-    rollCounter.current += 1;
-    setRecent({ key: rollCounter.current, roll: pending, actorTotal, challengerTotal: 0, subject });
-    send(make(dice));
+  /** Throw dice for one of this device's own rolls (they go into the action; the tray reads them back from state). */
+  function throwDice(make: (dice: [number, number]) => HtsAction) {
+    send(make(rollClient2d6()));
   }
 
-  /** Challenge the pending play: both sides' dice are thrown here, so the tray can show the duel. */
+  /** Challenge the pending play: both sides' dice are thrown here. */
   function throwDuel(challengeCardId: number) {
-    const p = s.pendingPlay;
-    if (!p || !me) return;
-    const actorDice = rollClient2d6();
-    const challengerDice = rollClient2d6();
-    const pending: HtsPendingRoll = {
-      byPlayerId: p.byPlayerId, reason: 'challengeDuel', dice: actorDice, challengerId: me, challengerDice,
-      sourceCardId: p.card.id, threshold: 0, modifiers: [], responderQueue: [],
-    };
-    const { actorTotal, challengerTotal } = computeRollTotals(s, pending);
-    rollCounter.current += 1;
-    setRecent({ key: rollCounter.current, roll: pending, actorTotal, challengerTotal, subject: p.card.name });
-    send({ type: 'playChallenge', playerId: me, cardId: challengeCardId, actorDice, challengerDice });
+    if (!s.pendingPlay || !me) return;
+    send({ type: 'playChallenge', playerId: me, cardId: challengeCardId, actorDice: rollClient2d6(), challengerDice: rollClient2d6() });
   }
 
   // ---- FX from state transitions --------------------------------------------------
@@ -202,12 +171,8 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
     const was = prev.current;
     prev.current = s;
     if (was === s) return;
-    // A roll window closed: keep its result on the tray for a moment.
-    if (was.pendingRoll && !s.pendingRoll) {
-      const { actorTotal, challengerTotal } = computeRollTotals(was, was.pendingRoll);
-      rollCounter.current += 1;
-      setRecent({ key: rollCounter.current, roll: was.pendingRoll, actorTotal, challengerTotal, subject: rollSubject(was, was.pendingRoll) });
-    }
+    // A roll resolved: keep its result on the tray for a moment.
+    if (s.lastRoll && s.lastRoll.seq !== was.lastRoll?.seq) setShownRollSeq(s.lastRoll.seq);
     if (s.pendingRoll?.reason === 'challengeDuel' && was.pendingRoll?.reason !== 'challengeDuel') fx.stamp('CHALLENGE!', 'danger');
     for (const seat of s.seats) {
       const before = trophiesOf(was, seat.id);
@@ -240,10 +205,11 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
 
   // The tray's afterglow fades.
   useEffect(() => {
-    if (!recent) return;
-    const t = setTimeout(() => setRecent((r) => (r?.key === recent.key ? null : r)), 7000);
+    if (shownRollSeq === null) return;
+    const t = setTimeout(() => setShownRollSeq((q) => (q === shownRollSeq ? null : q)), 7000);
     return () => clearTimeout(t);
-  }, [recent]);
+  }, [shownRollSeq]);
+  const recent = s.lastRoll && s.lastRoll.seq === shownRollSeq ? s.lastRoll : null;
 
   // ---- valid targets for the current decision -------------------------------------------
   const heroTargets = myPrompt?.kind === 'chooseHeroTarget' ? validHeroTargets(s, myPrompt) : [];
@@ -254,6 +220,9 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   const handPick = myPrompt?.kind === 'chooseCardsFromHand' ? myPrompt : null;
   const handPickValid = handPick ? new Set(validHandCardsForPrompt(s, handPick).map((c) => c.id)) : null;
   const handPickMax = handPick ? Math.min(handPick.count, handPickValid!.size) : 0;
+  function togglePick(id: number) {
+    setPicked((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : cur.length < handPickMax ? [...cur, id] : cur));
+  }
 
   function onPlate(id: PlayerId): (() => void) | undefined {
     if (playerPick) return () => send({ type: 'resolvePrompt', playerId: me!, targetPlayerId: id });
@@ -330,8 +299,6 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
           {s.monsterRow.map((m) => (
             <MonsterSlot key={m.card.id} state={s} monster={m} me={me} canAct={canAct} onAttack={() => throwDice(
               (dice) => ({ type: 'attackMonster', playerId: me!, monsterCardId: m.card.id, dice }),
-              { byPlayerId: me!, reason: 'monsterAttack', sourceCardId: m.card.id, threshold: m.slayThreshold, rollLow: m.slayOnLow },
-              m.card.name,
             )} />
           ))}
         </div>
@@ -369,6 +336,27 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
     const active = s.seats.find((x) => x.id === s.activePlayerId) ?? null;
     const mine = !!me && s.activePlayerId === me;
 
+    if (s.subPhase === 'choosingLeaders' && s.leaderDraft) {
+      const pool = s.leaderDraft.pool;
+      if (mine) {
+        return (
+          <Dock tone="turn" eyebrow="Choose your Party Leader" title="Who leads your Party?">
+            Your leader stays with you all game and its class counts toward your Party.{s.seats.length === 2 ? ' (The Shadow Claw sits out 2-player games.)' : ''}
+            <div className="hts-choices is-scroll">
+              {pool.map((c) => (
+                <HtsCardView key={c.id} card={c} size="sm" onClick={() => send({ type: 'choosePartyLeader', playerId: me!, leaderKind: c.kind })} />
+              ))}
+            </div>
+          </Dock>
+        );
+      }
+      return (
+        <Dock tone="wait" who={active} eyebrow="Choosing Party Leaders" title={`${active?.name ?? 'Someone'} is choosing a Party Leader`}>
+          Whoever picks last takes the first turn. Cards are dealt once every leader is chosen.
+        </Dock>
+      );
+    }
+
     if (s.subPhase === 'awaitingChallenge' && s.pendingPlay) {
       const p = s.pendingPlay;
       if (mine) {
@@ -405,7 +393,8 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
     if (prompt) {
       if (!myPrompt) {
         const who = s.seats.find((x) => x.id === prompt.playerId) ?? active;
-        return <Dock tone="wait" who={who} title={`${who?.name ?? 'Someone'} ${PROMPT_WAIT[prompt.kind]}`}>{'reason' in prompt ? prompt.reason : undefined}</Dock>;
+        const publicText = prompt.kind === 'chooseCardsFromHand' ? prompt.publicReason ?? prompt.reason : 'reason' in prompt ? prompt.reason : undefined;
+        return <Dock tone="wait" who={who} title={`${who?.name ?? 'Someone'} ${PROMPT_WAIT[prompt.kind]}`}>{publicText}</Dock>;
       }
       return renderPrompt(myPrompt);
     }
@@ -433,24 +422,6 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
         )}
         {leader?.kind === 'leader-gnawing-dread' && !s.turnBuffs.gnawingDreadUsed && ap >= 2 && s.discard.length > 0 && (
           <button className="secondary tiny" onClick={() => send({ type: 'gnawingDreadSearch', playerId: me! })}>Gnawing Dread search · 2 AP</button>
-        )}
-        {leader?.kind === 'leader-noble-shaman' && !s.turnBuffs.nobleShamanUsed && (
-          <>
-            <button className="secondary tiny" onClick={() => send({ type: 'nobleShamanAdjust', playerId: me!, delta: 1 })}>Noble Shaman +1</button>
-            <button className="secondary tiny" onClick={() => send({ type: 'nobleShamanAdjust', playerId: me!, delta: -1 })}>Noble Shaman −1</button>
-          </>
-        )}
-        {leader && (
-          <select
-            aria-label="Party Leader"
-            title="Swap your Party Leader"
-            value={leader.kind}
-            onChange={(e) => send({ type: 'choosePartyLeader', playerId: me!, leaderKind: e.target.value })}
-          >
-            {getPartyLeadersForExpansions(s.config.expansions).map((l) => (
-              <option key={l.kind} value={l.kind}>{l.name}</option>
-            ))}
-          </select>
         )}
       </div>
     );
@@ -531,11 +502,7 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
             actions={
               <>
                 <HtsCardView card={h} size="sm" />
-                <button onClick={() => throwDice(
-                  (dice) => ({ type: 'resolvePrompt', playerId: me!, dice }),
-                  { byPlayerId: me!, reason: 'heroAbility', sourceCardId: h.id, threshold: h.abilityThreshold ?? 7, rollLow: h.rollLow },
-                  h.name,
-                )}>Roll · free</button>
+                <button onClick={() => throwDice((dice) => ({ type: 'resolvePrompt', playerId: me!, dice }))}>Roll · free</button>
                 <button className="secondary" onClick={decline}>Skip</button>
               </>
             }
@@ -547,8 +514,14 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
       case 'chooseHeroTarget': {
         const harsh = p.mode === 'destroy' || p.mode === 'sacrifice' || p.mode === 'steal' || p.mode === 'stealItem';
         const byOwner = s.seats.map((seat) => ({ seat, list: heroTargets.filter((t) => t.ownerId === seat.id) })).filter((g) => g.list.length);
+        const item = p.mode === 'equipItem' ? myHand.find((c) => c.id === p.itemCardId) : undefined;
         return (
-          <Dock tone={harsh ? 'danger' : 'turn'} eyebrow="Choose a hero" title={p.reason} actions={p.optional ? <button className="secondary" onClick={decline}>Skip</button> : undefined}>
+          <Dock
+            tone={harsh ? 'danger' : 'turn'}
+            eyebrow={item ? 'Equip an item' : 'Choose a hero'}
+            title={p.reason}
+            actions={<>{item && <HtsCardView card={item} size="xs" inspect={false} />}{p.optional && <button className="secondary" onClick={decline}>Skip</button>}</>}
+          >
             {byOwner.length ? 'Click a hero here, or a pennant above.' : 'No hero can be chosen.'}
             <div className="hts-choices is-scroll">
               {byOwner.map(({ seat, list }) => (
@@ -563,19 +536,34 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
       }
       case 'chooseCardsFromHand': {
         const ok = p.upTo ? picked.length >= 1 : picked.length === handPickMax;
+        // Effects that hinge on a card just drawn / pulled show that card here.
+        const shown = p.onlyCardIds ? myHand.filter((c) => p.onlyCardIds!.includes(c.id)) : [];
+        const nothing = handPickValid!.size === 0;
         return (
           <Dock
             tone={p.effectTag.toLowerCase().includes('discard') ? 'danger' : 'turn'}
-            eyebrow={`Choose ${p.upTo ? 'up to ' : ''}${handPickMax} from your hand`}
+            eyebrow={nothing ? 'Nothing to play' : `Choose ${p.upTo ? 'up to ' : ''}${handPickMax} from your hand`}
             title={p.reason}
             actions={
               <>
-                <button disabled={!ok} onClick={() => send({ type: 'resolvePrompt', playerId: me!, cardIds: picked })}>Confirm ({picked.length})</button>
-                {p.optional && <button className="secondary" onClick={decline}>Skip</button>}
+                {!nothing && <button disabled={!ok} onClick={() => send({ type: 'resolvePrompt', playerId: me!, cardIds: picked })}>Confirm ({picked.length})</button>}
+                {p.optional && <button className="secondary" onClick={decline}>{nothing ? 'OK' : 'Skip'}</button>}
               </>
             }
           >
-            {handPickValid!.size ? 'Click the cards in your hand below.' : 'Nothing in your hand fits.'}
+            {nothing ? (shown.length ? 'None of these can be played now.' : 'Nothing in your hand fits.') : 'Click the cards in your hand below.'}
+            {shown.length > 0 && (
+              <div className="hts-choices">{shown.map((c) => (
+                <HtsCardView
+                  key={c.id}
+                  card={c}
+                  size="sm"
+                  selected={picked.includes(c.id)}
+                  disabled={!handPickValid!.has(c.id)}
+                  onClick={handPickValid!.has(c.id) ? () => togglePick(c.id) : undefined}
+                />
+              ))}</div>
+            )}
           </Dock>
         );
       }
@@ -603,6 +591,17 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
             <div className="hts-choices is-scroll">{p.cards.map((c) => <HtsCardView key={c.id} card={c} size="sm" />)}</div>
           </Dock>
         );
+      case 'confirm':
+        return (
+          <Dock tone="turn" eyebrow="Your call" title={p.reason} actions={
+            <>
+              <button onClick={() => send({ type: 'resolvePrompt', playerId: me! })}>Yes</button>
+              <button className="secondary" onClick={decline}>No</button>
+            </>
+          } />
+        );
+      case 'step':
+        return null;
       case 'corruptedSabretoothChoice':
         return (
           <Dock tone="danger" eyebrow="Corrupted Sabretooth" title="Steal the hero instead of destroying it?" actions={
@@ -623,7 +622,7 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   function onHandCard(c: HtsCard): (() => void) | undefined {
     if (handMode === 'pick') {
       if (!handPickValid!.has(c.id)) return undefined;
-      return () => setPicked((cur) => (cur.includes(c.id) ? cur.filter((x) => x !== c.id) : cur.length < handPickMax ? [...cur, c.id] : cur));
+      return () => togglePick(c.id);
     }
     if (handMode === 'play') return () => setSelectedHandId((cur) => (cur === c.id ? null : c.id));
     return undefined;
@@ -644,7 +643,7 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
       <div className="hts-party">
         {myLeader && <HtsCardView card={myLeader} size="sm" />}
         <span className="hts-party-divider" />
-        {myParty.length === 0 && <span className="hts-party-empty">No heroes yet — recruit one from your hand.</span>}
+        {myParty.length === 0 && <span className="hts-party-empty">{s.subPhase === 'choosingLeaders' ? 'Choose a Party Leader first.' : 'No heroes yet — recruit one from your hand.'}</span>}
         {myParty.map((h) => (
           <PartyHero
             key={h.card.id}
@@ -653,11 +652,7 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
             canAct={canAct}
             targetable={heroTargetIds.has(h.card.id)}
             onTarget={() => pickHero(h.card.id)}
-            onRoll={() => throwDice(
-              (dice) => ({ type: 'useHeroAbility', playerId: me, heroCardId: h.card.id, dice }),
-              { byPlayerId: me, reason: 'heroAbility', sourceCardId: h.card.id, threshold: h.card.abilityThreshold ?? 7, rollLow: h.card.rollLow },
-              h.card.name,
-            )}
+            onRoll={() => throwDice((dice) => ({ type: 'useHeroAbility', playerId: me, heroCardId: h.card.id, dice }))}
           />
         ))}
       </div>
@@ -756,7 +751,7 @@ function PartyHero({ hero: h, ap, canAct, targetable, onTarget, onRoll }: {
 }
 
 /** Every 2d6: live while modifiers can still land, then its result for a few seconds. */
-function RollTray({ state: s, recent }: { state: HtsState; recent: RecentRoll | null }) {
+function RollTray({ state: s, recent }: { state: HtsState; recent: HtsRollRecord | null }) {
   if (s.pendingRoll) {
     const r = s.pendingRoll;
     const { actorTotal, challengerTotal } = computeRollTotals(s, r);
@@ -774,7 +769,7 @@ function RollTray({ state: s, recent }: { state: HtsState; recent: RecentRoll | 
     );
   }
   if (recent) {
-    return <TrayRoll key={recent.key} state={s} roll={recent.roll} actorTotal={recent.actorTotal} challengerTotal={recent.challengerTotal} subject={recent.subject} verdictOf={recent} />;
+    return <TrayRoll key={recent.seq} state={s} roll={recent.roll} actorTotal={recent.actorTotal} challengerTotal={recent.challengerTotal} subject={recent.subject} verdictOf={recent} />;
   }
   return (
     <div className="hts-tray">
@@ -800,9 +795,9 @@ function TrayRoll({ state: s, roll: r, actorTotal, challengerTotal, subject, liv
   challengerTotal: number;
   subject: string;
   live?: boolean;
-  verdictOf?: RecentRoll;
+  verdictOf?: HtsRollRecord;
 }) {
-  const v = verdictOf ? verdict(s, verdictOf) : null;
+  const v = verdictOf ? VERDICT[verdictOf.outcome] : null;
   const bone = '#f4ecd8';
   const modsOn = (side: 'actor' | 'challenger') => r.modifiers.filter((m) => m.targetSide === side);
   const bonus = (side: 'actor' | 'challenger', total: number, dice: [number, number]) =>
@@ -870,9 +865,11 @@ function ModifierDock({ state: s, me, onSend }: { state: HtsState; me: PlayerId;
   const [horn, setHorn] = useState<1 | -1>(1);
   const [side, setSide] = useState<'actor' | 'challenger'>(r.byPlayerId === me ? 'actor' : r.challengerId === me ? 'challenger' : 'actor');
   const { actorTotal, challengerTotal } = computeRollTotals(s, r);
-  const mods = handOf(s, me).filter((c) => c.type === 'modifier');
+  // Stagguard-style "no other player can play Modifier cards" leaves only the leader skill.
+  const blocked = !!s.turnBuffs.noOpponentModifiers && me !== s.turnPlayerId;
+  const mods = blocked ? [] : handOf(s, me).filter((c) => c.type === 'modifier');
   const isHorn = s.partyLeaders[me]?.kind === 'leader-protecting-horn';
-  const shaman = me === s.turnPlayerId && s.partyLeaders[me]?.kind === 'leader-noble-shaman' && !s.turnBuffs.nobleShamanUsed;
+  const shaman = canUseNobleShaman(s, me);
   const duel = r.reason === 'challengeDuel';
   const subject = rollSubject(s, r);
   return (
@@ -883,10 +880,9 @@ function ModifierDock({ state: s, me, onSend }: { state: HtsState; me: PlayerId;
       actions={
         <>
           {shaman && (
-            <>
-              <button className="secondary tiny" onClick={() => onSend({ type: 'nobleShamanAdjust', playerId: me, delta: 1 })}>Shaman +1</button>
-              <button className="secondary tiny" onClick={() => onSend({ type: 'nobleShamanAdjust', playerId: me, delta: -1 })}>Shaman −1</button>
-            </>
+            <button className="secondary tiny" title="The Noble Shaman: once per turn, -1 to any roll" onClick={() => onSend({ type: 'nobleShamanAdjust', playerId: me, delta: -1, targetSide: side })}>
+              Noble Shaman −1
+            </button>
           )}
           {mods.flatMap((m) => (m.modifierChoices ?? []).map((val) => (
             <button
@@ -903,7 +899,7 @@ function ModifierDock({ state: s, me, onSend }: { state: HtsState; me: PlayerId;
       }
     >
       {duel ? `${seatName(s, r.byPlayerId)} defends ${subject} against ${seatName(s, r.challengerId)}.` : `For ${subject}: ${r.reason === 'monsterAttack' ? 'a monster attack' : `needs ${rollLabel(r.threshold, r.rollLow)}`}.`}
-      {(duel || isHorn) && (
+      {(duel || isHorn) && (mods.length > 0 || shaman) && (
         <div className="hts-picker">
           {duel && (
             <>

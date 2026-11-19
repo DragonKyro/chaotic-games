@@ -146,7 +146,7 @@ export const UU_MAIN_DECK_DEFS: readonly UuCardDef[] = [
     name: 'Mermaid Unicorn',
     type: 'magicalUnicorn',
     count: 1,
-    text: "When this card enters your Stable, you may return a card in another player's Stable to their hand.",
+    text: "When this card enters your Stable, return a card in another player's Stable to their hand.",
   },
   {
     kind: 'mother-goose-unicorn',
@@ -1255,7 +1255,7 @@ export const UU_FIRST_EDITION_DEFS: readonly UuCardDef[] = [
     type: 'magicalUnicorn',
     count: 1,
     source: 'base',
-    text: 'If this card is in your Stable at the beginning of your turn, you may DISCARD a card, then bring a Baby Unicorn card from the Nursery into your Stable.',
+    text: 'If this card is in your Stable at the beginning of your turn, you may DISCARD a card. If you do, bring a Baby Unicorn card from the Nursery directly into your Stable.',
   },
   {
     kind: 'puppicorn',
@@ -1263,7 +1263,7 @@ export const UU_FIRST_EDITION_DEFS: readonly UuCardDef[] = [
     type: 'magicalUnicorn',
     count: 1,
     source: 'base',
-    text: 'At the end of your turn, this card moves to the next player\'s Stable. This card cannot be sacrificed or destroyed.',
+    text: "Each time any player begins their turn, move this card to that player's Stable. This card cannot be sacrificed or destroyed.",
   },
   {
     kind: 'zombie-unicorn',
@@ -1271,7 +1271,7 @@ export const UU_FIRST_EDITION_DEFS: readonly UuCardDef[] = [
     type: 'magicalUnicorn',
     count: 1,
     source: 'base',
-    text: 'If this card is in your Stable at the beginning of your turn, you may DISCARD a Unicorn card, then bring a Unicorn card from the discard pile into your Stable.',
+    text: 'If this card is in your Stable at the beginning of your turn, you may DISCARD a Unicorn card. If you do, choose a Unicorn card from the discard pile and bring it directly into your Stable, then immediately skip to your End of Turn Phase.',
   },
   {
     kind: 'angel-unicorn',
@@ -1279,7 +1279,7 @@ export const UU_FIRST_EDITION_DEFS: readonly UuCardDef[] = [
     type: 'magicalUnicorn',
     count: 1,
     source: 'base',
-    text: 'If this card is in your Stable at the beginning of your turn, you may SACRIFICE this card, then bring a Unicorn card from the discard pile into your Stable.',
+    text: 'If this card is in your Stable at the beginning of your turn, you may SACRIFICE this card. If you do, choose a Unicorn card from the discard pile and bring it directly into your Stable.',
   },
   {
     kind: 'unicorn-shrinkray',
@@ -1287,15 +1287,15 @@ export const UU_FIRST_EDITION_DEFS: readonly UuCardDef[] = [
     type: 'magic',
     count: 1,
     source: 'base',
-    text: "Choose another player. Replace all of that player's Unicorn cards with Baby Unicorn cards from the Nursery.",
+    text: "Choose any player. Move all of that player's Unicorn cards to the discard pile without triggering any of their effects, then bring the same number of Baby Unicorn cards from the Nursery directly into that player's Stable.",
   },
   {
     kind: 'extra-tail',
     name: 'Extra Tail',
     type: 'upgrade',
-    count: 1,
+    count: 3,
     source: 'base',
-    text: 'You must have a Basic Unicorn in your Stable in order to play this card. If this card is in your Stable at the beginning of your turn, you may DRAW an extra card.',
+    text: 'This card can only enter a Stable if there is a Basic Unicorn card in that Stable. If this card is in your Stable at the beginning of your turn, you may DRAW an extra card.',
   },
   {
     kind: 'rainbow-mane',
@@ -1303,7 +1303,7 @@ export const UU_FIRST_EDITION_DEFS: readonly UuCardDef[] = [
     type: 'upgrade',
     count: 3,
     source: 'base',
-    text: 'You must have a Basic Unicorn in your Stable in order to play this card. If this card is in your Stable at the beginning of your turn, you may bring a Basic Unicorn card from your hand into your Stable.',
+    text: 'This card can only enter a Stable if there is a Basic Unicorn card in that Stable. If this card is in your Stable at the beginning of your turn, you may bring a Basic Unicorn card from your hand directly into your Stable.',
   },
   {
     kind: 'summoning-ritual',
@@ -1311,7 +1311,7 @@ export const UU_FIRST_EDITION_DEFS: readonly UuCardDef[] = [
     type: 'upgrade',
     count: 1,
     source: 'base',
-    text: 'If this card is in your Stable at the beginning of your turn, you may DISCARD 2 Unicorn cards, then bring a Unicorn card from the discard pile into your Stable.',
+    text: 'If this card is in your Stable at the beginning of your turn, you may DISCARD 2 Unicorn cards. If you do, bring a Unicorn card directly from the discard pile into your Stable.',
   },
   {
     kind: 'unicorn-lasso',
@@ -1319,7 +1319,7 @@ export const UU_FIRST_EDITION_DEFS: readonly UuCardDef[] = [
     type: 'upgrade',
     count: 1,
     source: 'base',
-    text: 'If this card is in your Stable at the beginning of your turn, you may STEAL a Unicorn card.',
+    text: 'If this card is in your Stable at the beginning of your turn, you may STEAL a Unicorn card. At the end of your turn, return that Unicorn card to the Stable from which you stole it.',
   },
 ];
 
@@ -1409,38 +1409,47 @@ export const UU_CHAOS_EDITION_DEFS: readonly UuCardDef[] = [
   },
 ];
 
+/**
+ * Diamond Edition (2024): the 2nd Edition Base Deck unchanged, plus these four
+ * Diamond Unicorns, which never enter the deck. They start face up in the Vault
+ * and move only through the Diamond Phase or card effects (wiki "Unstable
+ * Unicorns Diamond - Rules" / "Inventory List"; texts from each card's page).
+ * Diamond Unicorns cannot be destroyed, sacrificed, or returned to a hand.
+ */
 export const UU_DIAMOND_EDITION_DEFS: readonly UuCardDef[] = [
   {
-    kind: 'diamond-unicorn',
-    name: 'Diamond Unicorn',
-    type: 'magicalUnicorn',
-    count: 2,
-    source: 'diamond',
-    text: 'This card counts for 2 Unicorns and cannot be destroyed by Magic cards.',
-  },
-  {
-    kind: 'crystal-narwhal',
-    name: 'Crystal Narwhal',
-    type: 'magicalUnicorn',
+    kind: 'prismawing',
+    name: 'Prismawing',
+    type: 'diamondUnicorn',
     count: 1,
     source: 'diamond',
-    text: 'When this card enters your Stable, DRAW 2 cards.',
+    text: 'When this card enters your Stable, you may DISCARD a card, then DRAW 3 cards.',
   },
   {
-    kind: 'diamond-dust',
-    name: 'Diamond Dust',
-    type: 'magic',
-    count: 2,
-    source: 'diamond',
-    text: 'DRAW 2 cards, then you may bring a Unicorn card from the discard pile into your Stable.',
-  },
-  {
-    kind: 'prismatic-shield',
-    name: 'Prismatic Shield',
-    type: 'upgrade',
+    kind: 'reaper',
+    name: 'Reaper',
+    type: 'diamondUnicorn',
     count: 1,
     source: 'diamond',
-    text: 'Your Unicorn and Upgrade cards cannot be destroyed.',
+    // Not modeled: Reaper's printed text could not be confirmed (its wiki page was
+    // never archived). It counts as a Unicorn and follows the Diamond rules.
+    text: 'Printed effect not confirmed — not modeled here: this Diamond Unicorn has no effect.',
+  },
+  {
+    kind: 'shimmerblade',
+    name: 'Shimmerblade',
+    type: 'diamondUnicorn',
+    count: 1,
+    source: 'diamond',
+    text: "When this card enters your Stable, you may look at another player's hand. If you do, you may choose a card and add it to your hand.",
+  },
+  {
+    kind: 'sparklestar',
+    name: 'Sparklestar',
+    type: 'diamondUnicorn',
+    count: 1,
+    source: 'diamond',
+    text: 'When this card enters your Stable, you may add a Magic card from the discard pile to your hand.',
   },
 ];
 
@@ -1479,6 +1488,29 @@ export function isNeighCard(card: UuCard): boolean {
   return card.type === 'instant';
 }
 
+const BASICS: readonly UuCardKind[] = [
+  'basic-red', 'basic-orange', 'basic-yellow', 'basic-green', 'basic-blue', 'basic-indigo', 'basic-purple', 'basic-narwhal',
+];
+
+/**
+ * Cards taken out of the deck for a 2-player game (Unstable Games Wiki, "Two
+ * Player Rules": every Basic Unicorn and anything naming Basic Unicorns, plus
+ * cards too strong against a single opponent). Only the two base decks are
+ * listed: the other editions' and expansions' pools here are not the printed
+ * sets, so their removal lists can't be applied faithfully.
+ */
+const TWO_PLAYER_REMOVALS: Partial<Record<UuEdition, ReadonlySet<UuCardKind>>> = {
+  'base-2nd': new Set<UuCardKind>([
+    ...BASICS,
+    'queen-bee-unicorn', 'seductive-unicorn', 'rainbow-unicorn', 'nanny-cam', 'sadistic-ritual', 'slowdown', 'yay',
+    'mother-goose-unicorn', 'necromancer-unicorn',
+  ]),
+  base: new Set<UuCardKind>([
+    ...BASICS,
+    'extremely-fertile-unicorn', 'seductive-unicorn', 'nanny-cam', 'queen-bee-unicorn', 'sadistic-ritual', 'slowdown', 'yay',
+  ]),
+};
+
 export function dealUuSetup(
   seats: Seat[],
   rng: RngState,
@@ -1487,7 +1519,7 @@ export function dealUuSetup(
   deck: UuCard[];
   nursery: UuCard[];
   hands: Record<string, UuCard[]>;
-  startingBabies: Record<string, UuCard>;
+  vault: UuCard[];
 } {
   const edition: UuEdition = config?.edition ?? 'base-2nd';
   const expansions: readonly UuExpansionId[] = config?.expansions ?? [];
@@ -1526,27 +1558,25 @@ export function dealUuSetup(
     }
   }
 
-  const shuffledBabies = shuffle(rng, babies);
-  const startingBabies: Record<string, UuCard> = {};
-  seats.forEach((seat, idx) => {
-    const b = shuffledBabies[idx];
-    if (b) startingBabies[seat.id] = b;
-  });
-  const nursery = shuffledBabies.slice(seats.length);
+  // Every Baby Unicorn starts in the Nursery: each player then *chooses* one for
+  // their Stable (2nd Edition rulesheet, "How To Start") — see createInitialState.
+  const nursery = shuffle(rng, babies);
 
   // Build main deck based on edition
   const mainDefs: UuCardDef[] = [];
   if (edition === 'base') {
-    // 1st Edition replaces 2nd-edition-only upgrades/unicorns with the 1st Edition classics
+    // Original Base Deck (Second Print inventory, 135 cards): the nine 2nd-Edition-only
+    // kinds (wiki "Cards In This Deck", ♦) are swapped for the nine retired classics.
     const replacedIn1st = new Set<UuCardKind>([
-      'mother-goose-unicorn',
-      'alluring-narwhal',
       'dark-angel-unicorn',
+      'mother-goose-unicorn',
       'necromancer-unicorn',
-      're-target',
+      'unicorn-oracle',
+      'kiss-of-life',
+      'caffeine-overload',
       'claw-machine',
-      'stable-artillery',
       'rainbow-lasso',
+      'stable-artillery',
     ]);
     for (const def of UU_MAIN_DECK_DEFS) {
       if (!replacedIn1st.has(def.kind)) {
@@ -1572,8 +1602,6 @@ export function dealUuSetup(
       mainDefs.push(...UU_CONTROL_EDITION_DEFS);
     } else if (edition === 'chaos') {
       mainDefs.push(...UU_CHAOS_EDITION_DEFS);
-    } else if (edition === 'diamond') {
-      mainDefs.push(...UU_DIAMOND_EDITION_DEFS);
     } else if (edition === 'nsfw') {
       for (const def of UU_EXPANSION_DEFS) {
         if (def.source === 'nsfw' && def.type !== 'babyUnicorn') {
@@ -1590,8 +1618,15 @@ export function dealUuSetup(
     }
   }
 
+  const twoPlayer = seats.length === 2 && config?.twoPlayerRules !== false;
+  // The Diamond Edition deck is the 2nd Edition deck card for card, and its
+  // rulesheet points to the same 2-player rules.
+  const rulesDeck: UuEdition = edition === 'diamond' ? 'base-2nd' : edition;
+  const removed = twoPlayer ? TWO_PLAYER_REMOVALS[rulesDeck] : undefined;
+
   const pool: UuCard[] = [];
   for (const def of mainDefs) {
+    if (removed?.has(def.kind)) continue;
     for (let i = 0; i < def.count; i++) {
       pool.push({
         id: nextId++,
@@ -1603,14 +1638,34 @@ export function dealUuSetup(
       });
     }
   }
-  const shuffledDeck = shuffle(rng, pool);
+
+  // 2-player rules (2nd Edition rulesheet): "Before shuffling the deck, take out
+  // two Neigh cards and hand one to each player", then deal 5 as usual.
   const hands: Record<string, UuCard[]> = {};
+  for (const seat of seats) hands[seat.id] = [];
+  if (twoPlayer && rulesDeck === 'base-2nd') {
+    for (const seat of seats) {
+      const i = pool.findIndex((c) => c.kind === 'neigh');
+      if (i >= 0) hands[seat.id]!.push(pool.splice(i, 1)[0]!);
+    }
+  }
+
+  const shuffledDeck = shuffle(rng, pool);
   let cursor = 0;
   for (const seat of seats) {
-    hands[seat.id] = shuffledDeck.slice(cursor, cursor + 5);
+    hands[seat.id]!.push(...shuffledDeck.slice(cursor, cursor + 5));
     cursor += 5;
   }
   const deck = shuffledDeck.slice(cursor);
 
-  return { deck, nursery, hands, startingBabies };
+  const vault: UuCard[] = [];
+  if (edition === 'diamond') {
+    for (const def of UU_DIAMOND_EDITION_DEFS) {
+      for (let i = 0; i < def.count; i++) {
+        vault.push({ id: nextId++, kind: def.kind, name: def.name, type: def.type, text: def.text, source: def.source });
+      }
+    }
+  }
+
+  return { deck, nursery, hands, vault };
 }

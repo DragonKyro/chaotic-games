@@ -30,9 +30,9 @@ function uniqueCards(type: 'point' | 'instant'): HldCard[] {
 
 function uniqueDisasters(): HldDisasterCard[] {
   const seen = new Set<string>();
-  const order = { natural: 0, predator: 1, emotional: 2, meteor: 3 } as const;
+  const order = { natural: 0, predator: 1, emotional: 2, meteor: 3, lucky: 4 } as const;
   return ALL_DISASTERS.filter((d) => !seen.has(d.name) && !!seen.add(d.name))
-    .map((d, i) => ({ id: i + 1, name: d.name, category: d.category, text: d.text, ...(d.drawsHazard ? { drawsHazard: true } : {}) }))
+    .map((d, i) => ({ id: i + 1, name: d.name, category: d.category, text: d.text, ...(d.effect ? { effect: d.effect } : {}) }))
     .sort((a, b) => order[a.category] - order[b.category]);
 }
 
@@ -46,7 +46,7 @@ export function Gallery() {
         {HLD_DINO_DEFS.map((d) => <DinoCard key={`${d.id}-o`} dino={d.id} mood="out" compact />)}
       </div>
       <div className="hld-gallery-row">
-        {HLD_DINO_DEFS.map((d, i) => <DinoBadge key={d.id} dino={d.id} color={['#e64a4a', '#3a6ec9', '#f37025', '#f0f0f0', '#8a47c4', '#e85a9c'][i]!} size={56} />)}
+        {HLD_DINO_DEFS.map((d, i) => <DinoBadge key={d.id} dino={d.id} color={['#e64a4a', '#3a6ec9', '#f37025', '#f0f0f0', '#8a47c4', '#e85a9c', '#5cbf3e', '#2bb3c0'][i]!} size={56} />)}
       </div>
       <h3>Point cards</h3>
       <div className="hld-gallery-row">{uniqueCards('point').map((c) => <PlayCard key={c.kind} card={c} size="lg" inspect={false} />)}</div>
@@ -56,7 +56,7 @@ export function Gallery() {
       <div className="hld-gallery-row">{uniqueDisasters().map((d) => <DisasterCard key={d.name} disaster={d} size="md" inspect={false} />)}</div>
       <h3>Hazards &amp; backs</h3>
       <div className="hld-gallery-row">
-        {HLD_HAZARD_CARD_DEFS.map((h, i) => <HazardCard key={h.name} hazard={{ id: i, name: h.name, penalty: h.penalty, text: h.text }} size="lg" />)}
+        {HLD_HAZARD_CARD_DEFS.map((h, i) => <HazardCard key={h.name} hazard={{ id: i, name: h.name, text: h.text }} size="lg" />)}
         <FaceDownCard size="lg" />
         <FaceDownCard size="lg" deck="disaster" />
       </div>

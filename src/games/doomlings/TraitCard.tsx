@@ -15,7 +15,6 @@ export type CardSize = 'xs' | 'sm' | 'md' | 'lg';
 const COLOR_WORD = { red: 'Red', blue: 'Blue', green: 'Green', purple: 'Purple', colorless: 'Colorless' } as const;
 
 function colorLabel(c: DmTraitCard): string {
-  if (c.isAllColors) return 'All colours';
   return traitColors(c).map((k) => COLOR_WORD[k]).join(' / ');
 }
 
@@ -32,7 +31,7 @@ function Face({ card, size, protectedCard, foot }: { card: DmTraitCard; size: Ca
       <span className="dm-card-well">
         <OrganelleArt look={card} label={card.name} />
       </span>
-      <span className="dm-card-pts" title={`${card.points} point${card.points === 1 ? '' : 's'}`}>{card.points}</span>
+      <span className="dm-card-pts" title={card.compassStar ? 'Compass star: face value 0, worth a variable amount' : `${card.points} point${card.points === 1 ? '' : 's'}`}>{card.compassStar ? '★' : card.points}</span>
       {marks.length > 0 && size !== 'xs' && (
         <span className="dm-card-marks">
           {marks.map((m) => (
@@ -48,7 +47,7 @@ function Face({ card, size, protectedCard, foot }: { card: DmTraitCard; size: Ca
   );
 }
 
-export function TraitCard({ card, size = 'md', selected, disabled, onClick, inspect, protectedCard = !!card.indestructible, foot, className, title }: {
+export function TraitCard({ card, size = 'md', selected, disabled, onClick, inspect, protectedCard = false, foot, className, title }: {
   card: DmTraitCard;
   size?: CardSize;
   selected?: boolean;
@@ -56,7 +55,7 @@ export function TraitCard({ card, size = 'md', selected, disabled, onClick, insp
   onClick?: () => void;
   /** Hover for a big readable copy. On by default below lg. */
   inspect?: boolean;
-  /** Shows the shield (Indestructible, or protected by an attachment). */
+  /** Shows the shield (this trait can't be taken or discarded from its pile right now). */
   protectedCard?: boolean;
   /** A small tag on the card (an attachment's host, "new"). */
   foot?: ReactNode;
@@ -78,7 +77,7 @@ export function TraitCard({ card, size = 'md', selected, disabled, onClick, insp
     '--membrane': membraneCss(card),
     '--glow': HUE[card.color].core,
   } as CSSProperties;
-  const label = `${card.name} (${colorLabel(card)}, ${card.points} pts): ${card.text}`;
+  const label = `${card.name} (${colorLabel(card)}, ${card.compassStar ? 'compass star' : `${card.points} pts`})${card.text ? `: ${card.text}` : ''}`;
   const zoom = inspect ?? size !== 'lg';
   return (
     <CardShell
@@ -113,11 +112,11 @@ export function MiniTrait({ card, protectedCard, onClick, targetable }: {
   targetable?: boolean;
 }) {
   const style = { '--membrane': membraneCss(card), '--glow': HUE[card.color].core } as CSSProperties;
-  const cls = `dm-mini${card.dominant ? ' is-dominant' : ''}${targetable ? ' is-target' : ''}${card.isAttachment ? ' is-attach' : ''}`;
+  const cls = `dm-mini${card.dominant ? ' is-dominant' : ''}${targetable ? ' is-target' : ''}${card.playWhen ? ' is-attach' : ''}`;
   const inner = (
     <>
       <span className="dm-mini-dot" />
-      <span className="dm-mini-pts">{card.points}</span>
+      <span className="dm-mini-pts">{card.compassStar ? '★' : card.points}</span>
       {card.dominant && <MarkIcon mark="dominant" />}
       {protectedCard && <MarkIcon mark="shield" />}
     </>
@@ -126,9 +125,9 @@ export function MiniTrait({ card, protectedCard, onClick, targetable }: {
   return (
     <Inspect preview={preview}>
       {onClick ? (
-        <button type="button" className={cls} style={style} onClick={onClick} aria-label={`${card.name}, ${card.points} points`}>{inner}</button>
+        <button type="button" className={cls} style={style} onClick={onClick} aria-label={`${card.name}, ${card.compassStar ? 'compass star' : `${card.points} points`}`}>{inner}</button>
       ) : (
-        <span className={cls} style={style} aria-label={`${card.name}, ${card.points} points`}>{inner}</span>
+        <span className={cls} style={style} aria-label={`${card.name}, ${card.compassStar ? 'compass star' : `${card.points} points`}`}>{inner}</span>
       )}
     </Inspect>
   );

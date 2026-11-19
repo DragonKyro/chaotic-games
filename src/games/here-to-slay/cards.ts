@@ -1,5 +1,14 @@
-// Here to Slay — complete verified Base Game card library (6 Party Leaders, 15 Monsters,
-// 48 Heroes, 11 Items, 4 Cursed Items, 25 Modifiers, 13 Magic, 14 Challenges = 136 playable cards).
+// Here to Slay — card library.
+//
+// Base game: matches the official wiki "Here To Slay Base Deck - Inventory
+// List" card for card (6 Party Leaders, 15 Monsters, and a 115-card main deck
+// of 48 Heroes, 11 Items, 4 Cursed Items, 13 Magic, 25 Modifiers, 14
+// Challenges); hero roll thresholds and monster bands cross-checked against
+// two independent card databases.
+//
+// ⚠ The three expansion sections below do NOT match the official inventory
+// lists (see the note at the top of types.ts). They are kept so existing
+// configs still load, and flagged `verified: false` in HTS_EXPANSIONS.
 
 import type { RngState } from '@/core/rng';
 import { shuffle } from '@/core/rng';
@@ -377,7 +386,7 @@ export const HTS_WARRIORS_DRUIDS_LEADERS: readonly HtsCardDef[] = [
     abilityThreshold: null,
     modifierChoices: null,
     expansion: 'warriors-druids',
-    text: "Each time you roll to use a Hero card's effect, +1 to your roll for each Item card equipped to a Hero card in your Party.",
+    text: 'Each time you roll, +1 to your roll for each Item card equipped to a Hero card in your Party.',
   },
   {
     kind: 'leader-noble-shaman',
@@ -388,7 +397,7 @@ export const HTS_WARRIORS_DRUIDS_LEADERS: readonly HtsCardDef[] = [
     abilityThreshold: null,
     modifierChoices: null,
     expansion: 'warriors-druids',
-    text: "Once per turn on your turn, you may choose any player's roll and add +1 or -1 to that roll.",
+    text: "Once per turn on each player's turn, you may choose any player's roll. -1 to that roll.",
   },
 ];
 
@@ -472,7 +481,7 @@ export const HTS_BERSERKERS_NECROMANCERS_LEADERS: readonly HtsCardDef[] = [
     abilityThreshold: null,
     modifierChoices: null,
     expansion: 'berserkers-necromancers',
-    text: 'Each time you DESTROY a Hero card, DRAW 2 cards.',
+    text: 'Each time you SLAY a Monster card, DRAW 2 cards.',
   },
   {
     kind: 'leader-gnawing-dread',
@@ -632,7 +641,7 @@ export const HTS_ALL_PARTY_LEADERS: readonly HtsCardDef[] = [
   ...HTS_SLEIGH_LEADERS,
 ];
 
-export function getPartyLeadersForExpansions(expansions: readonly HtsExpansionId[] = []): readonly HtsCardDef[] {
+function getPartyLeadersForExpansions(expansions: readonly HtsExpansionId[] = []): readonly HtsCardDef[] {
   const result: HtsCardDef[] = [...HTS_PARTY_LEADERS];
   if (expansions.includes('warriors-druids')) result.push(...HTS_WARRIORS_DRUIDS_LEADERS);
   if (expansions.includes('berserkers-necromancers')) result.push(...HTS_BERSERKERS_NECROMANCERS_LEADERS);
@@ -640,6 +649,17 @@ export function getPartyLeadersForExpansions(expansions: readonly HtsExpansionId
   return result;
 }
 
+/** The Shadow Claw "may not be used as your Party Leader card in 2-player games" (rulebook). */
+function leaderAllowed(kind: string, playerCount: number): boolean {
+  return !(kind === 'leader-shadow-claw' && playerCount <= 2);
+}
+
+/**
+ * Build every pile for a new game. Party Leaders are returned as the draft
+ * pool and nobody holds cards yet: the rulebook has each player choose a
+ * leader first, then deals five cards each (the reducer deals from the top of
+ * `deck` once the draft is done).
+ */
 export function dealHtsSetup(
   seats: Seat[],
   rng: RngState,
@@ -648,14 +668,13 @@ export function dealHtsSetup(
   deck: HtsCard[];
   monsterRow: HtsMonster[];
   monsterDeck: HtsMonster[];
-  hands: Record<string, HtsCard[]>;
-  partyLeaders: Record<string, HtsCard>;
+  leaderPool: HtsCard[];
   giftDeck: HtsCard[];
 } {
   let nextId = 1;
 
-  const leaderDefs = getPartyLeadersForExpansions(expansions);
-  const leaders: HtsCard[] = leaderDefs.map((d) => ({
+  const leaderDefs = getPartyLeadersForExpansions(expansions).filter((d) => leaderAllowed(d.kind, seats.length));
+  const leaderPool: HtsCard[] = leaderDefs.map((d) => ({
     id: nextId++,
     kind: d.kind,
     name: d.name,
@@ -666,12 +685,6 @@ export function dealHtsSetup(
     modifierChoices: null,
     expansion: d.expansion,
   }));
-  const shuffledLeaders = shuffle(rng, leaders);
-  const partyLeaders: Record<string, HtsCard> = {};
-  seats.forEach((seat, idx) => {
-    partyLeaders[seat.id] = shuffledLeaders[idx % shuffledLeaders.length]!;
-  });
-
   const monsterDefs: HtsMonsterDef[] = [...HTS_MONSTER_DEFS];
   if (expansions.includes('warriors-druids')) monsterDefs.push(...HTS_WARRIORS_DRUIDS_MONSTERS);
   if (expansions.includes('berserkers-necromancers')) monsterDefs.push(...HTS_BERSERKERS_NECROMANCERS_MONSTERS);
@@ -723,14 +736,7 @@ export function dealHtsSetup(
       });
     }
   }
-  const shuffledPool = shuffle(rng, pool);
-  const hands: Record<string, HtsCard[]> = {};
-  let cursor = 0;
-  for (const seat of seats) {
-    hands[seat.id] = shuffledPool.slice(cursor, cursor + 5);
-    cursor += 5;
-  }
-  const deck = shuffledPool.slice(cursor);
+  const deck = shuffle(rng, pool);
 
   const giftPool: HtsCard[] = [];
   if (expansions.includes('here-to-sleigh')) {
@@ -752,5 +758,5 @@ export function dealHtsSetup(
   }
   const giftDeck = giftPool.length > 0 ? shuffle(rng, giftPool) : [];
 
-  return { deck, monsterRow, monsterDeck, hands, partyLeaders, giftDeck };
+  return { deck, monsterRow, monsterDeck, leaderPool, giftDeck };
 }

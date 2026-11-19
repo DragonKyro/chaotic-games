@@ -14,7 +14,7 @@ import type { EkBaseCardKind } from './types';
 type Size = 'xs' | 'sm' | 'md' | 'lg';
 
 const KITTENS: readonly EkBaseCardKind[] = ['explodingKitten', 'implodingKitten', 'barkingKitten'];
-const REACTIONS: readonly EkBaseCardKind[] = ['nope', 'alterTheFutureNow'];
+const REACTIONS: readonly EkBaseCardKind[] = ['nope', 'alterTheFutureNow', 'clairvoyance', 'feedTheDead', 'shuffleNow'];
 
 function cardCategory(kind: EkBaseCardKind): EkCategory {
   if (KITTENS.includes(kind)) return 'kitten';

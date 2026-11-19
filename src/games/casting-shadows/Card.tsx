@@ -22,15 +22,16 @@ const TYPE_LABEL: Record<CsCard['type'], string> = {
 
 const RANGE_LABEL: Record<CsSpellRange, string> = {
   same: 'your hex',
-  adjacent: 'adjacent hex',
+  adjacent: 'adjacent hexes',
   sameOrAdjacent: 'here or adjacent',
-  any: 'any hex',
+  upToTwo: 'up to 2 hexes away',
+  twoNotSame: '1–2 hexes away',
 };
 
 function rangeText(card: CsCard): string {
   if (card.type !== 'attackSpell') return TYPE_LABEL[card.type];
   const r = RANGE_LABEL[card.range ?? 'sameOrAdjacent'];
-  return card.targetsAllOnHex ? `Everyone on ${r === 'your hex' ? 'your hex' : `an ${r}`}` : `One enemy · ${r}`;
+  return card.targetsAllOnHex ? `A whole hex · ${r}` : `One enemy · ${r}`;
 }
 
 /** What a tier does, as compact icons: damage, heals, gems made, shields. */
@@ -70,11 +71,14 @@ function Face({ card, size }: { card: CsCard; size: Size }) {
         <span className="cs-card-tiers">{tiers.map((t, i) => <TierLine key={i} tier={t} size={size === 'lg' ? 15 : 12} />)}</span>
       )}
       {(size === 'md' || size === 'lg') && card.type === 'resource' && card.grantsResource && (
-        <span className="cs-card-tiers"><span className="cs-tier">each turn <GemIconSvg icon={card.grantsResource} size={size === 'lg' ? 16 : 13} /></span></span>
+        <span className="cs-card-tiers"><span className="cs-tier">discard for <GemIconSvg icon={card.grantsResource} size={size === 'lg' ? 16 : 13} /></span></span>
       )}
       {size === 'lg' && <span className="cs-card-text">{card.text}</span>}
       {size === 'lg' && card.type !== 'companion' && (
-        <span className="cs-card-collect">collect <CostRow cost={card.collectionCost} size={13} /></span>
+        <span className="cs-card-collect">
+          collect {card.requiresSpellLevel ? <>a Level {card.requiresSpellLevel} spell + </> : null}
+          {Object.keys(card.collectionCost).length ? <CostRow cost={card.collectionCost} size={13} /> : card.requiresSpellLevel ? null : 'free'}
+        </span>
       )}
     </>
   );

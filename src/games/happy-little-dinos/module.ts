@@ -4,7 +4,7 @@ import type { GameModule } from '@/core/module';
 import type { Seat } from '@/core/types';
 import { chooseAIAction } from './ai';
 import { applyAction, createInitialState } from './reducer';
-import { HLD_EXPANSIONS, type HldAction, type HldConfig, type HldState } from './types';
+import { HLD_EXPANSIONS, HLD_SEAT_EXPANSIONS, type HldAction, type HldConfig, type HldState } from './types';
 import { HldThumbnail } from './Thumbnail';
 
 const NAME = 'Happy Little Dinosaurs';
@@ -22,10 +22,15 @@ export const happyLittleDinosModule: GameModule<HldState, HldAction, HldConfig> 
   defaultConfig: (seats: Seat[]): HldConfig => ({
     expansions: seats.length >= 5 ? ['players-5-6'] : [],
     trackLength: 50,
+    twoPlayerVariant: true,
   }),
 
-  validateConfig: (config) => {
+  validateConfig: (config, seats) => {
     const errors: string[] = [];
+    // The base box has four Dinosaur boards; the 5–6 Player Expansion and Hazards Ahead add two each.
+    if (seats && seats.length >= 5 && !config.expansions.some((e) => HLD_SEAT_EXPANSIONS.includes(e))) {
+      errors.push('5–6 players need the 5–6 Player Expansion or Hazards Ahead (each adds two Dinosaur boards).');
+    }
     if (config.trackLength < 10 || config.trackLength > 100) {
       errors.push('Track length must be between 10 and 100.');
     }

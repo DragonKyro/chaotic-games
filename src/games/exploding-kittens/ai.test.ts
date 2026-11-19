@@ -78,8 +78,11 @@ describe('AI vs AI playouts', () => {
   it('conserves cards through a whole game', () => {
     const { state } = playToCompletion(2024, 4);
     const inHands = Object.values(state.hands).reduce((sum, h) => sum + h.length, 0);
-    const total = state.deck.length + state.discard.length + inHands + state.limbo.length;
-    // 56-card box minus the kittens that stayed in the box (4 - (players - 1)).
+    // Exploded players' cards lie in front of them, out of the game but still on the table.
+    const inFront = [...Object.values(state.deadKittens), ...Object.values(state.deadHands)].reduce((sum, h) => sum + h.length, 0);
+    const total = state.deck.length + state.discard.length + inHands + inFront + state.limbo.length;
+    // 56-card box minus the kittens that stayed in the box (4 - (players - 1)); at 4
+    // players all 6 Defuses are in play (4 dealt + 2 spares).
     expect(total).toBe(56 - (4 - 3));
   });
 
@@ -387,4 +390,127 @@ describe('AI vs AI playouts with expansions', () => {
       }
     });
   }
+});
+
+// ============================================================================
+// Decisions added with the rules audit — every prompt has an AI answer
+// ============================================================================
+
+describe('expansion prompts', () => {
+  const ZOMBIE: EkConfig = { ...CONFIG, expansions: ['zombie-kittens'] };
+
+  it('Dig Deeper: keeps a safe top card, passes on a lethal one', () => {
+    const safe = rig({ subPhase: 'awaitingDigDeeper', pendingDigDeeper: { playerId: 'p0', card: card('skip') }, config: ZOMBIE });
+    expect(chooseAIAction(safe, 'p0')).toEqual({ type: 'pickDigDeeper', playerId: 'p0', keep: true });
+    const lethal = rig({ subPhase: 'awaitingDigDeeper', pendingDigDeeper: { playerId: 'p0', card: card('explodingKitten') }, config: ZOMBIE });
+    expect(chooseAIAction(lethal, 'p0')).toEqual({ type: 'pickDigDeeper', playerId: 'p0', keep: false });
+  });
+
+  it('hands a Streaking-held Exploding Kitten to whoever asked for a Favor', () => {
+    const ek = card('explodingKitten');
+    const s = rig({
+      subPhase: 'awaitingFavorGive',
+      activePlayerId: 'p1',
+      pendingFavor: { fromPlayerId: 'p1', toPlayerId: 'p0' },
+      hands: { p0: [], p1: [card('streakingKitten'), ek, card('tacoCat')], p2: [] },
+    });
+    expect(chooseAIAction(s, 'p1')).toEqual({ type: 'giveCard', playerId: 'p1', cardId: ek.id });
+  });
+
+  it('a Cursed AI cannot see its hand: it gives the first face-down card', () => {
+    const first = card('defuse');
+    const s = rig({
+      subPhase: 'awaitingFavorGive',
+      activePlayerId: 'p1',
+      pendingFavor: { fromPlayerId: 'p1', toPlayerId: 'p0' },
+      hands: { p0: [], p1: [first, card('tacoCat')], p2: [] },
+      cursedPlayers: ['p1'],
+    });
+    expect(chooseAIAction(s, 'p1')).toEqual({ type: 'giveCard', playerId: 'p1', cardId: first.id });
+  });
+
+  it('does not hide a kitten on top when its own turn carries on', () => {
+    const s = rig({
+      subPhase: 'awaitingKittenPlace',
+      pendingKitten: card('explodingKitten'),
+      deck: [card('tacoCat'), card('skip'), card('beardCat'), card('cattermelon')],
+      defuseEndsTurn: false,
+    });
+    const action = chooseAIAction(s, 'p0');
+    expect(action?.type).toBe('placeKitten');
+    expect((action as { index: number }).index).toBeGreaterThan(0);
+  });
+
+  it('a dead AI still answers a Nope window with Zombie Kittens, and not otherwise', () => {
+    const pending = {
+      byPlayerId: 'p1', cards: [card('skip')], combo: null, targetPlayerId: null, demandKind: null,
+      nopeCards: [], responderQueue: ['p0'],
+    };
+    const zombie = rig({ subPhase: 'awaitingNope', activePlayerId: 'p0', eliminated: ['p0'], pending, config: ZOMBIE,
+      hands: { p0: [card('nope')], p1: [], p2: [] } });
+    expect(chooseAIAction(zombie, 'p0')?.type).toMatch(/Nope/);
+    const base = { ...zombie, config: CONFIG };
+    expect(chooseAIAction(base, 'p0')).toBeNull();
+  });
+
+  it('plays Clairvoyance when offered', () => {
+    const cv = card('clairvoyance');
+    const s = rig({
+      subPhase: 'awaitingClairvoyance',
+      activePlayerId: 'p1',
+      pendingClairvoyance: { placerId: 'p0', queue: ['p1'], watchers: [] },
+      hands: { p0: [], p1: [cv], p2: [] },
+      config: ZOMBIE,
+    });
+    expect(chooseAIAction(s, 'p1')).toEqual({ type: 'playClairvoyance', playerId: 'p1', cardId: cv.id });
+  });
+
+  it('names a dead player to bring back with a Zombie Kitten', () => {
+    const zk = card('zombieKitten');
+    const s = rig({
+      subPhase: 'awaitingDefuse',
+      pendingKitten: card('explodingKitten'),
+      hands: { p0: [zk], p1: [card('tacoCat')], p2: [], p3: [] },
+      eliminated: ['p1', 'p2'],
+      config: ZOMBIE,
+    }, 4);
+    const action = chooseAIAction(s, 'p0');
+    // The dead player with the fewest cards is the least dangerous to revive.
+    expect(action).toEqual({ type: 'playDefuse', playerId: 'p0', cardId: zk.id, targetPlayerId: 'p2' });
+    expect(() => applyAction(s, action!)).not.toThrow();
+  });
+
+  it('never feeds the dead an Exploding Kitten', () => {
+    const ek = card('explodingKitten');
+    const cat = card('tacoCat');
+    const s = rig({
+      subPhase: 'awaitingDonation',
+      activePlayerId: 'p1',
+      pendingDonation: { kind: 'feedTheDead', queue: ['p1'], toPlayerId: 'p2', collected: [] },
+      hands: { p0: [], p1: [card('streakingKitten'), ek, cat], p2: [] },
+      eliminated: ['p2'],
+      config: ZOMBIE,
+    });
+    expect(chooseAIAction(s, 'p1')).toEqual({ type: 'donateCard', playerId: 'p1', cardId: cat.id });
+  });
+
+  it('never trades its Defuses for a random steal', () => {
+    const s = rig({
+      deck: [card('explodingKitten'), card('tacoCat')],
+      knownTopCount: { p0: 0, p1: 0, p2: 0 },
+      hands: { p0: [card('defuse'), card('defuse')], p1: [card('skip'), card('skip')], p2: [] },
+    }, 3);
+    const action = chooseAIAction(s, 'p0');
+    expect(action?.type === 'playCards' && action.cardIds.length === 2).toBe(false);
+  });
+
+  it('aims both Barking Kittens at the richest opponent', () => {
+    const bks = [card('barkingKitten'), card('barkingKitten')];
+    const s = rig({
+      deck: [card('tacoCat'), card('tacoCat')],
+      hands: { p0: bks, p1: [card('skip')], p2: [card('skip'), card('skip')] },
+      knownTopCount: { p0: 1, p1: 0, p2: 0 },
+    });
+    expect(chooseAIAction(s, 'p0')).toEqual({ type: 'playCards', playerId: 'p0', cardIds: bks.map((c) => c.id), targetPlayerId: 'p2' });
+  });
 });

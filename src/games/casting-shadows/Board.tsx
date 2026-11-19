@@ -90,7 +90,7 @@ export function HexMap({
                   <GemGlyph icon={h.startTurnResource} />
                 </g>
               )}
-              {h.id === 'ancient-rune' && <text className="cs-hex-tag" x={0} y={R * 0.58} textAnchor="middle">+1 AP</text>}
+              {h.id === 'ancient-rune' && <text className="cs-hex-tag" x={0} y={R * 0.58} textAnchor="middle">+2 HP</text>}
               {h.id === 'dusty-desert' && <text className="cs-hex-tag" x={0} y={R * 0.58} textAnchor="middle">Counterspells</text>}
             </g>
           );

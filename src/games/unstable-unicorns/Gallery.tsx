@@ -10,7 +10,7 @@ import { TYPE_META } from './CardArt';
 import { UuCardBack, UuCardView } from './Card';
 import type { UuCardType } from './types';
 
-const ORDER: UuCardType[] = ['babyUnicorn', 'basicUnicorn', 'magicalUnicorn', 'magic', 'instant', 'upgrade', 'downgrade'];
+const ORDER: UuCardType[] = ['babyUnicorn', 'basicUnicorn', 'magicalUnicorn', 'diamondUnicorn', 'magic', 'instant', 'upgrade', 'downgrade'];
 
 export function Gallery() {
   const seen = new Set<string>();

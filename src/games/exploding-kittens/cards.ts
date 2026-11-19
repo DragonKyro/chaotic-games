@@ -1,37 +1,17 @@
-// Exploding Kittens — base deck composition, card metadata, setup dealer.
+// Exploding Kittens — deck compositions, card metadata, setup dealer.
 //
 // ============================================================================
-// DECK COMPOSITION — 56 cards
+// DECK COMPOSITION
 // ============================================================================
-// The box advertises 56 cards. The per-type counts below are the standard
-// composition and are internally consistent with that total:
+// Every count below is read off the publisher's rule sheets (see types.ts for
+// the file list). Original Edition, 56 cards:
 //
-//   Exploding Kitten     4      \
-//   Defuse               6       > removed from the deck during setup
-//                               /
-//   Nope                 5      \
-//   Attack               4       |
-//   Skip                 4       |  26 "action" cards
-//   Favor                4       |
-//   Shuffle              4       |
-//   See the Future       5      /
+//   Exploding Kitten 4 · Defuse 6 · Nope 5 · Attack 4 · Skip 4 · Favor 4 ·
+//   Shuffle 4 · See the Future 5 · five cat cards, 4 of each (20)
 //
-//   Taco Cat             4      \
-//   Rainbow-Ralphing Cat 4       |
-//   Cattermelon          4       |  20 cat cards (combo fodder, no ability)
-//   Hairy Potato Cat     4       |
-//   Beard Cat            4      /
-//                       ---
-//                        56
-//
-// Cross-check: 56 − 4 kittens − 6 defuse = 46 dealable cards; 46 − 20 cats = 26
-// action cards, which is exactly 5+4+4+4+4+5. Both totals land, which is good
-// evidence the split is right.
-//
-// ⚠ Sourced from knowledge of the game, NOT from the rulebook — explodingkittens.com,
-// BGG and every rules mirror returned 503/403 when this was written. Spot-check
-// against the physical box when convenient; if a count is off, fix it HERE and
-// nothing else needs to change.
+// Imploding Kittens 20 · Streaking Kittens 15 (incl. 1 Exploding Kitten) ·
+// Barking Kittens 20 · Zombie Kittens 22 · Party Pack 120 (a replacement core
+// deck, split by paw prints — see PARTY_PACK_COUNTS).
 
 import type { RngState } from '@/core/rng';
 import { shuffle } from '@/core/rng';
@@ -48,7 +28,7 @@ import type {
 // Composition
 // ============================================================================
 
-/** Copies of each card in the full 56-card base deck. */
+/** Copies of each card in the 56-card Original Edition deck. */
 export const BASE_DECK_COUNTS: Record<EkCoreCardKind, number> = {
   explodingKitten: 4,
   defuse: 6,
@@ -77,10 +57,11 @@ export const IMPLODING_DECK_COUNTS: Partial<Record<EkBaseCardKind, number>> = {
   feralCat: 4,
 };
 
-/** Streaking Kittens expansion — 15 cards (+1 Exploding Kitten seeded into deck). */
+/** Streaking Kittens expansion — 15 cards, one of them an extra Exploding Kitten. */
 export const STREAKING_DECK_COUNTS: Partial<Record<EkBaseCardKind, number>> = {
+  explodingKitten: 1,
   streakingKitten: 1,
-  superSkip: 2,
+  superSkip: 1,
   seeTheFuture5x: 1,
   alterTheFuture5x: 1,
   swapTopAndBottom: 3,
@@ -103,13 +84,58 @@ export const BARKING_DECK_COUNTS: Partial<Record<EkBaseCardKind, number>> = {
   superSkip: 1,
 };
 
-/** Zombie Kittens expansion cards (zombieKitten replaces Defuses). */
+/** Zombie Kittens expansion — 22 cards. The Zombie Kittens replace the Defuses. */
 export const ZOMBIE_DECK_COUNTS: Partial<Record<EkBaseCardKind, number>> = {
   zombieKitten: 5,
   digDeeper: 4,
-  clone: 3,
+  clone: 2,
   clairvoyance: 2,
+  superSkip: 2,
+  feedTheDead: 2,
+  graveRobber: 1,
+  attackOfTheDead: 3,
+  shuffleNow: 1,
 };
+
+/** Zombie Kittens, 2 players: "Remove all of the Attack of the Dead, Grave Robber, Feed The Dead, and Super Skip cards". */
+const ZOMBIE_TWO_PLAYER_REMOVED: readonly EkBaseCardKind[] = ['attackOfTheDead', 'graveRobber', 'feedTheDead', 'superSkip'];
+
+/**
+ * Party Pack — 120 cards: [without paw print, with paw print]. 2–3 players use
+ * only the paw-print cards, 4–7 only the others, 8–10 everything. The 9
+ * Exploding Kittens carry no paw print and are used at every count.
+ */
+export const PARTY_PACK_COUNTS: Partial<Record<EkBaseCardKind, readonly [number, number]>> = {
+  explodingKitten: [9, 0],
+  defuse: [7, 3],
+  nope: [5, 4],
+  attack: [2, 3],
+  targetedAttack: [3, 2],
+  skip: [6, 4],
+  favor: [4, 2],
+  shuffle: [4, 2],
+  seeTheFuture: [3, 3],
+  alterTheFuture: [4, 2],
+  drawFromTheBottom: [4, 3],
+  tacoCat: [4, 3],
+  rainbowRalphingCat: [4, 3],
+  cattermelon: [4, 3],
+  hairyPotatoCat: [4, 3],
+  beardCat: [4, 3],
+  feralCat: [4, 2],
+};
+
+/** The Party Pack cards in play for this many players. */
+function partyPackCounts(players: number): Partial<Record<EkBaseCardKind, number>> {
+  const out: Partial<Record<EkBaseCardKind, number>> = {};
+  for (const [kind, [noPaw, paw]] of Object.entries(PARTY_PACK_COUNTS) as [EkBaseCardKind, readonly [number, number]][]) {
+    out[kind] = kind === 'explodingKitten' ? noPaw
+      : players <= 3 ? paw
+      : players <= 7 ? noPaw
+      : noPaw + paw;
+  }
+  return out;
+}
 
 /** The five base cat cards plus Feral Cat. They exist only as combo fodder. */
 const CAT_KINDS: readonly EkBaseCardKind[] = [
@@ -124,20 +150,47 @@ export function isDefuseKind(kind: EkBaseCardKind): boolean {
   return kind === 'defuse' || kind === 'zombieKitten';
 }
 
-export function maxPlayersForExpansions(expansions: readonly EkExpansionId[]): number {
-  if (expansions.includes('party-pack')) return 10;
-  if (
-    expansions.includes('imploding-kittens')
-    || expansions.includes('recipes-for-disaster')
-  ) {
-    return 6;
-  }
-  return 5;
+/** Cards that can never be put down as a turn action or a combo. */
+export function isKittenKind(kind: EkBaseCardKind): boolean {
+  return kind === 'explodingKitten' || kind === 'implodingKitten';
 }
 
-/** Cards dealt into opening hands in the base game — everything except kittens and defuses. */
-const DEALABLE_KINDS = (Object.keys(BASE_DECK_COUNTS) as EkCoreCardKind[])
-  .filter((k) => k !== 'explodingKitten' && k !== 'defuse');
+function hasImplodingKitten(expansions: readonly EkExpansionId[]): boolean {
+  return expansions.includes('imploding-kittens') || expansions.includes('recipes-for-disaster');
+}
+
+export function hasStreakingKittens(expansions: readonly EkExpansionId[]): boolean {
+  return expansions.includes('streaking-kittens') || expansions.includes('recipes-for-disaster');
+}
+
+function hasBarkingKittens(expansions: readonly EkExpansionId[]): boolean {
+  return expansions.includes('barking-kittens') || expansions.includes('recipes-for-disaster');
+}
+
+/**
+ * Seat limits. Original Edition 2–5; Imploding Kittens "adds one additional
+ * player"; the Party Pack is a 2–10 core deck; the Zombie Kittens expansion
+ * has exactly 5 Zombie Kittens (one per player) so it caps at 5; the Recipes
+ * box is 2–5.
+ */
+export function maxPlayersForExpansions(expansions: readonly EkExpansionId[]): number {
+  let max = expansions.includes('party-pack') ? 10
+    : expansions.includes('imploding-kittens') ? 6
+    : 5;
+  if (expansions.includes('zombie-kittens')) max = Math.min(max, 5);
+  return max;
+}
+
+/**
+ * How many kittens go into the deck. Base: players − 1. Streaking Kittens:
+ * players ("the total number of Kittens is equal to the number of players").
+ * The Imploding Kitten counts towards that total.
+ */
+export function kittenPlan(players: number, expansions: readonly EkExpansionId[]): { exploding: number; imploding: number } {
+  const total = Math.max(0, players - 1 + (hasStreakingKittens(expansions) ? 1 : 0));
+  const imploding = hasImplodingKitten(expansions) && total > 0 ? 1 : 0;
+  return { exploding: total - imploding, imploding };
+}
 
 // ============================================================================
 // Display metadata
@@ -188,15 +241,19 @@ export const CARD_LABEL: Record<EkBaseCardKind, string> = {
   digDeeper: 'Dig Deeper',
   clone: 'Clone',
   clairvoyance: 'Clairvoyance',
+  feedTheDead: 'Feed the Dead',
+  graveRobber: 'Grave Robber',
+  attackOfTheDead: 'Attack of the Dead',
+  shuffleNow: 'Shuffle NOW',
 };
 
 export const CARD_TEXT: Record<EkBaseCardKind, string> = {
   explodingKitten: 'You explode and are out of the game — unless you can play a Defuse.',
-  defuse: 'Play this when you draw an Exploding Kitten to neutralise it, then secretly put the kitten back anywhere in the deck.',
+  defuse: 'Play this when you draw an Exploding Kitten to neutralise it, then secretly put the kitten back anywhere in the deck. Your turn is over.',
   nope: 'Stop any action except an Exploding Kitten or a Defuse. Playable at any time, even out of turn. A Nope can be Noped.',
-  attack: 'End your turn without drawing, and force the next player to take two turns.',
+  attack: 'End your turn without drawing, and force the next player to take two turns. If you were attacked, your remaining turns pass on too, plus two.',
   skip: 'End one of your turns without drawing a card.',
-  favor: 'Force one player to give you a card of their choosing.',
+  favor: 'Force one other player to give you a card of their choosing.',
   shuffle: 'Shuffle the draw pile.',
   seeTheFuture: 'Privately peek at the top three cards of the deck.',
   tacoCat: 'No ability on its own — collect matching cards to play a combo.',
@@ -205,41 +262,45 @@ export const CARD_TEXT: Record<EkBaseCardKind, string> = {
   hairyPotatoCat: 'No ability on its own — collect matching cards to play a combo.',
   beardCat: 'No ability on its own — collect matching cards to play a combo.',
   // Imploding Kittens
-  implodingKitten: 'First draw: reinsert face-up anywhere in the deck. Second draw (while face-up): explode immediately — cannot be Defused!',
-  reverse: 'Reverse the order of play and end one of your turns without drawing a card.',
+  implodingKitten: 'First draw: put it back face up anywhere in the deck (no Defuse). Draw it face up and you die — it cannot be Defused or Noped.',
+  reverse: 'Reverse the order of play and end one of your turns without drawing a card. With two players it is a Skip.',
   drawFromTheBottom: 'End your turn by drawing the bottom card from the draw pile instead of the top.',
   alterTheFuture: 'Privately view and rearrange the top three cards of the draw pile in any order.',
-  targetedAttack: 'End your turn(s) without drawing and force any chosen player to take two turns.',
-  feralCat: 'Counts as any Cat Card when playing a pair, three-of-a-kind, or five-different combo.',
+  targetedAttack: 'End your turn without drawing and choose any player (including yourself) to take two turns. Stacks like Attack.',
+  feralCat: 'Use as any Cat Card in a pair or three of a kind. Cannot stand in for a non-cat card.',
   // Streaking Kittens
-  streakingKitten: 'While in your hand, you can secretly hold 1 Exploding Kitten without exploding!',
+  streakingKitten: 'While this is in your hand you can secretly hold one Exploding Kitten. If it leaves your hand, that kitten goes off.',
   superSkip: 'End ALL of your remaining turns without drawing a card.',
   seeTheFuture5x: 'Privately peek at the top five cards of the deck.',
   alterTheFuture5x: 'Privately view and rearrange the top five cards of the deck in any order.',
   swapTopAndBottom: 'Swap the top and bottom cards of the draw pile without looking.',
-  garbageCollection: 'Every player must choose 1 card from their hand to shuffle into the draw pile.',
-  catomicBomb: 'Move all Exploding Kittens to the top of the deck, shuffle the rest, and end your turn without drawing.',
-  mark: 'Pick a target player — one random card in their hand is revealed and stays visible to everyone.',
-  curseOfTheCatButt: 'Blind a target player — their hand is kept face-down until they draw a card.',
+  garbageCollection: 'Everyone with cards (you too) secretly puts one card from their hand into the draw pile, then it is shuffled.',
+  catomicBomb: 'Show every Exploding Kitten in the draw pile, shuffle the rest, put the kittens on top, and end your turn without drawing.',
+  mark: 'Pick a player — one random card in their hand is turned to face everyone until it is played or stolen.',
+  curseOfTheCatButt: 'Curse a player: their hand goes face down and they play cards picked at random until they draw a card safely.',
   // Barking Kittens
-  barkingKitten: 'If another player holds the other Barking Kitten, they must Defuse it or explode!',
-  alterTheFutureNow: 'Playable at any time (even out of turn) to view and rearrange the top three cards of the deck.',
-  bury: 'Draw the top card, look at it, and secretly insert it back anywhere in the deck to end your turn.',
-  personalAttack: 'Attack yourself — take 3 turns in a row.',
+  barkingKitten: 'Whoever holds the other Barking Kitten must Defuse or explode. If nobody does, it stays face up in front of you — and you are the target. Cannot be Noped.',
+  alterTheFutureNow: 'Playable at any time, even out of turn: view and rearrange the top three cards of the deck.',
+  bury: "End your turn by drawing a card, looking at it, and secretly putting it back anywhere. Not while an I'll Take That is in front of you.",
+  personalAttack: 'Take 3 turns in a row, starting with this one. Stacks with other Attacks.',
   shareTheFuture: 'View and rearrange the top three cards of the deck, then show them to the next player.',
-  illTakeThat: 'Play in front of another player; the next card they draw goes to you instead.',
-  potluck: 'In turn order, each player chooses 1 card from their hand to place on top of the deck.',
-  towerOfPower: 'Protect yourself with a 6-card stash; thieves steal from the stash instead of your hand.',
+  illTakeThat: 'Put this in front of another player; the next card they draw goes to you instead.',
+  potluck: 'Starting with you, each player with cards puts one card of their choice face down on top of the deck.',
+  towerOfPower: 'Wear the Crown and take the 6-card Stash into it. Anyone stealing from you takes a random Crown card instead.',
   // Zombie Kittens
-  zombieKitten: 'Acts as a Defuse — and if any players are eliminated, brings one chosen dead player back to life!',
-  digDeeper: 'Look at the top 2 cards of the deck, take 1 into your hand and put the other back to end your turn.',
-  clone: 'Copies the action card beneath it on top of the discard pile.',
-  clairvoyance: 'Sense the deck and know whenever and wherever reinserted kittens are placed.',
+  zombieKitten: 'Acts as a Defuse (you may choose not to). If anyone is dead, you must bring one back — and hide their kitten in the deck too.',
+  digDeeper: 'Look at the top card: keep it and end your turn, or put it back and draw the next card no matter what.',
+  clone: 'Becomes the card directly beneath it on the discard pile. Play it with a card to make a pair, or as a Zombie Kitten on top of one.',
+  clairvoyance: 'NOW: when another player plays a Zombie Kitten, watch where they hide the kitten(s).',
+  feedTheDead: 'NOW: choose a dead player. Every living player except you gives them a card.',
+  graveRobber: 'Every dead player with cards shuffles one card from their hand into the draw pile. Needs a dead player.',
+  attackOfTheDead: 'End your turn without drawing. The next player takes 3 turns for each dead player. Stacks like Attack.',
+  shuffleNow: 'NOW: shuffle the draw pile, even when it is not your turn.',
 };
 
 export const ALL_CARD_KINDS = Object.keys(CARD_LABEL) as EkBaseCardKind[];
 
-/** Cards that resolve an effect when played from hand on your turn. */
+/** Cards with an effect of their own when played as a single card. */
 export function isPlayableAction(kind: EkBaseCardKind): boolean {
   return (
     kind === 'attack'
@@ -273,11 +334,23 @@ export function isPlayableAction(kind: EkBaseCardKind): boolean {
     // Zombie
     || kind === 'digDeeper'
     || kind === 'clone'
-    || kind === 'clairvoyance'
+    || kind === 'feedTheDead'
+    || kind === 'graveRobber'
+    || kind === 'attackOfTheDead'
+    || kind === 'shuffleNow'
   );
 }
 
-/** Single-card actions that require choosing a live target player. */
+/**
+ * NOW cards: playable at any time before an action has begun, even out of
+ * turn, and (with Zombie Kittens) by dead players. Clairvoyance is a NOW card
+ * too, but it only answers a Zombie Kitten, so it has its own window.
+ */
+export function isNowKind(kind: EkBaseCardKind): boolean {
+  return kind === 'alterTheFutureNow' || kind === 'shuffleNow' || kind === 'feedTheDead';
+}
+
+/** Single-card actions that require choosing a target player. */
 export function needsTargetForKind(kind: EkBaseCardKind): boolean {
   return (
     kind === 'favor'
@@ -285,7 +358,13 @@ export function needsTargetForKind(kind: EkBaseCardKind): boolean {
     || kind === 'mark'
     || kind === 'curseOfTheCatButt'
     || kind === 'illTakeThat'
+    || kind === 'feedTheDead'
   );
+}
+
+/** Kinds a lone Clone may become: action cards with an effect of their own (no Clone on Clone, no kittens). */
+export function isCloneableKind(kind: EkBaseCardKind): boolean {
+  return kind !== 'clone' && kind !== 'barkingKitten' && isPlayableAction(kind);
 }
 
 // ============================================================================
@@ -302,11 +381,12 @@ export const CARD_VALUE: Record<EkBaseCardKind, number> = {
   superSkip: 6.5,      // dodges all owed draws
   catomicBomb: 6,      // stacks all kittens on top and ends turn
   targetedAttack: 5.5, // dodges draw and picks any victim
+  attackOfTheDead: 5.5,
   skip: 5,             // dodges one draw
   reverse: 5,          // dodges one draw + flips direction
   drawFromTheBottom: 4.8, // dodges top-of-deck danger
   bury: 4.5,           // safe draw + reinsert
-  digDeeper: 4.5,      // pick 1 of 2
+  digDeeper: 4.5,      // a second chance at the draw
   attack: 4.5,         // dodges a draw AND loads the next player
   alterTheFuture5x: 4.2,
   alterTheFutureNow: 4,
@@ -316,11 +396,14 @@ export const CARD_VALUE: Record<EkBaseCardKind, number> = {
   shareTheFuture: 3.2,
   seeTheFuture: 3,     // converts a gamble into a decision
   clone: 3,
+  shuffleNow: 3,
   clairvoyance: 2.8,
   swapTopAndBottom: 2.8,
+  graveRobber: 2.6,
   shuffle: 2.5,        // re-rolls a known-bad deck
   favor: 2.5,          // net +1 card, but the target picks
   illTakeThat: 2.4,
+  feedTheDead: 2.3,
   mark: 2.2,
   curseOfTheCatButt: 2.2,
   barkingKitten: 2.2,
@@ -333,45 +416,56 @@ export const CARD_VALUE: Record<EkBaseCardKind, number> = {
   cattermelon: 1,
   hairyPotatoCat: 1,
   beardCat: 1,
-  explodingKitten: 0,  // never desirable to hold in the base game
+  explodingKitten: 0,  // never desirable to hold
   implodingKitten: 0,
 };
 
 // ============================================================================
 // Combos
 // ============================================================================
-// Two of a kind  → steal a random card from a chosen player.
-// Three of a kind→ name a card type and take it from a chosen player if held.
-// Five different → take any card from the discard pile.
-// Feral Cat counts as any Cat Card in pairs, triples, and five-different.
+// "Two of a kind … now applies to ANY pair of cards in the deck with the same
+// title. Ignore the instructions on the cards." Three of a kind: the same, but
+// name the card you want. Feral Cat is any Cat Card (never a non-cat). A Clone
+// played with a card becomes that card, so Clone + X is a pair of X.
+// Five different (take any card from the discard pile) is from older printings
+// only — `fiveDifferent` opts in.
+
+export interface ComboRules {
+  catsOnly: boolean;
+  fiveDifferent: boolean;
+}
 
 /** Does this set of cards form a legal combo? Returns the kind, or null. */
-export function detectCombo(cards: EkCard[], catsOnly: boolean): EkComboKind | null {
+export function detectCombo(cards: EkCard[], rules: ComboRules): EkComboKind | null {
+  if (cards.some((c) => isKittenKind(c.kind) || c.kind === 'barkingKitten')) return null;
+  const pairable = (kind: EkBaseCardKind) => !rules.catsOnly || isCatKind(kind);
   if (cards.length === 2 || cards.length === 3) {
     const [first] = cards;
     if (!first) return null;
+    const size: EkComboKind = cards.length === 2 ? 'pair' : 'triple';
     const allSame = cards.every((c) => c.kind === first.kind);
-    if (allSame) {
-      if (catsOnly && !isCatKind(first.kind)) return null;
-      return cards.length === 2 ? 'pair' : 'triple';
+    if (allSame) return pairable(first.kind) && first.kind !== 'clone' ? size : null;
+    // Clone + one other card: the Clone becomes the card beneath it.
+    if (cards.length === 2) {
+      const clone = cards.find((c) => c.kind === 'clone');
+      const other = cards.find((c) => c.kind !== 'clone');
+      if (clone && other) return pairable(other.kind) ? 'pair' : null;
     }
-    // Feral Cat acts as any Cat Card when paired/tripled with other cat cards.
+    // Feral Cat stands in for any Cat Card.
     if (cards.every((c) => isCatKind(c.kind))) {
       const nonFeralKinds = new Set(cards.filter((c) => c.kind !== 'feralCat').map((c) => c.kind));
-      if (nonFeralKinds.size <= 1) {
-        return cards.length === 2 ? 'pair' : 'triple';
-      }
+      if (nonFeralKinds.size <= 1) return size;
     }
     return null;
   }
-  if (cards.length === 5) {
-    if (catsOnly && cards.some((c) => !isCatKind(c.kind))) return null;
+  if (cards.length === 5 && rules.fiveDifferent) {
+    if (rules.catsOnly && cards.some((c) => !isCatKind(c.kind))) return null;
     const nonFeral = cards.filter((c) => c.kind !== 'feralCat');
-    const nonFeralKinds = new Set(nonFeral.map((c) => c.kind));
-    // All non-feral cards must be distinct; feral cats fill in distinct cat slots.
-    if (nonFeralKinds.size !== nonFeral.length) return null;
-    const catCount = cards.filter((c) => isCatKind(c.kind)).length;
-    if (cards.length - nonFeral.length > 0 && catCount > 5) return null;
+    // All non-feral cards must be distinct; Feral Cats fill the other cat slots.
+    if (new Set(nonFeral.map((c) => c.kind)).size !== nonFeral.length) return null;
+    const ferals = cards.length - nonFeral.length;
+    const distinctCats = new Set(nonFeral.filter((c) => isCatKind(c.kind)).map((c) => c.kind)).size;
+    if (ferals > 0 && distinctCats + ferals > 5) return null;
     return 'fiveDifferent';
   }
   return null;
@@ -384,16 +478,32 @@ export function detectCombo(cards: EkCard[], catsOnly: boolean): EkComboKind | n
 export interface DealtSetup {
   deck: EkCard[];
   hands: Record<string, EkCard[]>;
+  /** Barking Kittens: the 6-card Stash waiting under the Tower of Power Crown. */
+  stash: EkCard[];
+}
+
+/** The core deck (Original Edition or Party Pack) for this many players. */
+function coreCounts(players: number, expansions: readonly EkExpansionId[]): Partial<Record<EkBaseCardKind, number>> {
+  return expansions.includes('party-pack') ? partyPackCounts(players) : BASE_DECK_COUNTS;
+}
+
+/** Exploding Kittens available: the core deck's, plus the one in the Streaking Kittens box. */
+function explodingKittensAvailable(players: number, expansions: readonly EkExpansionId[]): number {
+  return (coreCounts(players, expansions).explodingKitten ?? 0) + (hasStreakingKittens(expansions) ? 1 : 0);
 }
 
 /**
- * Full setup per the rulebook (plus optional expansions):
- *   1. Set aside all Exploding/Imploding Kittens and all Defuses (or Zombie Kittens).
- *   2. Shuffle the rest; deal `handSize` cards to each player.
- *   3. Give every player exactly one Defuse (or Zombie Kitten).
- *   4. Put (playerCount - 1) Exploding Kittens (+1 if Streaking Kittens is enabled,
- *      plus 1 Imploding Kitten if Imploding/Party/Recipes is enabled) and leftover
- *      Defuses back into the deck, then shuffle.
+ * Setup per the rulebooks:
+ *   1. Set aside the Exploding (and Imploding) Kittens and the Defuses.
+ *   2. Deal one Defuse to each player. Original Edition: shuffle 2 of the spares
+ *      back into the deck (only 1 exists at 5 players). Party Pack: all spares.
+ *      Zombie Kittens: the Defuses are removed and each player gets a Zombie
+ *      Kitten instead; spares are removed.
+ *   3. Barking Kittens: deal 6 cards face down as the Stash.
+ *   4. Deal `handSize` cards to each player (spare Defuses can be among them).
+ *   5. Insert the kittens (see kittenPlan) and shuffle.
+ * No card is ever invented: config validation keeps the player count inside
+ * what the boxes contain.
  */
 export function dealSetup(
   seats: Seat[],
@@ -403,65 +513,65 @@ export function dealSetup(
 ): DealtSetup {
   let nextId = 1;
   const make = (kind: EkBaseCardKind): EkCard => ({ id: nextId++, kind });
+  const n = seats.length;
+  const zombie = expansions.includes('zombie-kittens');
+  const partyPack = expansions.includes('party-pack');
+  const core = coreCounts(n, expansions);
 
-  const hasImploding = expansions.includes('imploding-kittens')
-    || expansions.includes('party-pack')
-    || expansions.includes('recipes-for-disaster');
-  const hasStreaking = expansions.includes('streaking-kittens')
-    || expansions.includes('recipes-for-disaster');
-  const hasBarking = expansions.includes('barking-kittens')
-    || expansions.includes('recipes-for-disaster');
-  const hasZombie = expansions.includes('zombie-kittens');
-  const scale = expansions.includes('party-pack') || seats.length > 6 ? 2 : 1;
+  // ---- kittens --------------------------------------------------------------
+  const plan = kittenPlan(n, expansions);
+  const ekCount = Math.min(plan.exploding, explodingKittensAvailable(n, expansions));
+  const kittens = [
+    ...Array.from({ length: ekCount }, () => make('explodingKitten')),
+    ...Array.from({ length: plan.imploding }, () => make('implodingKitten')),
+  ];
 
-  const extraKitten = hasStreaking ? 1 : 0;
-  const neededKittens = Math.max(0, seats.length - 1 + extraKitten);
-  const totalKittens = Math.max(BASE_DECK_COUNTS.explodingKitten, neededKittens);
-  const kittens = Array.from({ length: totalKittens }, () => make('explodingKitten'));
+  // ---- defuses --------------------------------------------------------------
+  const defuseKind: EkBaseCardKind = zombie ? 'zombieKitten' : 'defuse';
+  const defuseCount = zombie ? (ZOMBIE_DECK_COUNTS.zombieKitten ?? 0) : (core.defuse ?? 0);
+  const defuses = Array.from({ length: defuseCount }, () => make(defuseKind));
+  const dealtDefuses = defuses.slice(0, n);
+  const spares = defuses.slice(n);
+  const sparesBack = zombie ? [] : partyPack ? spares : spares.slice(0, 2);
 
-  const defuseKind: EkBaseCardKind = hasZombie ? 'zombieKitten' : 'defuse';
-  const baseDefuseCount = hasZombie ? 5 : BASE_DECK_COUNTS.defuse;
-  // The base box's 6 Defuses cover up to 5 players; bigger and expanded games
-  // keep two spares in the deck beyond one per player.
-  const baseGame = expansions.length === 0 && seats.length <= 5;
-  const totalDefuses = baseGame ? baseDefuseCount : Math.max(baseDefuseCount, seats.length + 2);
-  const defuses = Array.from({ length: totalDefuses }, () => make(defuseKind));
-
+  // ---- everything else --------------------------------------------------------
   const pool: EkCard[] = [];
-  for (const kind of DEALABLE_KINDS) {
-    for (let i = 0; i < BASE_DECK_COUNTS[kind] * scale; i++) {
-      pool.push(make(kind));
-    }
-  }
-
-  const addCounts = (counts: Partial<Record<EkBaseCardKind, number>>) => {
+  const add = (counts: Partial<Record<EkBaseCardKind, number>>, skip: readonly EkBaseCardKind[] = []) => {
     for (const [k, count] of Object.entries(counts) as [EkBaseCardKind, number][]) {
-      if (k === 'implodingKitten' || k === 'explodingKitten' || k === 'defuse' || k === 'zombieKitten') continue;
+      if (isKittenKind(k) || isDefuseKind(k) || skip.includes(k)) continue;
       for (let i = 0; i < count; i++) pool.push(make(k));
     }
   };
+  add(core);
+  if (hasImplodingKitten(expansions)) add(IMPLODING_DECK_COUNTS);
+  if (hasStreakingKittens(expansions)) add(STREAKING_DECK_COUNTS);
+  if (hasBarkingKittens(expansions)) add(BARKING_DECK_COUNTS);
+  if (zombie) add(ZOMBIE_DECK_COUNTS, n === 2 ? ZOMBIE_TWO_PLAYER_REMOVED : []);
+  pool.push(...sparesBack);
 
-  if (hasImploding) addCounts(IMPLODING_DECK_COUNTS);
-  if (hasStreaking) addCounts(STREAKING_DECK_COUNTS);
-  if (hasBarking) addCounts(BARKING_DECK_COUNTS);
-  if (hasZombie) addCounts(ZOMBIE_DECK_COUNTS);
+  // ---- Barking Kittens' Stash ------------------------------------------------------
+  // "Remove the Tower of Power … shuffle the deck, and deal out 6 cards face
+  // down … This is the Stash. Insert the Tower of Power Card back into the deck."
+  let stash: EkCard[] = [];
+  let rest = pool;
+  if (hasBarkingKittens(expansions)) {
+    const tower = rest.filter((c) => c.kind === 'towerOfPower');
+    const shuffledForStash = shuffle(rng, rest.filter((c) => c.kind !== 'towerOfPower'));
+    stash = shuffledForStash.slice(0, 6);
+    rest = [...shuffledForStash.slice(6), ...tower];
+  }
 
-  const implodingCards = hasImploding ? [make('implodingKitten')] : [];
-
-  const shuffled = shuffle(rng, pool);
+  // ---- deal ---------------------------------------------------------------------
+  const shuffled = shuffle(rng, rest);
   const hands: Record<string, EkCard[]> = {};
   let cursor = 0;
   seats.forEach((seat, i) => {
     const dealt = shuffled.slice(cursor, cursor + handSize);
     cursor += handSize;
-    const defuse = defuses[i];
+    const defuse = dealtDefuses[i];
     hands[seat.id] = defuse ? [...dealt, defuse] : dealt;
   });
 
-  const leftoverDefuses = defuses.slice(seats.length);
-  const kittensInPlay = [...kittens.slice(0, neededKittens), ...implodingCards];
-  const deck = shuffle(rng, [...shuffled.slice(cursor), ...kittensInPlay, ...leftoverDefuses]);
-
-  return { deck, hands };
+  const deck = shuffle(rng, [...shuffled.slice(cursor), ...kittens]);
+  return { deck, hands, stash };
 }
-

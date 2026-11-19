@@ -16,7 +16,7 @@ import { CardArt } from './CardArt';
 import { isNeighCard } from './cards';
 import {
   canPlayCardFromHand, canPlayNeigh, findCardInStable, handLimitOf, handOf, hasDragonsBlessing, hasNannyCam, hasPandamonium,
-  isBlinded, queenBeeOwner, stableOf, unicornCount, validHandCards, validPileCards, validStableTargets,
+  isBlinded, queenBeeOwner, stableOf, unicornCount, validHandCards, validPileCards, validPlayerTargets, validStableTargets,
 } from './reducer';
 import { INK } from './unicornArt';
 import type { UuAction, UuCard, UuConfig, UuExpansionId, UuPhase, UuPrompt, UuState } from './types';
@@ -26,7 +26,7 @@ import { UU_EXPANSIONS } from './types';
 // Lobby
 // ============================================================================
 
-export function LobbyConfig({ config, onChange, readOnly }: {
+export function LobbyConfig({ config, seats, onChange, readOnly }: {
   config: UuConfig;
   seats?: Seat[];
   onChange: (c: UuConfig) => void;
@@ -41,12 +41,12 @@ export function LobbyConfig({ config, onChange, readOnly }: {
       <label className="field">
         <span>Base edition</span>
         <select value={config.edition} onChange={(e) => onChange({ ...config, edition: e.target.value as UuConfig['edition'] })}>
-          <option value="base-2nd">2nd Edition Base Deck (135 cards — default)</option>
-          <option value="base">1st Edition / Original Print (Fertile, Puppicorn, Zombie, Angel, Shrinkray, Lasso)</option>
-          <option value="control">Control Collector&apos;s Edition (Chronocorn, Time Shift, Absorb &amp; Reflect)</option>
-          <option value="chaos">Chaos Collector&apos;s Edition (Unicorn of Chaos, Hell&apos;s Steedicorn, Redirect)</option>
-          <option value="diamond">Diamond Edition (Diamond Unicorns, Crystal Narwhal, Prismatic Shield)</option>
-          <option value="travel">Travel Edition (Compact 82-card portable deck)</option>
+          <option value="base-2nd">2nd Edition Base Deck (default, checked card by card)</option>
+          <option value="diamond">Diamond Edition (2nd Edition deck + 4 Diamond Unicorns and the Diamond dice)</option>
+          <option value="base">Original Base Deck, Second Print (shared cards keep 2nd Edition wording)</option>
+          <option value="control">Control (unofficial approximation, not the printed deck)</option>
+          <option value="chaos">Chaos (unofficial approximation, not the printed deck)</option>
+          <option value="travel">Travel (unofficial approximation, not the printed deck)</option>
         </select>
       </label>
       {!readOnly && (
@@ -56,8 +56,20 @@ export function LobbyConfig({ config, onChange, readOnly }: {
         </div>
       )}
       <ExpansionPicker expansions={UU_EXPANSIONS} enabled={config.expansions} onToggle={toggle} readOnly={readOnly} />
+      {(!seats || seats.length === 2) && (
+        <label>
+          <input type="checkbox" disabled={readOnly} checked={config.twoPlayerRules !== false} onChange={(e) => onChange({ ...config, twoPlayerRules: e.target.checked })} />
+          <span>
+            Official 2-player rules
+            <span className="lobby-hint" style={{ display: 'block', margin: 0 }}>
+              With exactly 2 players: Basic Unicorns and the cards too strong head-to-head leave the deck, and (2nd Edition) each player starts with a Neigh.
+            </span>
+          </span>
+        </label>
+      )}
       <p className="lobby-hint" style={{ margin: 0 }}>
-        2–8 players. First to 7 Unicorns wins (6 at 6–8 players). Mix any base edition with any of the 8 expansions.
+        2–8 players. First to 7 Unicorns wins (6 at 6–8 players). The 2nd Edition and Diamond decks are checked against the
+        official card lists; the expansions (marked unverified) and the Control, Chaos and Travel options are approximations, not the printed sets.
       </p>
     </div>
   );
@@ -188,9 +200,7 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
 
   // ---- opponents --------------------------------------------------------------------
   const choosePlayerPrompt = myPrompt && prompt!.kind === 'choosePlayer' ? (prompt as Extract<UuPrompt, { kind: 'choosePlayer' }>) : null;
-  const playerCandidates = choosePlayerPrompt
-    ? s.seats.filter((x) => (choosePlayerPrompt.allowSelf || x.id !== me) && x.id !== choosePlayerPrompt.movedFromPlayerId).map((x) => x.id)
-    : [];
+  const playerCandidates = choosePlayerPrompt ? validPlayerTargets(s, choosePlayerPrompt) : [];
 
   const top = (
     <PlayerStrip>
@@ -260,6 +270,15 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
             </div>
             <span className="uu-pile-label">Nursery</span>
           </div>
+          {s.config.edition === 'diamond' && (
+            <div className="uu-pile" title="The Vault: Diamond Unicorns waiting for the Diamond dice">
+              <div className="uu-nursery">
+                {s.vault.slice(0, 3).map((c) => <UuCardView key={c.id} card={c} size="sm" />)}
+                <span className="uu-count">{s.vault.length}</span>
+              </div>
+              <span className="uu-pile-label">Vault</span>
+            </div>
+          )}
         </div>
 
         <div className="uu-stage">
@@ -331,10 +350,12 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
         <GameOverPanel
           seats={s.seats}
           finalScores={s.finalScores}
+          // No winner = the deck ran out on a full tie (everyone loses).
           winnerIds={s.winnerId ? [s.winnerId] : undefined}
+          noWinner={!s.winnerId}
           localPlayerId={me}
-          headline={winner ? `${winner.name} wins!` : undefined}
-          detail={winner ? `A Stable of ${unicornCount(s, winner.id)} unicorns. Everyone else: neighed.` : 'The deck ran dry — the biggest herd takes it.'}
+          headline={winner ? `${winner.name} wins!` : 'Everyone loses!'}
+          detail={winner ? `A Stable of ${unicornCount(s, winner.id)} unicorns. Everyone else: neighed.` : 'The deck ran dry on a dead tie: same herd size, same number of letters. Ouch.'}
           scoreLabel="unicorns"
           art={best ? <CardArt card={best} /> : undefined}
         />
@@ -629,7 +650,7 @@ function PromptDock({ state: s, prompt, me, dispatch, handPicks, handNeeded }: {
     case 'chooseStableCard': {
       const valid = validStableTargets(s, prompt);
       const owners = [...new Set(valid.map((v) => v.ownerId))];
-      const verb = { sacrifice: 'Sacrifice', destroy: 'Destroy', steal: 'Steal', bounce: 'Return', moveSource: 'Move', swapGive: 'Give', swapSteal: 'Take' }[prompt.mode];
+      const verb = { sacrifice: 'Sacrifice', destroy: 'Destroy', steal: 'Steal', bounce: 'Return', moveSource: 'Move', swapGive: 'Give', swapSteal: 'Take', toVault: 'Return' }[prompt.mode];
       return (
         <Dock tone={prompt.mode === 'destroy' || prompt.mode === 'sacrifice' ? 'danger' : 'turn'} eyebrow={`${verb} a card`} title={prompt.reason} actions={prompt.optional ? <SkipButton me={me} dispatch={dispatch} /> : undefined}>
           {valid.length === 0 && 'No card qualifies.'}
@@ -649,7 +670,8 @@ function PromptDock({ state: s, prompt, me, dispatch, handPicks, handNeeded }: {
       );
     }
     case 'choosePlayer': {
-      const candidates = s.seats.filter((x) => (prompt.allowSelf ? true : x.id !== me) && x.id !== prompt.movedFromPlayerId);
+      const allowed = validPlayerTargets(s, prompt);
+      const candidates = s.seats.filter((x) => allowed.includes(x.id));
       return (
         <Dock tone="turn" eyebrow="Pick a player" title={prompt.reason} actions={
           <>
@@ -667,7 +689,7 @@ function PromptDock({ state: s, prompt, me, dispatch, handPicks, handNeeded }: {
     }
     case 'chooseFromOpponentHand':
       return (
-        <Dock tone="turn" eyebrow={`${nameOf(s, prompt.targetPlayerId)}'s hand`} title={prompt.reason}>
+        <Dock tone="turn" eyebrow={`${nameOf(s, prompt.targetPlayerId)}'s hand`} title={prompt.reason} actions={prompt.optional ? <SkipButton me={me} dispatch={dispatch} /> : undefined}>
           <div className="uu-choices">
             {handOf(s, prompt.targetPlayerId).map((c) => <UuCardView key={c.id} card={c} size="sm" onClick={() => resolve({ targetCardId: c.id })} />)}
           </div>
@@ -675,9 +697,9 @@ function PromptDock({ state: s, prompt, me, dispatch, handPicks, handNeeded }: {
       );
     case 'chooseFromPile': {
       const valid = validPileCards(s, prompt);
-      const pile = prompt.pile === 'deck' ? 'the deck' : prompt.pile === 'nursery' ? 'the Nursery' : 'the discard pile';
+      const pile = prompt.pile === 'deck' ? 'the deck' : prompt.pile === 'nursery' ? 'the Nursery' : prompt.pile === 'vault' ? 'the Vault' : 'the discard pile';
       return (
-        <Dock tone="turn" eyebrow={`Search ${pile}`} title={prompt.reason} actions={prompt.optional ? <SkipButton me={me} dispatch={dispatch} /> : undefined}>
+        <Dock tone="turn" eyebrow={prompt.pile === 'deck' ? `Search ${pile}` : `Pick from ${pile}`} title={prompt.reason} actions={prompt.optional ? <SkipButton me={me} dispatch={dispatch} /> : undefined}>
           {valid.length === 0 && 'Nothing there fits.'}
           <div className="uu-choices is-scroll">
             {valid.map((c) => <UuCardView key={c.id} card={c} size="sm" onClick={() => resolve({ targetCardId: c.id })} />)}

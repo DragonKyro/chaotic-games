@@ -2,8 +2,8 @@
 // both the lobby and the game (the shell renders it in a modal whenever a
 // module's UI bundle exports `Rules`).
 //
-// Doubles as the reference for what THIS implementation does, including the two
-// places where the rules are ambiguous and we had to pick a reading.
+// Doubles as the reference for what THIS implementation does. Every rule here
+// was read off the publisher's rule sheets (file list in types.ts).
 
 import { RulesTable } from '@/ui/RulesBook';
 import { Card } from './Card';
@@ -13,6 +13,7 @@ import {
   CARD_LABEL,
   CARD_TEXT,
   IMPLODING_DECK_COUNTS,
+  PARTY_PACK_COUNTS,
   STREAKING_DECK_COUNTS,
   TOTAL_BASE_CARDS,
   ZOMBIE_DECK_COUNTS,
@@ -50,6 +51,26 @@ function CountTable({ counts }: { counts: Partial<Record<EkBaseCardKind, number>
   );
 }
 
+/** Party Pack: which cards are used at which player counts. */
+function PartyTable() {
+  const entries = Object.entries(PARTY_PACK_COUNTS) as [EkBaseCardKind, readonly [number, number]][];
+  const sum = (i: 0 | 1) => entries.reduce((n, [, c]) => n + c[i], 0);
+  return (
+    <RulesTable
+      columns={['Card', 'No paw (4–7)', 'Paw (2–3)']}
+      numeric={[1, 2]}
+      rows={[
+        ...entries.map(([kind, [noPaw, paw]]) => ({
+          key: kind,
+          cells: [CARD_LABEL[kind], noPaw, paw],
+          tone: KITTENS.includes(kind) ? ('bad' as const) : undefined,
+        })),
+        { key: 'total', cells: ['Total (8–10 players use both)', sum(0), sum(1)], tone: 'total' as const },
+      ]}
+    />
+  );
+}
+
 export function Rules() {
   return (
     <div className="ek-rules">
@@ -65,31 +86,51 @@ export function Rules() {
         <li>Play as many cards as you like, or none at all.</li>
         <li>
           <strong>End your turn by drawing a card</strong> from the top of the deck.
-          Drawing is not optional — it is how a turn ends. The only exceptions are
-          Skip and Attack.
+          Drawing is not optional — it is how a turn ends. The exceptions are the
+          Skips and the Attacks.
         </li>
       </ol>
       <p>
         If the card you draw is an Exploding Kitten you must immediately play a
-        Defuse, or you are out of the game and your whole hand goes to the discard
-        pile.
+        Defuse and secretly put the kitten back anywhere in the deck — or you are
+        out. The kitten that got you lies face up in front of you, and the rest of
+        your hand face down: out of the game, not in the discard pile.
       </p>
 
       <h4>Setup</h4>
       <p>
-        Every Exploding Kitten and Defuse is set aside. Each player is dealt a hand
-        plus exactly one Defuse. Then <strong>one fewer Exploding Kitten than there
-        are players</strong> goes back into the deck along with any leftover Defuses,
-        and the deck is shuffled. That is why exactly one player survives.
+        Set aside the Exploding Kittens and the Defuses. Deal each player one
+        Defuse, and shuffle <strong>two</strong> of the spare Defuses back into the
+        deck (at 5 players there is only one spare). Deal 7 cards to everyone — a
+        hand of 8. Then <strong>one fewer Exploding Kitten than there are
+        players</strong> goes into the deck, and it is shuffled. That is why exactly
+        one player survives.
+      </p>
+
+      <h4>Attacks stack</h4>
+      <p>
+        Attack ends your turn without drawing, and the next player takes two turns.
+        If the <em>victim</em> of an Attack plays one, their remaining turns pass on
+        too: the next player takes the attacker's current and untaken turns
+        <strong> plus two</strong>. Attacked, then Attack straight away: the next
+        player owes 4. Take one of your two turns first, then Attack: they owe 3.
+        Skip only ends one of the turns you owe.
       </p>
 
       <h4>Combos</h4>
-      <p>Cat cards do nothing on their own. Matching cards do:</p>
+      <p>
+        Any matching cards make a combo — not just cats: two Skips are a pair. The
+        cards' own instructions are ignored.
+      </p>
       <ul>
         <li><strong>Two of a kind</strong> — steal a random card from a player of your choice.</li>
-        <li><strong>Three of a kind</strong> — name a card type; that player must hand it over if they have it.</li>
-        <li><strong>Five different cards</strong> — take any card you like out of the discard pile.</li>
+        <li><strong>Three of a kind</strong> — name a card; that player must hand it over if they have it.</li>
       </ul>
+      <p className="ek-rules-note">
+        Older printings also had a <strong>Five different</strong> combo (take any
+        card from the discard pile). It is off unless switched on in the lobby. The
+        lobby can also restrict combos to cat cards as a house rule.
+      </p>
 
       <h4>Nope</h4>
       <p>
@@ -104,7 +145,7 @@ export function Rules() {
         the window for everyone else.
       </p>
 
-      <h4>Card reference (Base Game)</h4>
+      <h4>Card reference (Original Edition)</h4>
       <p>
         The base deck is <strong>{TOTAL_BASE_CARDS} cards</strong>.
       </p>
@@ -119,46 +160,74 @@ export function Rules() {
       </div>
 
       <h4>Expansions</h4>
-      <p>
-        All six expansions can be toggled in the lobby:
-      </p>
 
-      <h5>1. Imploding Kittens (+20 cards, up to 6 players)</h5>
+      <h5>Imploding Kittens (+20 cards, up to 6 players)</h5>
+      <p>
+        The Imploding Kitten counts as one of the kittens: the deck holds one fewer
+        kitten than players in total. The first time it is drawn it goes back face
+        up wherever you like; drawing it face up kills you outright.
+      </p>
       <CountTable counts={IMPLODING_DECK_COUNTS} />
 
-      <h5>2. Streaking Kittens (+15 cards, +1 Exploding Kitten)</h5>
+      <h5>Streaking Kittens (+15 cards)</h5>
+      <p>
+        Adds an Exploding Kitten, so there are as many kittens as players. Whether
+        a Streaking Kitten holds an Exploding Kitten you draw is a standing choice by
+        your hand, so the draw itself gives nothing away. Lose the Streaking Kitten
+        and the kitten goes off; anyone who steals or is handed an Exploding Kitten
+        must Defuse it. A Cursed player picks face-down cards at random — one at a
+        time, choosing a target after the card is revealed — until they draw safely.
+      </p>
       <CountTable counts={STREAKING_DECK_COUNTS} />
 
-      <h5>3. Barking Kittens (+20 cards)</h5>
+      <h5>Barking Kittens (+20 cards)</h5>
+      <p>
+        At setup, 6 cards are dealt face down as the Stash for the Tower of Power.
+        Barking Kittens cannot be Noped; play both together (or the second while the
+        first is in front of you) to pick any target.
+      </p>
       <CountTable counts={BARKING_DECK_COUNTS} />
 
-      <h5>4. Zombie Kittens (Zombie Kitten replaces Defuse)</h5>
+      <h5>Zombie Kittens (+22 cards, up to 5 players)</h5>
+      <p>
+        The Defuses are removed; everyone gets a Zombie Kitten instead. Dying does
+        not take your cards: you keep your hand, may still play Nope and NOW cards,
+        and wait to be brought back. You may choose not to play a Zombie Kitten. If
+        you play one while anyone is dead you must bring one of them back, and hide
+        their kitten in the deck as well as yours. With 2 players, Attack of the Dead,
+        Grave Robber, Feed the Dead and Super Skip are left out.
+      </p>
       <CountTable counts={ZOMBIE_DECK_COUNTS} />
 
-      <h5>5. Party Pack (Up to 10 players)</h5>
+      <h5>Party Pack (2–10 players)</h5>
       <p>
-        Doubles the action and cat card pool to support up to 10 players and includes
-        the Imploding Kittens mechanics.
+        A replacement core deck of 120 cards rather than an add-on. 2–3 players use
+        only the cards with a paw print, 4–7 only the ones without, 8–10 everything.
+        Every spare Defuse goes back into the deck.
+      </p>
+      <PartyTable />
+
+      <h5>Recipes for Disaster</h5>
+      <p className="ek-rules-note">
+        Not modeled. The box's 13 recipe booklets are not reproduced here; turning it
+        on mixes the Imploding, Streaking and Barking cards it collects into the base
+        deck as a stand-in.
       </p>
 
-      <h5>6. Recipes for Disaster (Up to 6 players)</h5>
-      <p>
-        Compiles the best action cards from the Base Game, Imploding Kittens,
-        Streaking Kittens, and Barking Kittens into a combined chaos deck.
-      </p>
-
-      <h4>Where we had to make a call</h4>
+      <h4>Where this implementation makes a call</h4>
       <ul>
         <li>
-          <strong>Combos from any matching cards.</strong> The rules are widely read as
-          allowing any two matching cards to form a pair, not just cats — that is the
-          default here. The lobby has a toggle to restrict combos to cat cards if your
-          group plays it the other way.
+          <strong>Personal Attack when attacked.</strong> The card says Attacks stack;
+          a victim who plays it takes their owed turns plus three.
         </li>
         <li>
-          <strong>Attack stacking.</strong> Playing Attack ends your turns immediately
-          and the next player owes two turns <em>plus</em> any turns you still owed. So
-          being attacked and answering with your own Attack passes on three.
+          <strong>Dig Deeper.</strong> The card you put back returns to the top before
+          the card beneath it is resolved.
+        </li>
+        <li>
+          <strong>Clairvoyance</strong> shows you where the kittens went; that stays
+          true until the deck is shuffled, reordered over them, or something is
+          slipped in above them.
         </li>
       </ul>
 

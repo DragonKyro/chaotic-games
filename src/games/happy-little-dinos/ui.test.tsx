@@ -48,6 +48,31 @@ describe('Happy Little Dinosaurs UI', () => {
     }
   });
 
+  it('shows peeked cards only to the player who peeked', () => {
+    const base = createInitialState({ expansions: ['perils-of-puberty'], trackLength: 50 }, 5, makeSeats(3));
+    const peekDisaster: HldState = {
+      ...base,
+      subPhase: 'pointEffects',
+      activePlayerId: 'p1',
+      promptQueue: [{ kind: 'peekDisaster', playerId: 'p1', disaster: { id: 77777, name: 'Secret Disaster Name', category: 'natural', text: '' } }],
+    };
+    const secretCard = { id: 88888, kind: 'iced-ptea' as const, name: 'Secret Card Name', type: 'point' as const, value: 8, hasEffect: false, text: '' };
+    const peekDeck: HldState = {
+      ...base,
+      subPhase: 'pointEffects',
+      activePlayerId: 'p1',
+      promptQueue: [{ kind: 'peekDeck', playerId: 'p1', source: 'treenoculars', cards: [secretCard] }],
+    };
+    for (const [s, secret] of [[peekDisaster, 'Secret Disaster Name'], [peekDeck, 'Secret Card Name']] as const) {
+      const other = render(<GameView state={s} localPlayerId="p2" dispatch={vi.fn()} />);
+      expect(other.queryAllByText(secret).length).toBe(0);
+      other.unmount();
+      const owner = render(<GameView state={s} localPlayerId="p1" dispatch={vi.fn()} />);
+      expect(owner.queryAllByText(secret).length).toBeGreaterThan(0);
+      owner.unmount();
+    }
+  });
+
   it('shows a spectator no hand', () => {
     const s = createInitialState({ expansions: [], trackLength: 50 }, 3, makeSeats(3));
     render(<GameView state={s} localPlayerId={null} dispatch={vi.fn()} />);

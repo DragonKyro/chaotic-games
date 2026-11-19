@@ -5,9 +5,11 @@ import type { PlayerId } from '@/core/types';
 import {
   canAttackMonster,
   canEquipItemToHero,
+  canUseNobleShaman,
   computeRollTotals,
   getClassesToWin,
   handOf,
+  heroEquippedItems,
   heroHasItemKind,
   niceGiftsOf,
   partyClasses,
@@ -16,6 +18,16 @@ import {
   validHeroTargets,
 } from './reducer';
 import type { HtsAction, HtsState } from './types';
+
+/** Leader draft preference (no peeking at hands — there are none yet). */
+const LEADER_PREFERENCE = [
+  'leader-divine-arrow',
+  'leader-charismatic-song',
+  'leader-cloaked-sage',
+  'leader-fist-of-reason',
+  'leader-protecting-horn',
+  'leader-shadow-claw',
+];
 
 function roll2d6FromState(s: HtsState, salt: number): [number, number] {
   const copy = { seed: (s.rngState.seed + salt * 0x9e3779b9) >>> 0 };
@@ -27,6 +39,13 @@ function roll2d6FromState(s: HtsState, salt: number): [number, number] {
 export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction | null {
   if (state.phase === 'gameOver') return null;
   if (state.activePlayerId !== playerId) return null;
+
+  if (state.subPhase === 'choosingLeaders') {
+    const pool = state.leaderDraft?.pool ?? [];
+    if (state.leaderDraft?.order[0] !== playerId || pool.length === 0) return null;
+    const pick = LEADER_PREFERENCE.map((k) => pool.find((c) => c.kind === k)).find((c) => !!c) ?? pool[0]!;
+    return { type: 'choosePartyLeader', playerId, leaderKind: pick.kind };
+  }
 
   if (state.subPhase === 'awaitingChallenge') {
     const p = state.pendingPlay;
@@ -59,10 +78,7 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
     if (!r) return null;
     const { actorTotal } = computeRollTotals(state, r);
     const mods = handOf(state, playerId).filter((c) => c.type === 'modifier');
-    const canNobleShaman =
-      playerId === state.turnPlayerId &&
-      state.partyLeaders[playerId]?.kind === 'leader-noble-shaman' &&
-      !state.turnBuffs.nobleShamanUsed;
+    const canNobleShaman = canUseNobleShaman(state, playerId);
 
     // Help our own Monster or Hero roll if we are just short of threshold
     if (r.byPlayerId === playerId && r.reason !== 'challengeDuel') {
@@ -88,9 +104,6 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
         }
       } else {
         const deficit = r.threshold - actorTotal;
-        if (deficit === 1 && canNobleShaman) {
-          return { type: 'nobleShamanAdjust', playerId, delta: 1 };
-        }
         if (deficit > 0 && deficit <= 4 && mods.length > 0) {
           for (const m of mods) {
             const pos = (m.modifierChoices ?? []).find((v) => v >= deficit);
@@ -106,6 +119,11 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
           }
         }
       }
+    }
+
+    // The Noble Shaman's -1 spoils an opponent's roll that only just succeeds.
+    if (canNobleShaman && r.byPlayerId !== playerId && r.reason !== 'challengeDuel' && !r.rollLow && actorTotal === r.threshold) {
+      return { type: 'nobleShamanAdjust', playerId, delta: -1 };
     }
 
     return { type: 'declineModifier', playerId };
@@ -128,16 +146,33 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
         if (valid.length === 0) {
           return { type: 'resolvePrompt', playerId, decline: true };
         }
+        let pick = valid[0]!;
+        if (prompt.mode === 'bounceItem' || prompt.mode === 'stealItem') {
+          // Strip an opponent's good Item, or shed a curse of our own.
+          const helps = (v: (typeof valid)[number]) => {
+            const cursed = heroEquippedItems(v.hero).some((i) => i.type === 'cursedItem');
+            return v.ownerId === playerId ? cursed : !cursed;
+          };
+          pick = valid.find(helps) ?? pick;
+        }
+        if (prompt.mode === 'equipItem') {
+          // Curses go to an opponent's Hero, everything else to our own.
+          const item = handOf(state, playerId).find((c) => c.id === prompt.itemCardId);
+          const wantOwn = item?.type !== 'cursedItem';
+          pick = valid.find((v) => (v.ownerId === playerId) === wantOwn) ?? pick;
+        }
         return {
           type: 'resolvePrompt',
           playerId,
-          targetCardId: valid[0]!.hero.card.id,
+          targetCardId: pick.hero.card.id,
         };
       }
       case 'chooseCardsFromHand': {
         const valid = validHandCardsForPrompt(state, prompt);
         if (valid.length === 0) {
-          return { type: 'resolvePrompt', playerId, decline: true };
+          return prompt.optional
+            ? { type: 'resolvePrompt', playerId, decline: true }
+            : { type: 'resolvePrompt', playerId, cardIds: [] };
         }
         const count = prompt.upTo ? 1 : Math.min(prompt.count, valid.length);
         return {
@@ -174,6 +209,12 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
       case 'corruptedSabretoothChoice': {
         return { type: 'resolvePrompt', playerId, decline: false };
       }
+      case 'confirm': {
+        return { type: 'resolvePrompt', playerId };
+      }
+      case 'step':
+        // Steps resolve themselves; one never waits on a player.
+        return null;
     }
   }
 
@@ -226,18 +267,20 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
       }
     }
 
-    // 4. Equip a beneficial Item to one of our Heroes
-    const itemInHand = hand.find((c) => c.type === 'item');
-    if (itemInHand) {
-      const equipTarget = partyOf(state, playerId).find((h) => canEquipItemToHero(h, itemInHand));
-      if (equipTarget) {
-        return {
-          type: 'equipItem',
-          playerId,
-          cardId: itemInHand.id,
-          targetPlayerId: playerId,
-          heroCardId: equipTarget.card.id,
-        };
+    // 4. Equip a beneficial Item to one of our Heroes, or a curse to an opponent's
+    for (const item of hand.filter((c) => c.type === 'item' || c.type === 'cursedItem')) {
+      const owners = item.type === 'cursedItem' ? state.seats.filter((x) => x.id !== playerId).map((x) => x.id) : [playerId];
+      for (const owner of owners) {
+        const equipTarget = partyOf(state, owner).find((h) => canEquipItemToHero(h, item));
+        if (equipTarget) {
+          return {
+            type: 'equipItem',
+            playerId,
+            cardId: item.id,
+            targetPlayerId: owner,
+            heroCardId: equipTarget.card.id,
+          };
+        }
       }
     }
 

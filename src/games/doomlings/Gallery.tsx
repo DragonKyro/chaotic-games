@@ -1,15 +1,13 @@
 // Doomlings art sheet (?gallery=doomlings): a spread of trait specimens across
 // colours and types, ages and catastrophes, the back, and a species evolving.
 
-import { createRng } from '@/core/rng';
-import { buildDmDecks, DM_AGE_DEFS, DM_CATASTROPHE_DEFS, DM_EXPANSION_AGE_DEFS, DM_EXPANSION_CATASTROPHE_DEFS } from './cards';
+import { classicAgeCards, classicTraitCards } from './cards';
 import { GenePool, Species } from './art';
 import { AgeCard, MiniTrait, TraitBackCard, TraitCard } from './TraitCard';
-import { DM_EXPANSIONS } from './types';
-import type { DmAgeCard, DmTraitCard } from './types';
+import type { DmTraitCard } from './types';
 
 function sampleTraits(): DmTraitCard[] {
-  const all = buildDmDecks(createRng(1), DM_EXPANSIONS.map((e) => e.id)).traitDeck;
+  const all = classicTraitCards();
   const seen = new Set<string>();
   const unique = all.filter((c) => (seen.has(c.kind) ? false : (seen.add(c.kind), true)));
   const pick: DmTraitCard[] = [];
@@ -21,18 +19,15 @@ function sampleTraits(): DmTraitCard[] {
   };
   for (const col of ['red', 'blue', 'green', 'purple', 'colorless'] as const) take((c) => c.color === col && !c.secondaryColor && !c.dominant, 7);
   take((c) => c.dominant, 6);
-  take((c) => !!c.secondaryColor, 5);
-  take((c) => !!c.isAllColors, 1);
-  take((c) => !!c.isAttachment, 3);
-  take((c) => !!c.isSwarm, 2);
+  take((c) => !!c.compassStar, 4);
+  take((c) => !!c.playWhen, 3);
+  take((c) => !!c.isSwarm, 1);
   return pick;
 }
 
 export function Gallery() {
   const traits = sampleTraits();
-  const ages: DmAgeCard[] = [...DM_AGE_DEFS, ...DM_EXPANSION_AGE_DEFS].slice(0, 16).map((a, i) => ({ id: i, ...a }));
-  const cats: DmAgeCard[] = [...DM_CATASTROPHE_DEFS, ...DM_EXPANSION_CATASTROPHE_DEFS].map((a, i) => ({ id: 100 + i, ...a }));
-  const birth: DmAgeCard = { id: 999, name: 'The Birth of Life', kind: 'birthOfLife', genePoolDelta: 0, ruleTag: 'none', text: 'Play 1 trait per turn and stabilize your hand to your Gene Pool size.' };
+  const { ages, catastrophes: cats, birthOfLife: birth } = classicAgeCards(1000);
   return (
     <div className="dm-gallery">
       <h3>Traits</h3>

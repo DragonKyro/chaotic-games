@@ -3,9 +3,10 @@
 // Hidden-information rule: this component renders a hand only for
 // `localPlayerId`. In hot-seat the shell swaps that to whichever seat is active
 // (behind its pass-the-device gate), so nobody sees anyone else's cards.
-// `state.deck` is NEVER rendered except through `knownTopCards`, which is the
-// knowledge that seat has legitimately earned (and the face-up Imploding
-// Kitten, which is public).
+// `state.deck` is NEVER rendered except through `knownTopCards` /
+// `sightedKittens`, which is the knowledge that seat has legitimately earned
+// (and the face-up Imploding Kitten, which is public), plus the one card a
+// prompt shows its owner (Dig Deeper, Bury).
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { PlayerId, Seat } from '@/core/types';
@@ -17,9 +18,12 @@ import {
 import { Card, FaceDownCard } from './Card';
 import { CardArt } from './CardArt';
 import {
-  CARD_LABEL, detectCombo, isDefuseKind, isPlayableAction, maxPlayersForExpansions, needsTargetForKind,
+  CARD_LABEL, detectCombo, isKittenKind, isNowKind, maxPlayersForExpansions, needsTargetForKind,
 } from './cards';
-import { availableCombos, canHoldWithStreaking, drawDanger, findCloneTargetKind, kittensInDeck, knownTopCards } from './reducer';
+import {
+  availableCombos, barkingNeedsTarget, canPlaySingle, deadPlayerIds, defuseCards, drawDanger, findCloneTargetKind,
+  isCursed as cursedIn, kittensInDeck, knownTopCards, legalTargetsFor, sightedKittens, streakingMatters,
+} from './reducer';
 import type { EkAction, EkBaseCardKind, EkCard, EkConfig, EkExpansionId, EkPendingPlay, EkState } from './types';
 import { EK_EXPANSIONS } from './types';
 
@@ -44,17 +48,26 @@ export function LobbyConfig({ config, onChange, readOnly }: {
     <div className="game-config">
       <label className="field">
         <span>Opening hand</span>
-        <select value={config.handSize} onChange={(e) => onChange({ ...config, handSize: Number(e.target.value) })}>
-          <option value={4}>4 cards + 1 Defuse (rulebook)</option>
-          <option value={7}>7 cards + 1 Defuse (newer printings)</option>
+        <select value={config.handSize} disabled={readOnly} onChange={(e) => onChange({ ...config, handSize: Number(e.target.value) })}>
+          <option value={7}>7 cards + 1 Defuse (the rulebook)</option>
+          <option value={4}>4 cards + 1 Defuse (shorter game)</option>
         </select>
       </label>
       <label>
-        <input type="checkbox" checked={config.combosCatsOnly} onChange={(e) => onChange({ ...config, combosCatsOnly: e.target.checked })} />
+        <input type="checkbox" checked={config.combosCatsOnly} disabled={readOnly} onChange={(e) => onChange({ ...config, combosCatsOnly: e.target.checked })} />
         <span>
           Combos from cat cards only
           <span className="lobby-hint" style={{ display: 'block', margin: 0 }}>
-            Off (default): any matching cards form a combo — two Skips is a legal pair.
+            House rule. Off (the rulebook): any two cards with the same title are a pair — two Skips steal a card.
+          </span>
+        </span>
+      </label>
+      <label>
+        <input type="checkbox" checked={config.fiveDifferentCombo === true} disabled={readOnly} onChange={(e) => onChange({ ...config, fiveDifferentCombo: e.target.checked })} />
+        <span>
+          Five-different combo
+          <span className="lobby-hint" style={{ display: 'block', margin: 0 }}>
+            Older printings only: play five cards with different titles to take any card from the discard pile.
           </span>
         </span>
       </label>
@@ -79,21 +92,23 @@ interface ViewProps {
   dispatch: (action: EkAction) => void;
 }
 
-const ATTACKS: readonly EkBaseCardKind[] = ['attack', 'targetedAttack', 'personalAttack'];
-const SHUFFLES: readonly EkBaseCardKind[] = ['shuffle'];
+const ATTACKS: readonly EkBaseCardKind[] = ['attack', 'targetedAttack', 'personalAttack', 'attackOfTheDead'];
+const SHUFFLES: readonly EkBaseCardKind[] = ['shuffle', 'shuffleNow'];
 
 /** What clicking a card in your hand does right now. */
-type HandMode = 'play' | 'give' | 'garbage' | 'potluck' | 'idle';
+type HandMode = 'play' | 'give' | 'garbage' | 'potluck' | 'donate' | 'blindDefuse' | 'idle';
 
 const seatOf = (s: EkState, id: PlayerId | null | undefined) => (id ? s.seats.find((x) => x.id === id) ?? null : null);
 const nameOf = (s: EkState, id: PlayerId | null | undefined) => seatOf(s, id)?.name ?? 'Someone';
+const ordinal = (n: number) => `${n}${n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th'}`;
 
 function describePlay(s: EkState, p: EkPendingPlay): string {
   const what = p.combo === 'pair' ? 'a pair'
     : p.combo === 'triple' ? `three of a kind (demanding ${p.demandKind ? CARD_LABEL[p.demandKind] : '?'})`
     : p.combo === 'fiveDifferent' ? 'five different cards'
-    : CARD_LABEL[p.cards[0]!.kind];
-  return p.targetPlayerId ? `${what} on ${nameOf(s, p.targetPlayerId)}` : what;
+    : `${CARD_LABEL[p.cards[0]!.kind]}${p.clonedKind ? ` (as ${CARD_LABEL[p.clonedKind]})` : ''}`;
+  if (!p.targetPlayerId) return what;
+  return `${what} on ${p.targetPlayerId === p.byPlayerId ? 'themselves' : nameOf(s, p.targetPlayerId)}`;
 }
 
 export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
@@ -104,12 +119,16 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   const fx = useFx();
   const [shaking, shake] = usePulse(560);
 
+  const zombie = s.config.expansions.includes('zombie-kittens');
   const alive = me != null && isLive(s, me);
+  /** Seated and still holding cards: the living, and (Zombie Kittens) the dead. */
+  const inGame = me != null && !!s.hands[me] && (alive || zombie);
   const myHand: EkCard[] = (me && s.hands[me]) || [];
-  const isMyTurn = me != null && s.activePlayerId === me;
-  const isCursed = me != null && (s.cursedPlayers?.includes(me) ?? false);
+  const isMyTurn = alive && s.activePlayerId === me;
+  const isCursed = me != null && cursedIn(s, me);
   const opponents = s.seats.filter((seat) => seat.id !== me);
   const liveOpponents = opponents.filter((o) => isLive(s, o.id));
+  const dead = deadPlayerIds(s);
 
   function clearSelection() {
     setSelected([]);
@@ -125,17 +144,29 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
     () => selected.map((id) => myHand.find((c) => c.id === id)).filter((c): c is EkCard => !!c),
     [selected, myHand],
   );
-  const combo = selectedCards.length > 1 ? detectCombo(selectedCards, s.config.combosCatsOnly) : null;
-  const single = selectedCards.length === 1 ? selectedCards[0] : null;
+  const barkingPlay = !isCursed && selectedCards.length > 0 && selectedCards.length <= 2 && selectedCards.every((c) => c.kind === 'barkingKitten');
+  const combo = !barkingPlay && !isCursed && selectedCards.length > 1
+    ? detectCombo(selectedCards, { catsOnly: s.config.combosCatsOnly, fiveDifferent: s.config.fiveDifferentCombo === true })
+    : null;
+  const single = selectedCards.length === 1 ? selectedCards[0]! : null;
   const clonedKind = single?.kind === 'clone' ? findCloneTargetKind(s) : null;
   const effectiveSingleKind = single ? (single.kind === 'clone' ? clonedKind : single.kind) : null;
-  const singleIsPlayable = !!single && (isCursed || (single.kind === 'clone' ? clonedKind !== null : isPlayableAction(single.kind)));
-  const isOutOfTurnNow = single?.kind === 'alterTheFutureNow';
-  const needsTarget = !isCursed && (combo === 'pair' || combo === 'triple' || (effectiveSingleKind !== null && needsTargetForKind(effectiveSingleKind)));
-  const targetOk = !needsTarget || (target !== null && liveOpponents.some((o) => o.id === target));
-  const canPlay = me != null && s.subPhase === 'awaitingAction' && (isMyTurn || isOutOfTurnNow) && (singleIsPlayable || combo !== null) && targetOk;
+  const singleIsPlayable = !!single && !!me && (isCursed || (!barkingPlay && canPlaySingle(s, me, single)));
+  const isOutOfTurnNow = !!single && !isCursed && isNowKind(single.kind) && !isMyTurn;
+  /** Who this selection may be aimed at. A Cursed player picks after the card is revealed. */
+  const targetIds: PlayerId[] = !me || isCursed ? []
+    : barkingPlay ? (barkingNeedsTarget(s, me, selectedCards.length) ? liveOpponents.map((o) => o.id) : [])
+    : combo === 'pair' || combo === 'triple' ? liveOpponents.map((o) => o.id)
+    : effectiveSingleKind && needsTargetForKind(effectiveSingleKind) ? legalTargetsFor(s, me, effectiveSingleKind)
+    : [];
+  const needsTarget = targetIds.length > 0 || (!!effectiveSingleKind && needsTargetForKind(effectiveSingleKind) && !isCursed);
+  const targetOk = !needsTarget || (target !== null && targetIds.includes(target));
+  const legalShape = singleIsPlayable || combo !== null || barkingPlay;
+  const canPlay = me != null && s.subPhase === 'awaitingAction' && (isMyTurn || isOutOfTurnNow)
+    && legalShape && targetOk && (!isCursed || selectedCards.length === 1);
 
-  const playLabel = isCursed && single ? 'Play blind card'
+  const playLabel = isCursed && single ? 'Play this face-down card'
+    : barkingPlay ? (selectedCards.length === 2 || (me && s.barkingFaceUp?.[me]) ? 'Set both Barking Kittens on someone' : 'Bark — find the other Barking Kitten')
     : combo === 'pair' ? 'Play pair — steal at random'
     : combo === 'triple' ? `Play three of a kind — demand ${CARD_LABEL[demand]}`
     : combo === 'fiveDifferent' ? 'Play five different — raid the discard'
@@ -154,24 +185,41 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   }
 
   const known = me ? knownTopCards(s, me) : [];
+  const sighted = me ? sightedKittens(s, me).filter((x) => x.index >= known.length) : [];
   const danger = alive ? drawDanger(s, me!) : 0;
-  const hints = me && !isCursed ? availableCombos(s, me) : [];
+  const hints = me && alive && !isCursed ? availableCombos(s, me) : [];
   const kittensLeft = kittensInDeck(s);
 
-  const handMode: HandMode = !alive ? 'idle'
-    : isMyTurn && s.subPhase === 'awaitingFavorGive' ? 'give'
-    : isMyTurn && s.subPhase === 'awaitingGarbagePick' ? 'garbage'
-    : isMyTurn && s.subPhase === 'awaitingPotluckPick' ? 'potluck'
+  const myPrompt = me != null && s.activePlayerId === me;
+  const handMode: HandMode = !inGame ? 'idle'
+    : myPrompt && s.subPhase === 'awaitingFavorGive' ? 'give'
+    : myPrompt && s.subPhase === 'awaitingGarbagePick' ? 'garbage'
+    : myPrompt && s.subPhase === 'awaitingPotluckPick' ? 'potluck'
+    : myPrompt && s.subPhase === 'awaitingDonation' ? 'donate'
+    : myPrompt && s.subPhase === 'awaitingDefuse' && isCursed ? 'blindDefuse'
     : s.subPhase === 'awaitingAction' ? 'play'
     : 'idle';
+  const revive = reviveTarget && dead.includes(reviveTarget) ? reviveTarget : dead[0] ?? null;
 
   function onHandCard(c: EkCard): (() => void) | undefined {
     if (!me) return undefined;
     if (handMode === 'give') return () => send({ type: 'giveCard', playerId: me, cardId: c.id });
     if (handMode === 'garbage') return () => send({ type: 'garbagePick', playerId: me, cardId: c.id });
     if (handMode === 'potluck') return () => send({ type: 'potluckPick', playerId: me, cardId: c.id });
-    if (handMode === 'play' && (isMyTurn || c.kind === 'alterTheFutureNow')) {
-      return () => setSelected((cur) => (cur.includes(c.id) ? cur.filter((x) => x !== c.id) : [...cur, c.id]));
+    if (handMode === 'donate') {
+      if (!isCursed && s.pendingDonation?.kind === 'feedTheDead' && c.kind === 'explodingKitten') return undefined;
+      return () => send({ type: 'donateCard', playerId: me, cardId: c.id });
+    }
+    if (handMode === 'blindDefuse') {
+      return () => send({ type: 'playDefuse', playerId: me, cardId: c.id, ...(revive ? { targetPlayerId: revive } : {}) });
+    }
+    if (handMode === 'play' && (isMyTurn || (!isCursed && isNowKind(c.kind)))) {
+      return () => setSelected((cur) => {
+        if (cur.includes(c.id)) return cur.filter((x) => x !== c.id);
+        // A Cursed player plays one face-down card at a time; out of turn only a lone NOW card.
+        if (isCursed || !isMyTurn) return [c.id];
+        return [...cur, c.id];
+      });
     }
     return undefined;
   }
@@ -183,7 +231,7 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
     prev.current = s;
     if (was === s) return;
     if (s.eliminated.length > was.eliminated.length) {
-      fx.stamp('KABOOM!', 'danger');
+      fx.stamp(zombie ? 'DEAD!' : 'KABOOM!', 'danger');
       fx.burst([0.5, 0.42], '#ff4d4d');
       shake();
     }
@@ -207,28 +255,30 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   const top = (
     <PlayerStrip>
       {opponents.map((o) => {
-        const dead = !isLive(s, o.id);
+        const isDead = !isLive(s, o.id);
         const hand = s.hands[o.id] ?? [];
+        const showHand = !isDead || zombie;
         const peeking = s.knownTopCount[o.id] ?? 0;
         const marked = hand.filter((c) => s.markedCardIds?.includes(c.id));
-        const stash = s.towerStash?.[o.id]?.length ?? 0;
-        const cursed = s.cursedPlayers?.includes(o.id) ?? false;
-        const takeFrom = s.illTakeThat?.[o.id];
+        const crown = s.towerStash?.[o.id]?.length ?? 0;
+        const cursed = cursedIn(s, o.id);
+        const takeFrom = s.illTakeThat?.[o.id]?.thiefId;
+        const barking = !!s.barkingFaceUp?.[o.id];
         const deciding = s.activePlayerId === o.id && s.turnPlayerId !== o.id;
-        const pickable = needsTarget && !dead && selectedCards.length > 0;
+        const pickable = targetIds.includes(o.id) && selectedCards.length > 0;
         return (
           <PlayerPlate
             key={o.id}
             seat={o}
-            active={!dead && s.turnPlayerId === o.id}
-            out={dead}
-            outLabel="BOOM"
-            sub={dead ? 'Exploded' : `${hand.length} card${hand.length === 1 ? '' : 's'}`}
+            active={!isDead && s.turnPlayerId === o.id}
+            out={isDead}
+            outLabel={zombie ? 'DEAD' : 'BOOM'}
+            sub={isDead && !zombie ? 'Exploded' : `${isDead ? 'Dead · ' : ''}${hand.length} card${hand.length === 1 ? '' : 's'}`}
             targetable={pickable}
             selected={pickable && target === o.id}
             onClick={pickable ? () => setTarget(o.id) : undefined}
           >
-            {!dead && (
+            {showHand && (
               <>
                 <div className="ek-mini-hand" aria-hidden="true">
                   {hand.slice(0, 8).map((c) => <span key={c.id} className="ek-mini-back" />)}
@@ -236,8 +286,9 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
                 </div>
                 <div className="ek-plate-chips">
                   {deciding && <Chip tone="accent">Deciding…</Chip>}
-                  {cursed && <Chip tone="danger" title="Plays blind until they draw">Cursed</Chip>}
-                  {stash > 0 && <Chip title="Tower of Power stash">Stash {stash}</Chip>}
+                  {cursed && <Chip tone="danger" title="Plays face-down cards at random until they draw safely">Cursed</Chip>}
+                  {crown > 0 && <Chip title="Tower of Power: steals from them take a random Crown card">Crown {crown}</Chip>}
+                  {barking && <Chip tone="danger" title="Whoever plays the other Barking Kitten targets them">Barking Kitten</Chip>}
                   {peeking > 0 && <Chip title="They have seen the top of the deck">Knows top {peeking}</Chip>}
                   {marked.map((mc) => <Chip key={mc.id} tone="danger" title="Marked card">Marked {CARD_LABEL[mc.kind]}</Chip>)}
                   {takeFrom && <Chip tone="danger">Next draw → {nameOf(s, takeFrom)}</Chip>}
@@ -283,9 +334,11 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
           <Stage state={s} pending={s.pending} />
         ) : s.subPhase === 'awaitingDefuse' && s.pendingKitten ? (
           <>
-            {/* A drawn kitten is announced to everyone, so it's fine to show. */}
+            {/* A kitten going off is announced to everyone, so it's fine to show. */}
             <Card kind={s.pendingKitten.kind} size="lg" className="ek-ticking" inspect={false} />
-            <div className="ek-stage-caption"><strong>{nameOf(s, s.activePlayerId)}</strong> drew a kitten!</div>
+            <div className="ek-stage-caption">
+              <strong>{nameOf(s, s.activePlayerId)}</strong> {s.pendingKitten.kind === 'barkingKitten' ? 'was found by a Barking Kitten!' : 'is facing an Exploding Kitten!'}
+            </div>
           </>
         ) : s.subPhase === 'awaitingKittenPlace' ? (
           <>
@@ -303,6 +356,7 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
               {s.turnsRemaining > 1 && <Chip tone="danger">Owes {s.turnsRemaining} turns</Chip>}
               <Chip>{s.deck.length} cards to draw</Chip>
               {s.turnDirection === -1 && <Chip tone="accent">↺ Reversed</Chip>}
+              {(s.stash?.length ?? 0) > 0 && <Chip title="Barking Kittens: the Tower of Power takes these">Stash {s.stash!.length}</Chip>}
             </div>
           </div>
         )}
@@ -323,6 +377,18 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   // ---- the dock: what you have to do, or who we're waiting on ------------------
   const dock = renderDock();
 
+  function revivePicker(): ReactNode {
+    if (dead.length === 0) return null;
+    return (
+      <div className="ek-picker">
+        <span>Zombie Kitten brings back:</span>
+        {dead.map((id) => (
+          <button key={id} className={`secondary tiny${revive === id ? ' is-on' : ''}`} onClick={() => setReviveTarget(id)}>{nameOf(s, id)}</button>
+        ))}
+      </div>
+    );
+  }
+
   function renderDock(): ReactNode {
     if (s.phase === 'gameOver') {
       const winner = s.seats.find((seat) => isLive(s, seat.id));
@@ -340,7 +406,7 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
       );
     }
     const active = seatOf(s, s.activePlayerId);
-    const mine = !!me && s.activePlayerId === me;
+    const mine = myPrompt;
 
     if (s.subPhase === 'awaitingNope') {
       if (mine && s.pending) {
@@ -366,51 +432,87 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
       return <Dock tone="wait" who={active} eyebrow={`Nope window · ${active?.name ?? '…'} may answer`} title={s.pending ? `${nameOf(s, s.pending.byPlayerId)} played ${describePlay(s, s.pending)}` : 'Nope window'} />;
     }
 
+    if (s.subPhase === 'awaitingBlindTarget') {
+      const card = s.pendingBlindCard;
+      if (!mine || !card) return <Dock tone="wait" who={active} title={`${active?.name ?? 'Someone'} is choosing a target for their blind card…`} />;
+      const kind = card.kind === 'clone' ? findCloneTargetKind(s) ?? card.kind : card.kind;
+      const options = kind === 'barkingKitten' ? liveOpponents.map((o) => o.id) : legalTargetsFor(s, me!, kind);
+      return (
+        <Dock tone="turn" eyebrow="Cursed — blind play" title={`You flipped ${CARD_LABEL[card.kind]}. Who is it for?`} actions={
+          <>
+            <Card kind={card.kind} size="sm" inspect={false} />
+            {options.map((id) => (
+              <button key={id} onClick={() => send({ type: 'chooseBlindTarget', playerId: me!, targetPlayerId: id })}>{id === me ? 'Yourself' : nameOf(s, id)}</button>
+            ))}
+          </>
+        }>
+          The card was picked at random from your face-down hand, and it plays as normal.
+        </Dock>
+      );
+    }
+
     if (s.subPhase === 'awaitingDefuse') {
       const bark = s.pendingKitten?.kind === 'barkingKitten';
       if (mine) {
-        const defuses = myHand.filter((c) => isDefuseKind(c.kind));
-        const revive = reviveTarget && s.eliminated.includes(reviveTarget) ? reviveTarget : s.eliminated[0] ?? null;
+        const title = bark ? 'A Barking Kitten found you!' : 'You drew an Exploding Kitten!';
+        if (isCursed) {
+          return (
+            <Dock tone="danger" eyebrow="Cursed — tick… tick…" title={title}>
+              You can't look at your cards. Click face-down cards in your hand one at a time: the first Defuse saves you, everything else is lost.
+              {zombie ? revivePicker() : null}
+            </Dock>
+          );
+        }
+        const options = defuseCards(s, me!);
         return (
           <Dock
             tone="danger"
             eyebrow="Tick… tick…"
-            title={bark ? 'You were hit by a Barking Kitten!' : 'You drew an Exploding Kitten!'}
+            title={title}
             actions={
               <>
-                {defuses.map((c) => (
+                {options.map((c) => (
                   <Card
                     key={c.id}
                     kind={c.kind}
                     size="sm"
                     inspect={false}
+                    footnote={c.kind === 'clone' ? 'as Zombie' : undefined}
                     onClick={() => send({
                       type: 'playDefuse',
                       playerId: me!,
                       cardId: c.id,
-                      ...(c.kind === 'zombieKitten' && revive ? { targetPlayerId: revive } : {}),
+                      ...(revive ? { targetPlayerId: revive } : {}),
                     })}
                   />
                 ))}
-                {s.pendingKitten?.kind === 'explodingKitten' && canHoldWithStreaking(s, me!) && (
-                  <button onClick={() => send({ type: 'keepKitten', playerId: me! })}>Keep it (Streaking Kitten)</button>
-                )}
+                {zombie && <button className="secondary" onClick={() => send({ type: 'declineDefuse', playerId: me! })}>Die instead</button>}
               </>
             }
           >
-            {defuses.length ? 'Play a Defuse — or you are out.' : 'No Defuse. This is going to hurt.'}
-            {s.eliminated.length > 0 && myHand.some((c) => c.kind === 'zombieKitten') && (
-              <div className="ek-picker">
-                <span>Zombie Kitten brings back:</span>
-                {s.eliminated.map((id) => (
-                  <button key={id} className={`secondary tiny${revive === id ? ' is-on' : ''}`} onClick={() => setReviveTarget(id)}>{nameOf(s, id)}</button>
-                ))}
-              </div>
-            )}
+            {bark ? 'Play a Defuse or explode. (You do not put anything back in the deck.)' : 'Play a Defuse — or you are out.'}
+            {zombie && ' You may choose not to and die — a dead player waits for someone to bring them back.'}
+            {zombie && options.length > 0 && revivePicker()}
           </Dock>
         );
       }
-      return <Dock tone="danger" who={active} eyebrow="Tick… tick…" title={`${active?.name ?? 'Someone'} drew a kitten!`} />;
+      return <Dock tone="danger" who={active} eyebrow="Tick… tick…" title={bark ? `${active?.name ?? 'Someone'} was found by a Barking Kitten!` : `${active?.name ?? 'Someone'} is facing an Exploding Kitten!`} />;
+    }
+
+    if (s.subPhase === 'awaitingClairvoyance') {
+      const placer = nameOf(s, s.pendingClairvoyance?.placerId);
+      if (!mine) return <Dock tone="wait" who={active} eyebrow="Clairvoyance" title={`${placer} played a Zombie Kitten…`} />;
+      const card = myHand.find((c) => c.kind === 'clairvoyance');
+      return (
+        <Dock tone="react" eyebrow="Clairvoyance" title="Watch where the kittens go?" actions={
+          <>
+            {card && <Card kind="clairvoyance" size="sm" inspect={false} onClick={() => send({ type: 'playClairvoyance', playerId: me!, cardId: card.id })} />}
+            <button className="secondary" onClick={() => send({ type: 'declineClairvoyance', playerId: me! })}>Don't watch</button>
+          </>
+        }>
+          {placer} played a Zombie Kitten and is about to hide kitten{(s.kittenQueue?.length ?? 0) > 0 ? 's' : ''} in the deck. Play Clairvoyance to see exactly where.
+        </Dock>
+      );
     }
 
     if (s.subPhase === 'awaitingKittenPlace' || s.subPhase === 'awaitingBuryPlace') {
@@ -430,48 +532,60 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
           </PlacePrompt>
         );
       }
-      const imploding = s.pendingKitten?.kind === 'implodingKitten';
+      const kind = s.pendingKitten?.kind ?? 'explodingKitten';
+      const imploding = kind === 'implodingKitten';
+      const more = s.kittenQueue?.length ?? 0;
+      const watchers = s.kittenWatchers ?? [];
       return (
         <PlacePrompt
-          key="kitten"
+          key={`kitten-${s.pendingKitten?.id ?? 0}`}
           deckSize={s.deck.length}
-          eyebrow="Defused — for now"
-          title={imploding ? 'Place the face-up Imploding Kitten' : 'Hide the kitten'}
-          card={imploding ? 'implodingKitten' : 'explodingKitten'}
+          eyebrow={imploding ? 'Imploding Kitten' : 'Defused — for now'}
+          title={imploding ? 'Place the face-up Imploding Kitten' : more > 0 ? `Hide the kitten (${more} more after this)` : 'Hide the kitten'}
+          card={kind}
           onPlace={(index) => send({ type: 'placeKitten', playerId: me!, index })}
         >
-          {imploding ? 'It goes back face-up: whoever draws it next is out on the spot.' : 'Nobody sees where it goes.'}
-          {s.turnsRemaining > 1 && <strong> Careful — you still owe {s.turnsRemaining} turns, so you draw next.</strong>}
+          {imploding ? 'It goes back face up: whoever draws it next is out on the spot.' : 'Nobody sees where it goes.'}
+          {watchers.length > 0 && <strong> {watchers.map((id) => nameOf(s, id)).join(' and ')} {watchers.length === 1 ? 'is' : 'are'} watching (Clairvoyance).</strong>}
+          {s.turnPlayerId === me && (s.turnsRemaining > 1 || s.defuseEndsTurn === false) && <strong> Careful — your turn isn't over, so you draw next.</strong>}
         </PlacePrompt>
       );
     }
 
     if (s.subPhase === 'awaitingFavorGive') {
       return mine
-        ? <Dock tone="turn" eyebrow="Favor" title="Pay up">{nameOf(s, s.pendingFavor?.toPlayerId)} demanded a favour. Click a card in your hand to hand it over — make it a bad one.</Dock>
+        ? <Dock tone="turn" eyebrow="Favor" title="Pay up">{nameOf(s, s.pendingFavor?.toPlayerId)} demanded a favour. Click a card in your hand to hand it over{isCursed ? ' — blind, you are Cursed' : ' — make it a bad one'}.</Dock>
         : <Dock tone="wait" who={active} title={`${active?.name ?? 'Someone'} is choosing a card for ${nameOf(s, s.pendingFavor?.toPlayerId)}…`} />;
     }
     if (s.subPhase === 'awaitingGarbagePick') {
       return mine
-        ? <Dock tone="turn" eyebrow="Garbage Collection" title="Throw one back">Click a card in your hand to shuffle it into the deck.</Dock>
+        ? <Dock tone="turn" eyebrow="Garbage Collection" title="Throw one back">Click a card in your hand to put it into the deck. It gets shuffled in.</Dock>
         : <Dock tone="wait" who={active} title={`${active?.name ?? 'Someone'} is picking a card to throw back…`} />;
     }
     if (s.subPhase === 'awaitingPotluckPick') {
       return mine
-        ? <Dock tone="turn" eyebrow="Potluck" title="Bring a dish">Click a card in your hand to put face-down on top of the deck.</Dock>
+        ? <Dock tone="turn" eyebrow="Potluck" title="Bring a dish">Click a card in your hand to put face down on top of the deck.</Dock>
         : <Dock tone="wait" who={active} title={`${active?.name ?? 'Someone'} is bringing a dish…`} />;
+    }
+    if (s.subPhase === 'awaitingDonation' && s.pendingDonation) {
+      const feeding = s.pendingDonation.kind === 'feedTheDead';
+      if (!mine) return <Dock tone="wait" who={active} title={feeding ? `${active?.name ?? 'Someone'} is feeding ${nameOf(s, s.pendingDonation.toPlayerId)}…` : `${active?.name ?? 'Someone'} is giving up a card to the Grave Robber…`} />;
+      return feeding
+        ? <Dock tone="turn" eyebrow="Feed the Dead" title={`Give ${nameOf(s, s.pendingDonation.toPlayerId)} a card`}>Click a card in your hand to hand it to the dead player. (Not an Exploding Kitten.)</Dock>
+        : <Dock tone="turn" eyebrow="Grave Robber" title="Give one up">Click a card in your hand to shuffle it into the draw pile.</Dock>;
     }
     if (s.subPhase === 'awaitingDigDeeper' && s.pendingDigDeeper) {
       if (!mine) return <Dock tone="wait" who={active} title={`${active?.name ?? 'Someone'} is digging deeper…`} />;
+      const card = s.pendingDigDeeper.card;
       return (
-        <Dock tone="turn" eyebrow="Dig Deeper" title="Keep one" actions={
-          <div className="ek-choices">
-            {s.pendingDigDeeper.cards.map((c, i) => (
-              <Card key={c.id} kind={c.kind} size="sm" footnote={i === 0 ? 'top' : '2nd'} onClick={() => send({ type: 'pickDigDeeper', playerId: me!, cardId: c.id })} />
-            ))}
-          </div>
+        <Dock tone="turn" eyebrow="Dig Deeper" title="Keep the top card?" actions={
+          <>
+            <Card kind={card.kind} size="sm" footnote="top" />
+            <button onClick={() => send({ type: 'pickDigDeeper', playerId: me!, keep: true })}>Keep it &amp; end turn</button>
+            <button className="secondary" onClick={() => send({ type: 'pickDigDeeper', playerId: me!, keep: false })}>Put it back, draw the next</button>
+          </>
         }>
-          Take one into your hand; the other goes back on top.
+          Only you can see this card. Put it back and you must draw the card beneath it, whatever it is.
         </Dock>
       );
     }
@@ -495,29 +609,32 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
 
     // awaitingAction
     if (selectedCards.length > 0 && (isMyTurn || isOutOfTurnNow)) {
-      const problem = !singleIsPlayable && !combo
-        ? (selectedCards.length === 1 ? `${CARD_LABEL[selectedCards[0]!.kind]} can't be played on its own.` : "Those cards don't form a combo.")
-        : null;
+      const problem = isCursed && selectedCards.length > 1 ? 'Cursed: play one face-down card at a time.'
+        : !legalShape
+          ? (selectedCards.length === 1 ? `${CARD_LABEL[selectedCards[0]!.kind]} can't be played right now.` : "Those cards don't form a combo.")
+          : null;
+      const selfTarget = !!me && targetIds.includes(me);
       return (
         <Dock
           tone="turn"
-          eyebrow={isMyTurn ? 'Your turn' : 'Out of turn'}
+          eyebrow={isMyTurn ? 'Your turn' : 'Out of turn — NOW card'}
           title={playLabel}
           actions={
             <>
+              {selfTarget && <button className={`secondary${target === me ? ' is-on' : ''}`} onClick={() => setTarget(me)}>Target yourself</button>}
               <button onClick={doPlay} disabled={!canPlay}>Play ▶</button>
               <button className="secondary" onClick={clearSelection}>Clear</button>
               {isMyTurn && <button className="secondary" onClick={() => send({ type: 'drawCard', playerId: me! })}>Draw &amp; end turn</button>}
             </>
           }
         >
-          {problem ?? (needsTarget && !targetOk ? 'Pick a target: click an opponent above.' : needsTarget ? `Target: ${nameOf(s, target)}.` : 'Ready when you are.')}
+          {problem ?? (needsTarget && !targetOk ? (effectiveSingleKind === 'feedTheDead' ? 'Pick a dead player above.' : 'Pick a target: click a player above.') : needsTarget ? `Target: ${target === me ? 'you' : nameOf(s, target)}.` : isCursed ? 'Face down — you will find out what it is when it lands.' : 'Ready when you are.')}
           {combo === 'triple' && (
             <div className="ek-picker">
               <span>Demand:</span>
               <select value={demand} onChange={(e) => setDemand(e.target.value as EkBaseCardKind)}>
                 {(Object.keys(CARD_LABEL) as EkBaseCardKind[])
-                  .filter((k) => k !== 'explodingKitten' && k !== 'implodingKitten')
+                  .filter((k) => !isKittenKind(k))
                   .map((k) => <option key={k} value={k}>{CARD_LABEL[k]}</option>)}
               </select>
             </div>
@@ -530,7 +647,7 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
         <Dock
           tone="turn"
           eyebrow={s.turnsRemaining > 1 ? `Your turn · you owe ${s.turnsRemaining}` : 'Your turn'}
-          title="Play cards, or draw to end your turn"
+          title={isCursed ? 'Cursed: play face-down cards, or draw to lift the curse' : 'Play cards, or draw to end your turn'}
           actions={<button className="ek-draw-btn" onClick={() => send({ type: 'drawCard', playerId: me! })}>Draw &amp; end turn</button>}
         >
           {hints.length > 0
@@ -538,6 +655,9 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
             : 'Select cards in your hand to play them.'}
         </Dock>
       );
+    }
+    if (me && !alive && zombie && myHand.some((c) => isNowKind(c.kind))) {
+      return <Dock tone="wait" who={active} eyebrow="You are dead" title={`${active?.name ?? 'Someone'} is thinking`}>You can still play a Nope or a NOW card from your hand.</Dock>;
     }
     return <Dock tone="wait" who={active} title={`${active?.name ?? 'Someone'} is thinking`} />;
   }
@@ -552,20 +672,37 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
           </div>
         </Panel>
       )}
+      {sighted.length > 0 && (
+        <Panel title="You watched kittens go in">
+          {sighted.map((x) => `${CARD_LABEL[x.card.kind]}: ${ordinal(x.index + 1)} from the top`).join(' · ')}
+        </Panel>
+      )}
       <GameLog entries={s.log} seats={s.seats} />
     </>
   );
 
   // ---- your hand ---------------------------------------------------------------------
-  const hand = alive ? (
+  const holdPref = me ? s.streakingHold?.[me] !== false : true;
+  const hand = inGame ? (
     <div className="ek-hand-area">
       <div className="ek-hand-head">
-        <h4>Your hand ({myHand.length})</h4>
+        <h4>{alive ? 'Your hand' : 'Your hand (dead)'} ({myHand.length})</h4>
         <div className="ek-chips">
-          {isCursed && <Chip tone="danger">Cursed — blind until you draw</Chip>}
-          {(s.towerStash?.[me!]?.length ?? 0) > 0 && <Chip>Stash {s.towerStash![me!]!.length}</Chip>}
+          {isCursed && <Chip tone="danger">Cursed — face down until you draw safely</Chip>}
+          {(s.towerStash?.[me!]?.length ?? 0) > 0 && <Chip>Crown {s.towerStash![me!]!.length}</Chip>}
+          {me && s.barkingFaceUp?.[me] && <Chip tone="danger">Barking Kitten in front of you</Chip>}
           {handMode === 'give' && <Chip tone="accent">Click a card to give it</Chip>}
-          {(handMode === 'garbage' || handMode === 'potluck') && <Chip tone="accent">Click a card</Chip>}
+          {(handMode === 'garbage' || handMode === 'potluck' || handMode === 'donate' || handMode === 'blindDefuse') && <Chip tone="accent">Click a card</Chip>}
+          {me && streakingMatters(s, me) && (
+            <button
+              type="button"
+              className="secondary tiny"
+              title="Decided in advance, so drawing a kitten looks like any other draw"
+              onClick={() => dispatch({ type: 'setStreakingHold', playerId: me, hold: !holdPref })}
+            >
+              If I draw an Exploding Kitten: {holdPref ? 'hold it (Streaking Kitten)' : 'defuse it'}
+            </button>
+          )}
         </div>
       </div>
       <div className="ek-hand">
@@ -669,7 +806,7 @@ function PlacePrompt({ deckSize, eyebrow, title, card, onPlace, children }: {
     <Dock tone="turn" eyebrow={eyebrow} title={title} actions={
       <>
         <Card kind={card} size="sm" inspect={false} />
-        <button onClick={() => onPlace(index)}>Bury it {where}</button>
+        <button onClick={() => onPlace(index)}>Put it {where}</button>
       </>
     }>
       {children}
@@ -709,7 +846,7 @@ function FutureView({ state: s, me, onSend }: { state: EkState; me: PlayerId; on
   return (
     <Dock
       tone="turn"
-      eyebrow={peek.canReorder ? 'Alter the future' : 'See the future'}
+      eyebrow={peek.shareWithNext ? 'Share the future' : peek.canReorder ? 'Alter the future' : 'See the future'}
       title={peek.canReorder ? `Rearrange the next ${peek.cards.length} cards` : `The next ${peek.cards.length} cards`}
       actions={peek.canReorder
         ? <button onClick={() => onSend({ type: 'reorderFuture', playerId: me, orderedCardIds: ordered.map((c) => c.id) })}>Confirm order</button>

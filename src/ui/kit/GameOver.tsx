@@ -6,12 +6,14 @@ import { SeatAvatar } from './Table';
 import { Confetti } from './Fx';
 
 export function GameOverPanel({
-  seats, finalScores, winnerIds, localPlayerId, headline, detail, scoreLabel = 'pts', showScores = true, ranks = true, art, className,
+  seats, finalScores, winnerIds, noWinner = false, localPlayerId, headline, detail, scoreLabel = 'pts', showScores = true, ranks = true, art, className,
 }: {
   seats: readonly Seat[];
   finalScores: Record<PlayerId, number> | null;
   /** Defaults to whoever tops finalScores. */
   winnerIds?: readonly PlayerId[];
+  /** The match ended with nobody winning (e.g. a dead tie where everyone loses). */
+  noWinner?: boolean;
   localPlayerId: PlayerId | null;
   /** Replaces "<name> wins!". */
   headline?: ReactNode;
@@ -27,10 +29,10 @@ export function GameOverPanel({
 }) {
   const score = (id: PlayerId) => finalScores?.[id] ?? 0;
   const ranked = [...seats].sort((a, b) => score(b.id) - score(a.id));
-  const winners = winnerIds?.length ? [...winnerIds] : ranked.length ? ranked.filter((s) => score(s.id) === score(ranked[0]!.id)).map((s) => s.id) : [];
+  const winners = noWinner ? [] : winnerIds?.length ? [...winnerIds] : ranked.length ? ranked.filter((s) => score(s.id) === score(ranked[0]!.id)).map((s) => s.id) : [];
   const winnerSeats = winners.map((id) => seats.find((s) => s.id === id)).filter((s): s is Seat => !!s);
   const youWon = !!localPlayerId && winners.includes(localPlayerId);
-  const title = headline ?? (winnerSeats.length === 1 ? `${winnerSeats[0]!.name} wins!` : `${winnerSeats.map((s) => s.name).join(' & ')} tie!`);
+  const title = headline ?? (noWinner || !winnerSeats.length ? 'No winner' : winnerSeats.length === 1 ? `${winnerSeats[0]!.name} wins!` : `${winnerSeats.map((s) => s.name).join(' & ')} tie!`);
   let place = 0;
   let prevScore: number | null = null;
   return (

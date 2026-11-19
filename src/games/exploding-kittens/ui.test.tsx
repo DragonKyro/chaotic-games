@@ -3,7 +3,7 @@
 // in JSX-heavy files.
 
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import type { Seat } from '@/core/types';
 import { CardArt, CardBack, Thumbnail } from './CardArt';
 import { Rules } from './Rules';
@@ -208,5 +208,102 @@ describe('view survives a full AI game', () => {
     expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: [] }, seats(6)).length).toBeGreaterThan(0);
     expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: ['imploding-kittens'] }, seats(6))).toEqual([]);
     expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: ['party-pack'] }, seats(9))).toEqual([]);
+  });
+});
+
+describe('prompts added with the rules audit', () => {
+  const ZOMBIE: EkConfig = { ...CONFIG, expansions: ['zombie-kittens'] };
+
+  it('renders the blind-target, Clairvoyance, donation and Dig Deeper prompts', () => {
+    const base = game();
+    const blind: EkState = { ...base, subPhase: 'awaitingBlindTarget', pendingBlindCard: { id: 9200, kind: 'favor' }, cursedPlayers: ['p0'] };
+    const a = render(<GameView state={blind} localPlayerId="p0" dispatch={vi.fn()} />);
+    expect(screen.getByText(/You flipped Favor/)).toBeDefined();
+    expect(screen.getByRole('button', { name: 'P1' })).toBeDefined();
+    a.unmount();
+
+    const watch: EkState = {
+      ...base, config: ZOMBIE, subPhase: 'awaitingClairvoyance', activePlayerId: 'p0',
+      pendingClairvoyance: { placerId: 'p1', queue: ['p0'], watchers: [] },
+      hands: { ...base.hands, p0: [{ id: 9201, kind: 'clairvoyance' }] },
+    };
+    const b = render(<GameView state={watch} localPlayerId="p0" dispatch={vi.fn()} />);
+    expect(screen.getByText(/Watch where the kittens go/)).toBeDefined();
+    b.unmount();
+
+    const feed: EkState = {
+      ...base, config: ZOMBIE, subPhase: 'awaitingDonation', activePlayerId: 'p0', eliminated: ['p2'],
+      pendingDonation: { kind: 'feedTheDead', queue: ['p0'], toPlayerId: 'p2', collected: [] },
+    };
+    const c = render(<GameView state={feed} localPlayerId="p0" dispatch={vi.fn()} />);
+    expect(screen.getByText(/Give P2 a card/)).toBeDefined();
+    c.unmount();
+
+    const dig: EkState = { ...base, config: ZOMBIE, subPhase: 'awaitingDigDeeper', pendingDigDeeper: { playerId: 'p0', card: { id: 9202, kind: 'shuffleNow' } } };
+    const d = render(<GameView state={dig} localPlayerId="p0" dispatch={vi.fn()} />);
+    expect(screen.getByText(/Keep the top card/)).toBeDefined();
+    expect(screen.getAllByText('Shuffle NOW').length).toBeGreaterThan(0);
+    d.unmount();
+    // Nobody else sees the digger's card.
+    const e = render(<GameView state={dig} localPlayerId="p1" dispatch={vi.fn()} />);
+    expect(screen.queryAllByText('Shuffle NOW')).toHaveLength(0);
+    e.unmount();
+  });
+
+  it('offers "Die instead" only with Zombie Kittens, and blind defusing when Cursed', () => {
+    const base = game();
+    const facing: EkState = {
+      ...base, subPhase: 'awaitingDefuse', pendingKitten: { id: 9300, kind: 'explodingKitten' },
+      hands: { ...base.hands, p0: [{ id: 9301, kind: 'zombieKitten' }] }, config: ZOMBIE,
+    };
+    const a = render(<GameView state={facing} localPlayerId="p0" dispatch={vi.fn()} />);
+    expect(screen.getByText('Die instead')).toBeDefined();
+    a.unmount();
+    const b = render(<GameView state={{ ...facing, config: CONFIG, hands: { ...base.hands, p0: [{ id: 9302, kind: 'defuse' }] } }} localPlayerId="p0" dispatch={vi.fn()} />);
+    expect(screen.queryByText('Die instead')).toBeNull();
+    b.unmount();
+    const c = render(<GameView state={{ ...facing, config: CONFIG, cursedPlayers: ['p0'], hands: { ...base.hands, p0: [{ id: 9303, kind: 'defuse' }] } }} localPlayerId="p0" dispatch={vi.fn()} />);
+    expect(screen.getByText(/can't look at your cards/)).toBeDefined();
+    // The Cursed hand stays face down.
+    expect(screen.queryAllByText('Defuse').filter((el) => el.className.includes('ek-card-name'))).toHaveLength(0);
+    c.unmount();
+  });
+
+  it('shows the Streaking Kitten hold preference to its holder only', () => {
+    const base = createInitialState({ ...CONFIG, expansions: ['streaking-kittens'] }, 31415, seats(3));
+    const s: EkState = { ...base, hands: { ...base.hands, p0: [{ id: 9400, kind: 'streakingKitten' }] } };
+    const dispatch = vi.fn();
+    const a = render(<GameView state={s} localPlayerId="p0" dispatch={dispatch} />);
+    const toggle = screen.getByText(/If I draw an Exploding Kitten: hold it/);
+    fireEvent.click(toggle);
+    expect(dispatch).toHaveBeenCalledWith({ type: 'setStreakingHold', playerId: 'p0', hold: false });
+    a.unmount();
+    const b = render(<GameView state={s} localPlayerId="p1" dispatch={vi.fn()} />);
+    expect(screen.queryByText(/If I draw an Exploding Kitten/)).toBeNull();
+    b.unmount();
+  });
+
+  it('lets a Targeted Attack target yourself', () => {
+    const base = createInitialState({ ...CONFIG, expansions: ['imploding-kittens'] }, 31415, seats(3));
+    const s: EkState = { ...base, hands: { ...base.hands, p0: [{ id: 9500, kind: 'targetedAttack' }] } };
+    render(<GameView state={s} localPlayerId="p0" dispatch={vi.fn()} />);
+    fireEvent.click(screen.getAllByText('Targeted Attack')[0]!);
+    expect(screen.getByText('Target yourself')).toBeDefined();
+  });
+
+  it('renders a whole Zombie Kittens game, dead seats included', async () => {
+    const { chooseAIAction } = await import('./ai');
+    let s = createInitialState({ ...CONFIG, expansions: ['zombie-kittens', 'streaking-kittens', 'barking-kittens'] }, 4242, seats(4));
+    let guard = 0;
+    while (s.phase !== 'gameOver' && guard++ < 3000) {
+      for (const viewer of s.seats.map((x) => x.id)) {
+        const view = render(<GameView state={s} localPlayerId={viewer} dispatch={vi.fn()} />);
+        view.unmount();
+      }
+      const action = chooseAIAction(s, s.activePlayerId!);
+      if (!action) break;
+      s = applyAction(s, action);
+    }
+    expect(s.phase).toBe('gameOver');
   });
 });

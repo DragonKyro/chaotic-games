@@ -23,21 +23,34 @@ look there first; it has five finished games' worth of precedent.
 
 ## Current status
 
-**All six base games AND all 30 expansions are implemented and playable**
-(Exploding Kittens + 6 expansions, Unstable Unicorns + 8 expansions & 6 base
-editions, Here to Slay + 3 expansions, Happy Little Dinosaurs + 4 expansions,
-Casting Shadows + 2 expansions, Doomlings + 7 expansions). Each game has its
-official base and expansion card pools, pure deterministic reducer, interactive
-prompts for every player decision, heuristic AI driver, its own art direction
-(original SVG card art system, card back, board, home-page `Thumbnail`, a
-`Gallery` of every card face), a `GameView` built on the shared kit with
-state-driven FX, `LobbyConfig`, `Rules`, and unit + AI-vs-AI playout tests.
+All six base games are implemented, playable, and **audited against official
+sources** (the 2026-11-19 rules audit — see each game's section and "Rules
+sources" below). Expansions are a mixed picture: the audit found that much of
+the original expansion content had been approximated or invented. What could
+be rebuilt from sources was; the rest is flagged `verified: false` (the lobby
+shows "unverified") or locked, never passed off as official.
 
-242 tests pass (`npm run test:run`), covering all six base games and all 30
-expansions across 2–10 players and multiple seeds, plus the online layer
-(rooms, lobby, action log, races, rejoin, spectators), a whole online match
-of each of the six games, and UI tests for Exploding Kittens and Happy Little
-Dinosaurs (every state of full AI games renders; no hidden card leaks).
+| Game | Base game | Expansions |
+|---|---|---|
+| Exploding Kittens | ✅ verified against the official rule-sheet PDFs | ✅ Imploding, Streaking, Barking, Zombie Kittens, Party Pack verified · ⚠ Recipes for Disaster: placeholder, recipes not modeled |
+| Unstable Unicorns | ✅ 2nd Edition verified; Original Base (Second Print) and Diamond Edition rebuilt to their inventories | ⚠ all 8 expansions and the Control / Chaos / Travel editions are approximations, flagged unverified (real card lists in `types.ts`) |
+| Here to Slay | ✅ verified against the official rulebook | ⚠ all 3 expansions are approximations, flagged unverified (their three Party Leaders are correct) |
+| Casting Shadows | ✅ rebuilt from the rulebook, hex reference sheet and card pages | ⚠ hexes and characters official, decks still the app's own, flagged unverified (official lists in `cards.ts`) |
+| Happy Little Dinosaurs | ✅ verified | ✅ 5–6 Player, Perils of Puberty, Dating Disasters verified · ⚠ Hazards Ahead partial (its tokens and Hazard cards are no-ops), unverified |
+| Doomlings | ✅ Classic (2nd edition) rebuilt from scratch and verified | ⛔ none implemented — the earlier seven were invented; the six published packs are listed but locked |
+
+Each game has a pure deterministic reducer, interactive prompts for every
+player decision (the audit's main check: no decision the rules give a player
+is taken for them), a heuristic AI that answers every prompt, its own art
+direction (original SVG card art system, card back, board, home-page
+`Thumbnail`, a `Gallery` of every card face), a `GameView` built on the shared
+kit with state-driven FX, `LobbyConfig`, `Rules`, and unit + AI-vs-AI tests.
+
+433 tests pass (`npm run test:run`): every game's rules (one test per audit
+fix), AI-vs-AI playouts across player counts, editions and expansion sets, UI
+tests for all six games (every state of full AI games renders; no hidden card
+leaks to another seat), the online layer (rooms, lobby, action log, races,
+rejoin, spectators) and a whole online match of each game.
 
 ## Tech stack (locked)
 
@@ -145,16 +158,21 @@ Key decisions baked in there:
 - Every landed Nope **rebuilds the queue**, so the original player gets to counter-Nope. Termination is guaranteed because each answer consumes a card.
 - `activePlayerId` parks on the current responder while `turnPlayerId` remembers whose turn it actually is. That's what lets the `GameHost` AI driver tick responders one at a time with no special-casing.
 
-Variants still to add when reused:
-- **Cancel, terminal** — Super Neigh (Unstable Unicorns) cannot be answered. Needs a flag on the pending play that empties the queue.
-- **Modify, accumulating** — Here to Slay's Modifier cards adjust a pending dice *roll* rather than cancelling a card, and several can pile on. The window opens on a roll and iterates until everyone passes.
+Both variants now exist:
+- **Cancel, terminal** — Super Neigh (Unstable Unicorns) cannot be answered.
+- **Modify, accumulating** — Here to Slay's Modifiers adjust a pending dice *roll*. Any number per player; after each one the window reopens for everyone, clockwise from the roller. Rolls are public state (`lastRoll`).
+
+One deliberate exception to "playing is a shout": Happy Little Dinosaurs'
+scoring Instants are accepted only from the head of the queue, and every play
+reopens the window for everyone. Nobody loses a chance to respond, and no two
+devices can act on the same state.
 
 ### 2. Player elimination — BUILT
 
 `eliminated: PlayerId[]` plus `nextLivePlayer()` skipping dead seats, in
 `exploding-kittens/reducer.ts`. Notes:
 
-- An exploded player discards their **whole hand** along with the kitten.
+- An exploded player's killing kitten lies face up in front of them and the rest of their hand face down (`deadKittens` / `deadHands`) — not discarded, so it can't be fished back out of the discard pile. With Zombie Kittens the dead keep their hands, may still play Nope and NOW cards, and can be revived.
 - Their owed turns (from an Attack) die with them; the next seat starts fresh on one turn.
 - `GameStateShape.finalScores` is `Record<PlayerId, number>`, so a last-one-standing game scores by **how many players you outlasted** — the winner tops the table and the end screen stays meaningful. Don't change the contract for this.
 
@@ -166,12 +184,13 @@ and not commit-and-reveal (deterministic and cheat-resistant, but a lot of work
 for a game you play with five friends).
 
 What makes it hold up in practice is **`knownTopCount: Record<PlayerId, number>`**
-— how many top-of-deck cards each seat has legitimately earned sight of. This is
-the *only* sanctioned window into the deck, and the rule is enforced by
-convention plus tests:
+— how many top-of-deck cards each seat has legitimately earned sight of — plus
+**`sightings`**, the kittens a player watched being reinserted (Clairvoyance).
+These are the *only* sanctioned windows into the deck, and the rule is enforced
+by convention plus tests:
 
-- The UI renders deck contents **only** via `knownTopCards(state, localPlayerId)`.
-- The AI reads the deck **only** via `drawDanger()` / `knownTopCards()`, plus `kittensInDeck()` which is pure public info (setup seeded `players - 1`; each explosion moves one to the discard). `ai.test.ts` asserts it walks into a kitten it had no way of knowing about.
+- The UI renders deck contents **only** via `knownTopCards(state, localPlayerId)` / `sightedKittens()`.
+- The AI reads the deck **only** via `drawDanger()` / `knownTopCards()` / `sightedKittens()`, plus `kittensInDeck()`, which counts from public information only (the setup count, minus kittens lying face up in front of the dead or on the discard, plus a face-up Imploding Kitten). `ai.test.ts` asserts it walks into a kitten it had no way of knowing about. (The audit removed two places — Clairvoyance and Tower of Power — where card code read the deck directly.)
 - Knowledge decays honestly: a draw decrements everyone by one, a shuffle zeroes everyone, a reinsertion clamps everyone to the insert index (cards below it are unchanged) and grants the placer exactly one card of knowledge if they hid it on top.
 
 If you add a card that reveals or manipulates the deck (Alter the Future, Draw
@@ -183,35 +202,30 @@ public the instant it happens, so folding it into the action payload is enough.
 
 ## The games
 
-All six are built, with every expansion. Each `types.ts` is the design doc —
-read it before touching that game. Expansion lists were verified against
-publisher stores except where noted.
+Each `types.ts` is the design doc — read it before touching that game. Sources
+for every confirmed rule are listed at the top of that file. Rules the sources
+couldn't settle are marked UNCONFIRMED in code and listed in-app in `Rules.tsx`.
 
-### Exploding Kittens (`src/games/exploding-kittens/`) — ✅ BASE GAME BUILT
+### Exploding Kittens (`src/games/exploding-kittens/`)
 
-2–5 players. Play cards, then end your turn **by drawing** — drawing is the
-turn-ender, not a choice. Draw a kitten without a Defuse and you're out. The
-deck always holds exactly `playerCount - 1` kittens, so exactly one player
-survives.
+2–5 players (to 10 with Party Pack). Play cards, then end your turn **by
+drawing** — drawing is the turn-ender, not a choice. Draw a kitten without a
+Defuse and you're out. The deck holds `players - 1` kittens, so one survives.
 
-**Files:**
-- `cards.ts` — deck composition, card metadata, `dealSetup`, combo detection, AI card values.
-- `types.ts` — state machine, action union, config, expansion list.
-- `reducer.ts` — all rules. Also exports the shared derivations (`kittensInDeck`, `drawDanger`, `knownTopCards`, `availableCombos`) used by both UI and AI.
-- `ai.ts` — heuristic AI. `reducer.test.ts` / `ai.test.ts` / `ui.test.tsx` — 130 tests.
-- `CardArt.tsx` — original inline SVG for every card kind (base + expansions), the category badges, the card back and the home thumbnail. `Card.tsx` (the frame), `ui.tsx` (lobby + table, on the kit), `Gallery.tsx`, `Rules.tsx`, `ek.css`.
+**Files:** `cards.ts` (compositions, metadata, `dealSetup`, combos, AI card
+values), `types.ts`, `reducer.ts` (all rules, plus the shared derivations
+`kittensInDeck`, `drawDanger`, `knownTopCards`, `availableCombos`), `ai.ts`,
+`CardArt.tsx` / `Card.tsx` / `ui.tsx` / `Gallery.tsx` / `Rules.tsx` / `ek.css`.
+184 tests.
 
-**Deck composition (`BASE_DECK_COUNTS`) — 56 cards:** 4 Exploding Kitten,
-6 Defuse, 5 Nope, 4 each Attack / Skip / Favor / Shuffle, 5 See the Future,
-and 4 each of the five cats (20). ⚠ **Reconstructed, not read off the box** —
-explodingkittens.com, BGG and every rules mirror returned 503/403 during
-implementation. It totals 56 and the action-card subtotal (26) cross-checks, but
-spot-check it against the physical game. If a count is wrong, fix it in that one
-constant; nothing else depends on the numbers.
-
-**Two rule readings we had to choose** (both flagged in-app in `Rules.tsx`):
-- **Combos work with any matching cards**, not cats only — two Skips is a legal pair. `EkConfig.combosCatsOnly` flips it. Confirm against the rulebook and then consider dropping the option.
-- **Attack stacking**: playing Attack ends your turns and the next player owes `2 + turns you still owed`. Attacked-then-attacking passes on 3.
+**Verified against the publisher's rule-sheet PDFs** (Original Edition,
+Imploding, Streaking, Barking, Zombie Kittens + Zombie Apocalypse sheet, Party
+Pack, Recipes for Disaster) and the official FAQ:
+- `BASE_DECK_COUNTS` (56 cards) is confirmed. Setup: two spare Defuses are shuffled in *before* the deal; the default deal is 7 + 1 Defuse (4 is kept as a shorter game).
+- **Combos** work with any 2 or 3 cards of the same title — confirmed. `combosCatsOnly` is now labelled a house rule. Five Different isn't in current printings: opt-in (`fiveDifferentCombo`), off by default.
+- **Attack stacking:** an attacked player who Attacks hands on their current + untaken turns + 2; anyone else hands on 2 (`underAttack`). Personal Attack is 3 and stacks.
+- Imploding: kittens total `players - 1` with the Imploding Kitten counted among them. Streaking: holding a kitten is secret (a standing `streakingHold` preference). Barking: Tower of Power's Stash is dealt at setup. Zombie Kittens: the full 22-card set; the dead keep their hands and can be revived. Party Pack is its own 120-card core deck (paw-print subsets by player count), not base × 2.
+- Not modeled (placeholder, labelled): Recipes for Disaster's recipes, the Zombie Apocalypse combination rules, the faster-game variants, the Imploding 2-player variant.
 
 **AI design.** Deterministic, single difficulty, no search, one action per call —
 the shell's driver ticks it repeatedly, so "See the Future, then decide whether
@@ -219,94 +233,129 @@ to Skip" falls out across two ticks with no lookahead. It ranks by risk:
 certain-death on top → Attack (best: dodges the draw *and* hands the next player
 the kitten) > Skip > Shuffle > eat it with a Defuse and re-hide it. Unknown top →
 buy information first, then dodge. Safe → build advantage with combos. It
-deliberately does **not** Attack when the deck is safe, since drawing gains a
-card for free and Attack is worth saving. Nopes are spent only on plays that
-actually hurt it. Kitten placement is on top unless it still owes turns and
-would draw its own kitten, in which case it buries it.
+deliberately does **not** Attack when the deck is safe, and never spends Defuses,
+Nopes or Zombie Kittens on steal combos. Nopes are spent only on plays that
+actually hurt it. It buries a kitten when its own turn continues.
 
-**Fair play is a hard rule here** — see primitive 3 above. The AI must never
-read `state.deck` except through `knownTopCards`.
+**Fair play is a hard rule here** — see primitive 3 above.
 
-### Unstable Unicorns (`src/games/unstable-unicorns/`) — ✅ BASE GAME BUILT
+### Unstable Unicorns (`src/games/unstable-unicorns/`)
+
 2–8 players. Build a Stable of 7 unicorns (6 at 6–8 players). Four-phase turns
-(Beginning / Draw / Action / End), 7-card hand limit, shared Nursery for Baby
-Unicorns. Neigh = the reaction primitive; Super Neigh is terminal.
-All 127 playable cards (13 Baby Unicorns, 22 Basic Unicorns, 30 Magical
-Unicorns, 25 Magic, 15 Instant, 14 Upgrade, 8 Downgrade) + 8 reference cards =
-135 cards from the 2nd Edition Base Deck are implemented.
+(Beginning / Draw / Action: play 1 or draw 1 / End), 7-card hand limit, Nursery
+of Baby Unicorns. Neigh is the reaction primitive; Super Neigh is terminal.
+
+**Verified** (official Unstable Games Wiki: rulesheet, FAQ, Two Player Rules,
+per-deck card lists and inventories): the 2nd Edition base deck card for card.
+Each player **chooses** their Baby Unicorn at setup; 2-player rules are a lobby
+toggle (on by default); a deck-out goes to the most unicorns, then most letters
+in their names, and a full tie means everyone loses. Queen Bee's restriction is
+one gate (`canEnterStable`) covering every route into a Stable. The Original
+Base deck is the Second Print inventory (127 cards); the Diamond Edition is
+rebuilt (Vault, Diamond Phase, protected Diamond Unicorns).
+
+**Not the printed sets:** the 8 expansions and the Control / Chaos / Travel
+editions mix a few real card names with invented ones ("Uncut Unicorns" isn't a
+product at all). They're flagged unverified; the real card lists are recorded
+in `types.ts` for a rebuild (300+ unique effects).
 
 The AI never offers a Dark Angel Unicorn to Dark Angel's own sacrifice: it
 used to sacrifice the Dark Angel itself, bring it straight back from the
-discard, re-trigger, and loop forever (about 1 deal in 400). Watch for the
-same shape in any other "when this enters, sacrifice, then bring back" card.
+discard, re-trigger, and loop forever. Watch for the same shape in any other
+"when this enters, sacrifice, then bring back" card.
 
-### Here to Slay (`src/games/here-to-slay/`) — ✅ BASE GAME BUILT
-2–6 players. 3 action points a turn (4 with Mega Slime): 1 AP draw, 1 AP play
-Hero/Item/Magic, 1 AP roll for Hero ability, 2 AP attack a Monster, 3 AP discard
-hand and draw 5. Win by slaying 3 monsters or completing a full 6-class party
-(Party Leader and Mask items count). All 6 Party Leaders, 15 Monsters, 48
-Heroes, 15 Items/Cursed Items, 13 Magic, 25 Modifiers, and 14 Challenges are
-implemented.
+### Here to Slay (`src/games/here-to-slay/`)
 
-Noticed during the UI rebuild, not fixed (confirm against the rulebook first):
-`choosePartyLeader` is accepted at any point in your turn, so a leader can be
-swapped mid-game (the rulebook fixes it at setup); and `finalScores` is an
-invented `trophies × 10 + classes + gifts × 5`, so the end screen shows the
-ranking without the numbers. AI rolls that resolve with no modifier window
-never put their dice in state, so they show only in the log and FX, not the
-roll tray.
+2–6 players. 3 action points a turn: draw (1), play a Hero / Item / Magic (1),
+roll for a Hero's ability (1), attack a Monster (2), discard your hand and
+draw 5 (3). Win by slaying 3 Monsters or **ending your turn** with a full
+6-class party.
 
-### Casting Shadows (`src/games/casting-shadows/`) — ✅ BASE GAME BUILT
-2–4 players, last player standing wins (18 HP start). 7-Hex board (Ancient Rune
-at center + 6 outer hexes), 4 double-sided Character boards (Kit Gale, Frill
-Lilypad, Nuzzle Thornwood, Haze Greentongue), 5 Resource Dice, 52 Main Deck
-cards (34 Attack Spells, 10 Conversion Spells, 8 Resource cards), 10
-Counterspells, and 10 Companions. Three-phase turns: Resource Roll → Action
-Phase (4 AP: Travel, Cast, Reroll, Protect, Refresh, Collect) → Shadow
-Absorption & Cursed Crystal damage.
+**Verified** against the official rulebook (retail and Kickstarter PDFs) and the
+wiki inventories: Party Leaders are **drafted at setup** in reverse seat order
+(seat 1 picks last and starts), never swapped afterwards; no hand limit; a
+Party Leader meets a Monster's class requirement; any number of Modifiers per
+player on one roll; Challenges apply to cards played "immediately" by effects
+too; dice rolls are public (`lastRoll`); `finalScores` is winner 1, everyone
+else 0 (the rulebook has no scoring).
 
-⚠ **Known AI stalemate** (found 2026-11-18, not fixed): about 1 deal in 500
-never ends AI-vs-AI. Two survivors end up on the same hex, every attack they
-hold needs an *adjacent* hex, and neither AI Travels to bring one into range,
-so chip damage and healing cancel out forever (e.g. 3 seats `host-uuid`,
-`guest-uuid`, `ai-1`, default config, seed `699613345`). A human breaks it by
-moving; an all-AI match won't. The fix belongs in `ai.ts`: Travel when no
-held attack can reach a living enemy.
+**Not the printed sets:** all three expansions (Warriors & Druids, Berserkers &
+Necromancers, Here to Sleigh) are flagged unverified — only their three Party
+Leaders were corrected to published text. Sources for a rebuild are listed in
+`types.ts`; Here to Sleigh needs its rulesheet first.
 
-`finalScores` counts the players each caster outlasted (the last-one-standing
-convention, as in Exploding Kittens; it used to be `100 + HP` for the winner
-and 0 for every fallen player, which ranked them all tied). Noticed during the
-UI rebuild, not fixed: with a full spell book and no `replaceSpellId`, the
-reducer discards the first card to `mainDiscard` even when it is a
-Counterspell; and collecting a level-2/3 spell may replace any card of a
-high-enough level (Counterspells and Conversions included), not only a lower
-Attack spell.
+### Casting Shadows (`src/games/casting-shadows/`)
 
-### Happy Little Dinosaurs (`src/games/happy-little-dinos/`) — ✅ BASE GAME BUILT
-2–4 players (up to 6 with 5–6 Player toggle). 4 Dinosaur boards (Nervous Rex,
-Cry Ceratops, Bad Luck Bronto, Stego), 28 Disaster cards (8 Natural, 8
-Predatory, 8 Emotional, 4 Meteor wild), 53 Point cards (values 0–9 with weapon
-effects resolved lowest-to-highest), and 16 Instant cards (Score Booster, Score
-Sapper, Score Inversion, Disaster Insurance, Disaster Redirect). Win by reaching
-50 points on your Escape Route or being the last Dinosaur standing (eliminated on
-3 same-type or 3 different-type Disasters).
+2–4 players (5–6 with an expansion), last caster standing wins (18 HP).
 
-Noticed during the UI rebuild, not fixed: `handlePlayScoringInstant` doesn't
-check that the player is the current responder, so any holder can play out of
-turn (possibly intended, as a shout); `chooseDino` has no phase check.
+**Rebuilt** from the rulebook, the Ice Storm rulebook, the Hex Tile Reference
+Sheet and ~45 per-card wiki pages — nearly every base card text, cost, level
+and range had been invented, as had the hex tiles. Now: the 7 official base
+tiles (Ancient Rune gives +2 HP and allows no collecting), home tiles placed in
+seat positions, the five official range types, Shadow Abilities need full
+energy, Spell Book upgrades cost a lower Attack / Conversion spell (never a
+Counterspell) and the player chooses what to give up, Resource cards are free
+to collect and spent for a token, used Counterspells go to the bottom of their
+deck. The AI travels toward where its spells can hurt someone, which fixed the
+old stalemate (seed `699613345` now ends in 106 moves). `finalScores` counts
+the players each caster outlasted.
 
-### Doomlings (`src/games/doomlings/`) — ✅ BASE GAME BUILT
-2–6 players. Gene Pool starts at 5 (clamped 1–8, dynamically adjusted by Ages,
-Catastrophes, and Traits in your Trait Pile). 13-card Age Deck built from 3 Era
-piles of (3 random Ages + 1 random Catastrophe) topped by The Birth of Life.
-Play 1 Trait per turn, resolve its Action, and Stabilize hand to Gene Pool size.
-3rd Catastrophe triggers World's End (Trait World's End effects + Catastrophe
-World's End effect + Drop of Life scoring). All 7 official expansions (Overlush,
-Imaginary Ends, Legends of Enderas, Ancient Fates, Shadow Puppets, Castle Glass,
-Mokoko Village) are documented in `DM_EXPANSIONS`.
+**Expansions:** hexes, character names and the Ice Storm statuses are
+official, but the decks couldn't be sourced and are still the app's own —
+flagged unverified. The official card lists are kept in `cards.ts`
+(`CS_ICE_STORM_OFFICIAL_CARDS`, `CS_MOLTEN_ROCK_OFFICIAL_CARDS`) as reference
+for a rebuild; knip reports them as unused, on purpose.
 
-Noticed during the UI rebuild, not fixed: a World's End tie goes to the
-first seat in seat order, with no tiebreak.
+### Happy Little Dinosaurs (`src/games/happy-little-dinos/`)
+
+2–4 players (5–6 with a board-adding expansion: 5–6 Player or Hazards Ahead).
+Every round a Disaster flips, everyone picks a Point card face-down at once,
+picks reveal, effects resolve, the highest score moves up the Escape Route, the
+lowest takes the Disaster. First to 50 wins; 3 same-type or 3 different-type
+Disasters eliminate you.
+
+**Verified** (official rulesheet v5, the 5–6 Player rulesheet, per-deck
+inventories and card pages): base, 5–6 Player, Perils of Puberty and Dating
+Disasters — most Disaster names, expansion effects and two dinos' traits had
+been invented. Point-card effects resolve "during this round" ones first, then
+lowest value; ties go to fewest Escape Route points, then the youngest (seat
+order). An all-tie sends the Disaster to the bottom; a win is checked after
+every action; boards are unique; a 2-player variant is a lobby option.
+
+**Hazards Ahead is partial:** its rulebook isn't online, so its card pool is
+official but its Hazard tokens and Hazard cards are no-ops — flagged unverified.
+
+### Doomlings (`src/games/doomlings/`)
+
+2–6 players. **Rebuilt from scratch as the Classic (2nd edition) base game** —
+every card in the old implementation, and all seven "expansions", had been
+invented. Sources: the official Classic rulesheet as transcribed in
+`nycocado/doomlings-atlas` (`assets/doomlings/rules/classic.md`), that repo's
+per-card data (`assets/doomlings/classic/cards.json`), and `azabicki/DoomPy`'s
+card sheet and scoring code (the two agree on every trait's value, colour and
+Dominant).
+
+116 traits (107 distinct), 25 Ages, 15 Catastrophes. The Age deck is three Era
+piles of 3 Ages + 1 Catastrophe under The Birth of Life. You must play a trait
+if you can; actions are mandatory unless they say "may"; the Gene Pool is a
+running counter (a trait leaving always reverses its change); World's End
+resolves the Catastrophic effect → traits' World's End effects in turn order →
+the Catastrophe's World's End effect → scoring. Tied players each draw a trait
+and add its face value. Live scores never count bonuses that depend on hidden
+hands (shown as "+?").
+
+**Expansions: none implemented.** The six published packs are listed in the
+lobby but locked; `doomlings-atlas` has their card lists for a rebuild.
+
+## Rules sources
+
+Live publisher sites, BGG and the fan wikis don't connect from this network,
+and web search is unavailable. What works:
+
+- **The Wayback Machine.** Archived copies of server-rendered pages — above all the official **Unstable Games Wiki** (`https://unstablegameswiki.com/index.php?title=…`: per-deck "Cards In This Deck", inventory lists, rulesheets, FAQ), which covers Unstable Unicorns, Here to Slay, Happy Little Dinosaurs and Casting Shadows.
+- **The publisher's CDN.** Exploding Kittens' rule-sheet PDFs (`cdn.shopify.com/s/files/1/0345/9180/1483/files/…`, linked from the archived `explodingkittens.com/pages/rules-*` pages) download live.
+- **GitHub** (API and `raw.githubusercontent.com` via curl): open-source implementations with card data — secondary sources; cross-check them.
+- **`python scripts/fetchtext.py URL [--archive] [--cdx PREFIX] [--grep W] [--links]`** fetches a page (or its newest archived copy) as text, lists what the archive holds under a prefix, caches everything in `.research-cache/` (git-ignored) and paces archive requests to one per 10 s — the archive blocks bursts as bot traffic.
 
 ## Conventions
 
@@ -332,6 +381,7 @@ first seat in seat order, with no tiebreak.
 - `FIREBASE_LIVE=1 npx vitest run src/store/networkStore.live.test.ts` — online play + the security rules against the real Firebase project
 - `npm run deploy:rules` — deploy `database.rules.json`, merged into the shared database's live rules by `scripts/merge-db-rules.mjs` (never deploy the file on its own; `node scripts/merge-db-rules.mjs` alone writes the merged file without deploying). From Git Bash, set `MSYS_NO_PATHCONV=1` for CLI database paths, e.g. `database:remove /chaotic-games/rooms/X --force`
 - `npm run fix-lock` — after any `npm install`, rewrite the lockfile's mirror URLs to registry.npmjs.org (see Deployment)
+- `python scripts/fetchtext.py URL --archive` — read a rules source (see "Rules sources")
 - `node scripts/render.mjs [shot…]` — screenshots in headless Chrome (starts its own Vite), into `art-renders/` (git-ignored). Named shots: `home`, and per game `<k>-gallery` / `<k>-lobby` / `<k>-game` / `<k>-over` with `k` ∈ ek uu hts cs hld dm. `--url "?demo=…" --name x --wait .cg-table` for anything else; `--size 390,844 --mobile`, `--full`, `--click <selector>`, `--port` (parallel runs). Prints any page errors.
 - Dev-only deep links (`src/ui/devDemo.ts`, stripped from production): `?demo=<gameId>` (you + AIs, fast-forwarded to your move; `&players` `&seed` `&moves` `&over` `&exp=a,b` `&humans=2` `&sub=<subPhase>` to land on a specific decision), `?lobby=<gameId>`, `?gallery=<gameId>` (every card face).
 
@@ -361,9 +411,8 @@ through.
 
 ## Where to start next
 
-1. **Fix the Casting Shadows AI stalemate** (see that game's section): Travel when no held attack can reach a living enemy.
-2. **Spot-check `BASE_DECK_COUNTS`** against a physical Exploding Kittens box, and confirm the combo rule (any matching cards vs cats only).
-3. Confirm Casting Shadows' rules, Here to Slay's action-point costs and Happy Little Dinosaurs' resolution order against their rulebooks.
+1. **Rebuild the flagged expansions from their official card lists**, smallest first: Here to Slay's Warriors & Druids and Berserkers & Necromancers (sources listed in its `types.ts`), Casting Shadows' expansion decks (lists in `cards.ts`), Doomlings' six packs (`doomlings-atlas`), then Unstable Unicorns' 8 expansions and 3 editions (lists in `types.ts`; 300+ effects). Here to Sleigh and Hazards Ahead need their rulebooks first; Recipes for Disaster needs its 13 recipe booklets.
+2. **Settle the UNCONFIRMED rules** each game lists in `Rules.tsx` once a source turns up.
 
 ## UI and art
 

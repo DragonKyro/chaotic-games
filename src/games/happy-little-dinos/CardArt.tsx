@@ -8,7 +8,7 @@
 import { hashString } from '@/core/rng';
 import type { ReactNode } from 'react';
 import { INK } from './DinoArt';
-import type { HldCardKind, HldDisasterCategory, HldHazardPenalty } from './types';
+import type { HldCardKind, HldDisasterCategory, HldTraitKey } from './types';
 
 // ============================================================================
 // Palette
@@ -19,6 +19,7 @@ export const CATEGORY_COLOR: Record<HldDisasterCategory, string> = {
   predator: '#ff4d4d',
   emotional: '#4f8dff',
   meteor: '#b35cff',
+  lucky: '#ffc21a',
 };
 
 export const CATEGORY_LABEL: Record<HldDisasterCategory, string> = {
@@ -26,6 +27,7 @@ export const CATEGORY_LABEL: Record<HldDisasterCategory, string> = {
   predator: 'Predatory',
   emotional: 'Emotional',
   meteor: 'Meteor',
+  lucky: 'Lucky Day',
 };
 
 /** Colour of a Point card's number badge: dull low, hot high. */
@@ -450,36 +452,6 @@ const DOODLES: Partial<Record<HldCardKind, () => ReactNode>> = {
       <path d="M76 22 Q84 20 86 28 M80 34 Q88 36 88 44" stroke="#9aa3b5" strokeWidth={2.4} fill="none" strokeLinecap="round" />
     </g>
   ),
-  'caution-sign': () => (
-    <g>
-      <path d="M50 12 L90 84 H10 Z" fill="#ffd23f" {...S} strokeWidth={4} />
-      <path d="M50 36 V60" stroke={INK} strokeWidth={7} strokeLinecap="round" />
-      <circle cx={50} cy={72} r={4.4} fill={INK} />
-    </g>
-  ),
-  'protective-helmet': () => (
-    <g>
-      <path d="M16 66 C16 30 84 30 84 66 Z" fill="#ffd23f" {...S} />
-      <rect x={10} y={64} width={80} height={12} rx={6} fill="#ffb800" {...S} />
-      <path d="M50 30 V64" stroke={INK} strokeWidth={4} />
-      <path d="M30 40 C34 36 40 34 44 34" stroke="#fff" strokeWidth={3} opacity={0.6} fill="none" strokeLinecap="round" />
-    </g>
-  ),
-  'hazard-suit': () => (
-    <g>
-      <path d="M30 34 H70 L76 88 H58 L54 66 H46 L42 88 H24 Z" fill="#ffd23f" {...S} />
-      <circle cx={50} cy={22} r={14} fill="#ffd23f" {...S} />
-      <rect x={40} y={16} width={20} height={12} rx={4} fill="#8fdcff" {...S} strokeWidth={2.2} />
-      <path d="M50 44 L56 54 H44 Z" fill={INK} />
-    </g>
-  ),
-  'safety-cone': () => (
-    <g>
-      <path d="M38 22 C42 16 58 16 62 22 L76 82 H24 Z" fill="#ff7a1a" {...S} />
-      <path d="M33 46 H67 L70 58 H30 Z" fill="#fff" stroke={INK} strokeWidth={2} />
-      <rect x={14} y={80} width={72} height={10} rx={3} fill="#ff7a1a" {...S} />
-    </g>
-  ),
 
   // ---- Instants
   'score-booster': () => (
@@ -597,17 +569,7 @@ const DOODLES: Partial<Record<HldCardKind, () => ReactNode>> = {
       <Flame x={50} y={30} s={0.7} />
     </g>
   ),
-  roadblock: () => (
-    <g>
-      <rect x={10} y={40} width={80} height={20} rx={3} fill="#fff8e7" {...S} />
-      {[14, 34, 54, 74].map((x) => <path key={x} d={`M${x} 40 L${x + 12} 40 L${x + 4} 60 L${x - 8} 60 Z`} fill="#ff4d4d" />)}
-      <rect x={10} y={40} width={80} height={20} rx={3} fill="none" {...S} />
-      <path d="M20 60 V86 M80 60 V86" {...S} strokeWidth={5} />
-      <circle cx={20} cy={34} r={5} fill="#ffd23f" {...S} strokeWidth={2} />
-      <circle cx={80} cy={34} r={5} fill="#ffd23f" {...S} strokeWidth={2} />
-    </g>
-  ),
-  detour: () => (
+  'hazard-redirect': () => (
     <g>
       <rect x={14} y={28} width={72} height={34} rx={5} fill="#ff9f1c" {...S} />
       <path d="M24 52 H52 V40 H44 L58 32 L72 40 H64 V52" fill="none" stroke={INK} strokeWidth={4} strokeLinejoin="round" />
@@ -634,13 +596,14 @@ type DisasterArtKind =
   | 'eruption' | 'flood' | 'rocks' | 'storm' | 'plant'
   | 'jaws' | 'talons' | 'bugs' | 'stomp'
   | 'raincloud' | 'heartbreak' | 'ghost' | 'blush'
-  | 'meteor';
+  | 'meteor' | 'lucky';
 
 /** Pick the scene from the card's category and a keyword in its name. */
 function disasterArtKind(category: HldDisasterCategory, name: string): DisasterArtKind {
   const n = name.toLowerCase();
   const has = (re: RegExp) => re.test(n);
   if (category === 'meteor') return 'meteor';
+  if (category === 'lucky') return 'lucky';
   if (category === 'natural') {
     if (has(/lava|bake|hot|fire|solar|flare|steam|boil|drill/)) return 'eruption';
     if (has(/flood|rain|wave|hail|ice|drift|swamp/)) return 'flood';
@@ -800,6 +763,14 @@ const SCENES: Record<DisasterArtKind, () => ReactNode> = {
       <path d="M6 94 L22 78 M18 98 L28 84" stroke={INK} strokeWidth={2.4} strokeLinecap="round" />
     </g>
   ),
+  lucky: () => (
+    <g>
+      <path d="M8 30 L46 54" stroke="#ffe08a" strokeWidth={12} strokeLinecap="round" opacity={0.8} />
+      <Star x={60} y={60} r={26} />
+      <circle cx={22} cy={78} r={3} fill="#ffd23f" {...S} strokeWidth={1.6} />
+      <circle cx={84} cy={24} r={2.6} fill="#ffd23f" {...S} strokeWidth={1.6} />
+    </g>
+  ),
 };
 
 const SKIES = ['#ffffff', '#fff1c9', '#dff4ff', '#ffe1ea', '#ecf8dc', '#f1e8ff'];
@@ -823,6 +794,19 @@ export function CategoryIcon({ category, size = 18 }: { category: HldDisasterCat
       {category === 'predator' && <path d="M5 9 L8 14 L10 9 L12 14 L14 9 L16 14 L19 9 M5 15 L8 19 L10 15 L12 19 L14 15 L16 19 L19 15" fill="none" stroke="#fff8e7" strokeWidth={1.8} strokeLinejoin="round" />}
       {category === 'emotional' && <path d="M12 19 C4 14 6 7 10 7 C11 7 12 8 12 9 C12 8 13 7 14 7 C18 7 20 14 12 19 Z M12 9 L11 12 L13 14 L12 17" fill="#fff8e7" stroke={INK} strokeWidth={1.3} strokeLinejoin="round" />}
       {category === 'meteor' && <><path d="M20 4 L12 12" stroke="#ffd23f" strokeWidth={3} strokeLinecap="round" /><circle cx={10} cy={14} r={4.4} fill="#7a4a2a" stroke={INK} strokeWidth={1.4} /></>}
+      {category === 'lucky' && <path d="M12 4 L14.2 9.6 L20 10 L15.4 13.6 L17 19.4 L12 16 L7 19.4 L8.6 13.6 L4 10 L9.8 9.6 Z" fill="#fff8e7" stroke={INK} strokeWidth={1.3} strokeLinejoin="round" />}
+    </svg>
+  );
+}
+
+/** A Dinosaur Trait's glyph: the Disaster type it reacts to, or a caution sign for Hazards Ahead's Hazard trait. */
+export function TraitIcon({ trait, size = 16 }: { trait: HldTraitKey; size?: number }) {
+  if (trait !== 'hazard') return <CategoryIcon category={trait} size={size} />;
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" className="hld-cat-icon">
+      <path d="M12 2 L23 21 H1 Z" fill="#ffd23f" stroke={INK} strokeWidth={2} strokeLinejoin="round" />
+      <path d="M12 9 V14" stroke={INK} strokeWidth={2.4} strokeLinecap="round" />
+      <circle cx={12} cy={17.5} r={1.4} fill={INK} />
     </svg>
   );
 }
@@ -831,65 +815,13 @@ export function CategoryIcon({ category, size = 18 }: { category: HldDisasterCat
 // Hazards
 // ============================================================================
 
-const HAZARDS: Record<HldHazardPenalty, () => ReactNode> = {
-  'score-minus-1': () => (
-    <g>
-      <path d="M8 74 C10 60 30 56 50 58 C72 60 92 62 92 76 C92 88 12 90 8 74 Z" fill="#8a5a2b" {...S} />
-      <circle cx={30} cy={70} r={5} fill="#a8774a" />
-      <circle cx={64} cy={72} r={6} fill="#a8774a" />
-      <path d="M40 44 C40 30 60 30 60 44" fill="none" {...S} strokeWidth={4} />
-      <text x={50} y={36} textAnchor="middle" fontSize={22} fontFamily="'Luckiest Guy', sans-serif" fill="#ff4d4d" stroke={INK} strokeWidth={1.2}>−1</text>
-    </g>
-  ),
-  'score-minus-2': () => (
-    <g>
-      <path d="M20 70 C8 70 8 52 22 52 C22 34 46 32 50 44 C56 30 80 34 78 52 C92 52 92 70 80 70 Z" fill="#9be26b" {...S} />
-      <circle cx={40} cy={58} r={4} fill={INK} />
-      <circle cx={60} cy={58} r={4} fill={INK} />
-      <path d="M42 66 Q50 62 58 66" fill="none" stroke={INK} strokeWidth={2.4} strokeLinecap="round" />
-      <text x={50} y={92} textAnchor="middle" fontSize={22} fontFamily="'Luckiest Guy', sans-serif" fill="#ff4d4d" stroke={INK} strokeWidth={1.2}>−2</text>
-    </g>
-  ),
-  'hand-size-minus-1': () => (
-    <g>
-      <path d="M36 14 H56 V62 C70 62 84 68 84 80 C84 88 78 90 70 90 H36 Z" fill="#ffcf9a" {...S} />
-      <path d="M36 44 H56 M36 54 H56" stroke="#fff8e7" strokeWidth={8} />
-      <path d="M36 44 H56 M36 54 H56" stroke={INK} strokeWidth={1.4} strokeDasharray="3 3" />
-      <path d="M62 30 L72 26 M64 40 L76 40" stroke="#ff4d4d" strokeWidth={3} strokeLinecap="round" />
-    </g>
-  ),
-  'no-instants': () => (
-    <g>
-      <circle cx={50} cy={50} r={32} fill="#ffd2e4" {...S} />
-      <circle cx={38} cy={44} r={7} fill="#fff" stroke={INK} strokeWidth={2.2} />
-      <circle cx={62} cy={44} r={7} fill="#fff" stroke={INK} strokeWidth={2.2} />
-      <circle cx={38} cy={44} r={2} fill={INK} />
-      <circle cx={62} cy={44} r={2} fill={INK} />
-      <ellipse cx={50} cy={66} rx={8} ry={6} fill={INK} />
-      <path d="M86 18 L70 34 M70 18 L86 34" stroke="#ff4d4d" strokeWidth={4} strokeLinecap="round" />
-    </g>
-  ),
-  'extra-disaster-Check': () => (
-    <g>
+/** Hazard cards share one caution-sign face (they are reference-only; see types.ts). */
+export function HazardArt() {
+  return (
+    <svg viewBox="0 0 100 100" className="hld-doodle" aria-hidden="true">
       <path d="M50 10 L92 84 H8 Z" fill="#ff9f1c" {...S} strokeWidth={4} />
       <path d="M50 34 V58" stroke={INK} strokeWidth={7} strokeLinecap="round" />
       <circle cx={50} cy={70} r={4.4} fill={INK} />
-      <text x={78} y={34} textAnchor="middle" fontSize={20} fontFamily="'Luckiest Guy', sans-serif" fill="#e8342e" stroke={INK} strokeWidth={1}>+1</text>
-    </g>
-  ),
-  'ignore-dino-plus': () => (
-    <g>
-      <path d="M20 40 C20 22 80 22 80 40 C80 58 66 62 66 72 H34 C34 62 20 58 20 40 Z" fill="#e4d7ff" {...S} />
-      <text x={50} y={58} textAnchor="middle" fontSize={34} fontFamily="'Luckiest Guy', sans-serif" fill="#b35cff" stroke={INK} strokeWidth={1.4}>?</text>
-      <rect x={36} y={74} width={28} height={10} rx={3} fill="#9aa3b5" {...S} strokeWidth={2.4} />
-    </g>
-  ),
-};
-
-export function HazardArt({ penalty }: { penalty: HldHazardPenalty }) {
-  return (
-    <svg viewBox="0 0 100 100" className="hld-doodle" aria-hidden="true">
-      {HAZARDS[penalty]()}
     </svg>
   );
 }

@@ -4,8 +4,9 @@
 // World's End, the current Age sits beside it, and the middle of the board is
 // your species — the creature your Trait Pile has grown into — with the pile
 // itself. Opponents' species ride their plates. Hidden information: only
-// `localPlayerId`'s hand is ever rendered; the trait deck and the age deck are
-// shown as counts (and played Ages), never their order.
+// `localPlayerId`'s hand is ever rendered (plus cards a prompt shows that
+// player, e.g. Nosy); the decks are counts, and the next age is shown only to
+// a player who may legitimately see it (Awakening, The Third Eye).
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { PlayerId, Seat } from '@/core/types';
@@ -18,42 +19,36 @@ import { GenePool, Species } from './art';
 import { HUE } from './shapes';
 import { AgeCard, MiniTrait, TraitBackCard, TraitCard } from './TraitCard';
 import {
-  canPlayTrait, computePlayerScore, effectiveGenePool, handOf, isCardIndestructible, isObjectiveFulfilled, tableauOf,
-  validTraitPileTargets,
+  computePlayerScore, findCard, genePoolOf, handOf, outOfTurnPlays, playableFromHand, playBlock, previewNextAge,
+  stabilizeTarget, tableauOf,
 } from './reducer';
 import type { DmAction, DmConfig, DmPrompt, DmState, DmTraitCard, DmTraitColor } from './types';
-import { DM_EXPANSIONS, DM_SCORING_COLORS } from './types';
+import { DM_EXPANSION_LOCKED_REASON, DM_EXPANSIONS } from './types';
 
 // ============================================================================
 // Lobby
 // ============================================================================
 
-export function LobbyConfig({ config, onChange, readOnly }: {
+export function LobbyConfig({ config, readOnly }: {
   config: DmConfig;
   seats?: Seat[];
   onChange: (c: DmConfig) => void;
   readOnly?: boolean;
 }) {
-  const enabled = config.expansions ?? [];
-  const toggle = (id: string) =>
-    onChange({ ...config, expansions: enabled.includes(id) ? enabled.filter((x) => x !== id) : [...enabled, id] });
   return (
     <div className="game-config">
       <p className="lobby-hint" style={{ margin: 0 }}>
-        Three Eras of Ages, one Catastrophe hiding in each. Play a trait a turn, grow your Gene Pool, and be the
-        weirdest survivor when the third Catastrophe ends the world.
+        Doomlings Classic (2nd edition): three Eras of Ages, one Catastrophe hiding in each. Play a trait a turn,
+        stabilize to your Gene Pool, and be the weirdest survivor when the third Catastrophe ends the world.
       </p>
-      {!readOnly && (
-        <div className="lobby-actions" style={{ marginTop: 0 }}>
-          <button type="button" className="secondary tiny" onClick={() => onChange({ ...config, expansions: DM_EXPANSIONS.map((e) => e.id) })}>
-            All expansions
-          </button>
-          <button type="button" className="secondary tiny" onClick={() => onChange({ ...config, expansions: [] })}>
-            Base game only
-          </button>
-        </div>
-      )}
-      <ExpansionPicker expansions={DM_EXPANSIONS} enabled={enabled} onToggle={toggle} readOnly={readOnly} />
+      <ExpansionPicker
+        expansions={DM_EXPANSIONS}
+        enabled={config.expansions ?? []}
+        onToggle={() => undefined}
+        readOnly={readOnly}
+        lockedReason={() => DM_EXPANSION_LOCKED_REASON}
+        title="Expansions (not yet available)"
+      />
     </div>
   );
 }
@@ -62,55 +57,20 @@ export function LobbyConfig({ config, onChange, readOnly }: {
 // Words
 // ============================================================================
 
-type HandPrompt = Extract<DmPrompt, { kind: 'chooseCardsFromHand' }>;
-
-const HAND_EYEBROW: Record<HandPrompt['effectTag'], string> = {
-  discard: 'Discard',
-  stabilizeDiscard: 'Stabilize',
-  giveToOpponent: 'Give a card',
-  playExtraTrait: 'Bonus trait',
-  eloquencePlay: "World's End · Eloquence",
-  suppress: 'Suppress',
-  discardToDraw3: 'Discard to draw 3',
-};
-
-function waitingPhrase(p: DmPrompt): string {
-  switch (p.kind) {
-    case 'chooseCardsFromHand':
-      return ({
-        discard: 'is discarding',
-        stabilizeDiscard: 'is stabilizing their hand',
-        giveToOpponent: 'is choosing a card to give away',
-        playExtraTrait: 'may play another trait',
-        eloquencePlay: 'may play one last trait',
-        suppress: 'is suppressing cards',
-        discardToDraw3: 'is deciding whether to discard for 3',
-      } as const)[p.effectTag];
-    case 'chooseTraitInPile':
-      return ({
-        steal: 'is picking a trait to steal',
-        destroy: 'is picking a trait to destroy',
-        sacrifice: 'must give up a trait',
-        attach: 'is attaching a trait',
-        suppress: 'is suppressing a trait',
-      } as const)[p.mode];
-    case 'chooseColor':
-      return 'is choosing a colour';
-    case 'chooseFromDiscard':
-      return 'is rummaging through the discard pile';
-  }
-}
-
 const COLOR_WORD: Record<DmTraitColor, string> = { red: 'Red', blue: 'Blue', green: 'Green', purple: 'Purple', colorless: 'Colorless' };
 
-/** Why the reducer refused a card, in words (the decision itself stays canPlayTrait's). */
-function whyNot(s: DmState, card: DmTraitCard): string {
-  if (card.requireTraitCount) return `Needs ${card.requireTraitCount}+ traits in your pile.`;
-  if (card.requireColor) return `Needs a ${COLOR_WORD[card.requireColor]} trait in your pile.`;
-  if (card.dominant) return 'You can only keep two Dominants (or this Age forbids them).';
-  return `Not this Age: ${s.currentAge.text}`;
+/** Decisions whose wording would tell onlookers what is in the chooser's hand. */
+const PRIVATE_TASKS: ReadonlySet<DmPrompt['task']['t']> = new Set(['parasiticWindow', 'preventWindow', 'late', 'sneaky', 'alienTerraform', 'extraPlay']);
+
+/** Someone else's decision, in words that don't leak what they hold. */
+function waitingTitle(s: DmState, p: DmPrompt): string {
+  const who = seatName(s, p.playerId);
+  return PRIVATE_TASKS.has(p.task.t) ? `${who} is thinking…` : `${who} is deciding`;
 }
 
+function waitingDetail(p: DmPrompt): string | undefined {
+  return PRIVATE_TASKS.has(p.task.t) ? undefined : p.title;
+}
 
 // ============================================================================
 // Game view
@@ -124,7 +84,6 @@ interface ViewProps {
 
 export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   const [selected, setSelected] = useState<number[]>([]);
-  const [giveTo, setGiveTo] = useState<PlayerId | null>(null);
   const fx = useFx();
   const [shaking, shake] = usePulse(560);
   const [tinting, tint] = usePulse(2200);
@@ -132,32 +91,33 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
 
   const seated = me != null && s.seats.some((x) => x.id === me);
   const myHand = seated ? handOf(s, me!) : [];
-  const prompt = s.subPhase === 'awaitingPrompt' ? s.promptQueue[0] ?? null : null;
+  const prompt = s.subPhase === 'awaitingPrompt' ? s.prompt : null;
   const myPrompt = prompt && seated && prompt.playerId === me ? prompt : null;
   const isMyTurn = seated && s.subPhase === 'awaitingAction' && s.turnPlayerId === me && s.phase === 'playing';
   const opponents = s.seats.filter((x) => x.id !== me);
-  const scores = useMemo(() => Object.fromEntries(s.seats.map((x) => [x.id, computePlayerScore(s, x.id)])), [s]);
+  // Only what this viewer may know: someone else's hand-content bonuses stay hidden until the end.
+  const viewer = seated ? me : null;
+  const scores = useMemo(() => Object.fromEntries(s.seats.map((x) => [x.id, computePlayerScore(s, x.id, viewer)])), [s, viewer]);
+  const locked = s.currentAge.ruleTag === 'protectTraitPiles';
 
   // A fresh decision starts with nothing picked.
-  const decisionKey = `${s.subPhase}|${s.activePlayerId}|${s.promptQueue.length}|${prompt?.reason ?? ''}|${s.logSeq}`;
+  const decisionKey = `${s.subPhase}|${s.activePlayerId}|${prompt?.title ?? ''}|${s.logSeq}`;
   useEffect(() => {
     setSelected([]);
-    setGiveTo(null);
   }, [decisionKey]);
 
   const send = (a: DmAction) => {
     dispatch(a);
     setSelected([]);
   };
+  const answer = (rest: Omit<Extract<DmAction, { type: 'resolvePrompt' }>, 'type' | 'playerId'>) =>
+    send({ type: 'resolvePrompt', playerId: me!, ...rest });
 
   // ---- what clicking a hand card does --------------------------------------------
-  const handPrompt = myPrompt?.kind === 'chooseCardsFromHand' ? myPrompt : null;
-  const handValid = handPrompt
-    ? (handPrompt.effectTag === 'playExtraTrait' || handPrompt.effectTag === 'eloquencePlay'
-      ? myHand.filter((c) => canPlayTrait(s, me!, c))
-      : myHand)
-    : [];
-  const pickMax = handPrompt ? Math.min(handPrompt.count, handValid.length) : 0;
+  const handPrompt = myPrompt?.kind === 'cards' && myPrompt.from === 'hand' ? myPrompt : null;
+  const handEligible = new Set(handPrompt?.cardIds ?? []);
+  const playable = isMyTurn ? playableFromHand(s, me!) : [];
+  const sneaks = isMyTurn ? outOfTurnPlays(s, me!) : [];
 
   function toggleHand(c: DmTraitCard) {
     if (isMyTurn) {
@@ -167,18 +127,16 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
     if (!handPrompt) return;
     setSelected((cur) => {
       if (cur.includes(c.id)) return cur.filter((x) => x !== c.id);
-      if (pickMax === 1) return [c.id];
-      return cur.length < pickMax ? [...cur, c.id] : cur;
+      if (handPrompt.max === 1) return [c.id];
+      return cur.length < handPrompt.max ? [...cur, c.id] : cur;
     });
   }
 
   // ---- trait-pile targets ---------------------------------------------------------------
-  const pilePrompt = myPrompt?.kind === 'chooseTraitInPile' ? myPrompt : null;
-  const pileTargets = pilePrompt ? validTraitPileTargets(s, pilePrompt) : [];
-  const targetIds = new Set(pileTargets.map((t) => t.card.id));
-  const pickTrait = (cardId: number) => send({ type: 'resolvePrompt', playerId: me!, targetCardId: cardId });
-
-  const giveTarget = handPrompt?.effectTag === 'giveToOpponent' ? (giveTo ?? opponents[0]?.id ?? null) : null;
+  const pilePrompt = myPrompt?.kind === 'trait' ? myPrompt : null;
+  const targetIds = new Set(pilePrompt?.targets.map((t) => t.cardId) ?? []);
+  const pickTrait = (cardId: number) => answer({ targetCardId: cardId });
+  const playerPrompt = myPrompt?.kind === 'player' ? myPrompt : null;
 
   // ---- FX, from state transitions ---------------------------------------------------------
   const prev = useRef(s);
@@ -221,29 +179,28 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
         const tab = tableauOf(s, o.id);
         const sc = scores[o.id]!;
         const deciding = s.activePlayerId === o.id && s.subPhase === 'awaitingPrompt';
-        const givePick = !!giveTarget;
+        const pickable = !!playerPrompt?.playerIds.includes(o.id);
         return (
           <PlayerPlate
             key={o.id}
             seat={o}
             active={s.phase === 'playing' && s.turnPlayerId === o.id}
             avatar={<Species traits={tab} seedKey={o.id} tint={o.color} size={50} label={`${o.name}'s species`} />}
-            sub={<>{sc.total} pts · {handOf(s, o.id).length} in hand</>}
-            targetable={givePick}
-            selected={givePick && giveTarget === o.id}
-            onClick={givePick ? () => setGiveTo(o.id) : undefined}
+            sub={<>{sc.total}{sc.hiddenBonus ? '+?' : ''} pts · {handOf(s, o.id).length} in hand</>}
+            targetable={pickable}
+            onClick={pickable ? () => answer({ targetPlayerId: o.id }) : undefined}
           >
             <div className="dm-plate-meta">
-              <GenePool size={effectiveGenePool(s, o.id)} title={`${o.name}'s Gene Pool: ${effectiveGenePool(s, o.id)}`} />
+              <GenePool size={genePoolOf(s, o.id)} title={`${o.name}'s Gene Pool: ${genePoolOf(s, o.id)}`} />
               {deciding && <Chip tone="accent">Deciding…</Chip>}
-              {(s.suppressedCount[o.id] ?? 0) > 0 && <Chip title="Suppressed cards (+1 each at World's End)">{s.suppressedCount[o.id]} tucked</Chip>}
+              {unspentDenial(s, o.id) && <Chip tone="good" title="Ignores the next catastrophe">Denial ready</Chip>}
             </div>
             <div className="dm-plate-traits">
               {tab.map((c) => (
                 <MiniTrait
                   key={c.id}
                   card={c}
-                  protectedCard={isCardIndestructible(tab, c)}
+                  protectedCard={c.dominant || locked}
                   targetable={targetIds.has(c.id)}
                   onClick={targetIds.has(c.id) ? () => pickTrait(c.id) : undefined}
                 />
@@ -259,6 +216,8 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   const ageKey = useChangeKey(s.currentAge.id);
   const focusId = seated ? me! : s.turnPlayerId;
   const discardTop = s.traitDiscard[s.traitDiscard.length - 1];
+  const nextAge = previewNextAge(s, seated ? me : null);
+  const revealed = s.revealed.map((r) => ({ ...r, card: findCard(s, r.cardId) })).filter((r) => r.card);
   const board = (
     <div className="dm-board">
       <div className="dm-era-row">
@@ -275,14 +234,29 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
           </div>
         </div>
       </div>
+      {nextAge && (
+        <div className="dm-objective" title="Only you can see this">
+          You can see the next age: <strong>{nextAge.name.trim()}</strong> — {nextAge.text}
+          {nextAge.worldsEndText ? ` World's End: ${nextAge.worldsEndText}` : ''}
+        </div>
+      )}
+      {revealed.length > 0 && (
+        <div className="dm-objective">
+          Revealed by Clever:{' '}
+          {revealed.map((r, i) => (
+            <span key={r.cardId}>{i ? ', ' : ''}<strong>{r.card!.name}</strong> ({seatName(s, r.ownerId)})</span>
+          ))}
+        </div>
+      )}
       {s.phase === 'gameOver' ? (
         <Finale state={s} scores={scores} me={me} />
       ) : (
         <SpeciesPanel
           state={s}
           playerId={focusId}
+          viewer={viewer}
           mine={seated}
-          targets={pilePrompt?.scope === 'own' ? targetIds : null}
+          targets={pilePrompt ? targetIds : null}
           onPick={pickTrait}
         />
       )}
@@ -292,154 +266,195 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   // ---- dock ---------------------------------------------------------------------------------------
   function renderDock(): ReactNode {
     if (s.phase === 'gameOver') {
-      const winner = s.seats.find((x) => x.id === s.winnerId);
+      const winners = s.seats.filter((x) => s.winnerIds.includes(x.id));
+      const first = winners[0];
       return (
         <GameOverPanel
           seats={s.seats}
           finalScores={s.finalScores}
-          winnerIds={s.winnerId ? [s.winnerId] : undefined}
+          winnerIds={s.winnerIds}
           localPlayerId={me}
-          headline={`${winner?.name ?? 'Nobody'} wins at World's End!`}
-          detail="Face value, plus Drop of Life bonuses, plus every World's End effect."
-          art={winner ? <Species traits={tableauOf(s, winner.id)} seedKey={winner.id} tint={winner.color} size={96} /> : undefined}
+          headline={winners.length > 1 ? `${winners.map((w) => w.name).join(' & ')} share the win at World's End!` : `${first?.name ?? 'Nobody'} wins at World's End!`}
+          detail="Face value, plus Drop of Life bonuses, plus the World's End effects."
+          art={first ? <Species traits={tableauOf(s, first.id)} seedKey={first.id} tint={first.color} size={96} /> : undefined}
           ranks={false}
         />
       );
     }
     if (prompt && !myPrompt) {
       const who = s.seats.find((x) => x.id === prompt.playerId) ?? null;
-      return <Dock tone="wait" who={who} title={`${who?.name ?? 'Someone'} ${waitingPhrase(prompt)}`}>{prompt.reason}</Dock>;
+      return <Dock tone="wait" who={who} title={waitingTitle(s, prompt)}>{waitingDetail(prompt)}</Dock>;
     }
     if (myPrompt) return renderPrompt(myPrompt);
-    if (isMyTurn) {
-      const card = myHand.find((c) => c.id === selected[0]);
-      const stabilize = s.currentAge.ruleTag === 'stabilizeTo4' ? 4 : effectiveGenePool(s, me!);
-      if (card) {
-        return (
-          <Dock
-            tone="turn"
-            eyebrow="Your turn"
-            title={`Evolve ${card.name}?`}
-            actions={
-              <>
-                <button onClick={() => send({ type: 'playTrait', playerId: me!, cardId: card.id })}>Play trait ▶</button>
-                <button className="secondary" onClick={() => setSelected([])}>Clear</button>
-              </>
-            }
-          >
-            {card.text}
-          </Dock>
-        );
-      }
-      return (
-        <Dock
-          tone="turn"
-          eyebrow="Your turn"
-          title={myHand.length ? 'Play one trait — or pass' : 'Your hand is empty'}
-          actions={
-            <button className="secondary" onClick={() => send({ type: 'passTurn', playerId: me! })}>
-              {myHand.length ? 'Pass & stabilize' : 'Draw 3 & pass'}
-            </button>
-          }
-        >
-          {myHand.length ? `Pick a trait in your hand; afterwards you stabilize to ${stabilize} cards.` : 'Draw three cards and end your turn.'}
-        </Dock>
-      );
-    }
+    if (isMyTurn) return renderTurn();
     const turnSeat = s.seats.find((x) => x.id === s.turnPlayerId) ?? null;
     return <Dock tone="wait" who={turnSeat} title={`${turnSeat?.name ?? 'Someone'} is evolving`} />;
   }
 
-  function renderPrompt(p: DmPrompt): ReactNode {
-    if (p.kind === 'chooseCardsFromHand') {
-      const partial = p.optional && p.effectTag === 'suppress';
-      const ok = partial ? selected.length >= 1 && selected.length <= pickMax : selected.length === pickMax;
-      const upTo = partial ? `up to ${pickMax}` : String(pickMax);
+  function renderTurn(): ReactNode {
+    const card = myHand.find((c) => c.id === selected[0]);
+    const stab = stabilizeTarget(s, me!);
+    if (card && playable.some((c) => c.id === card.id)) {
+      const sneak = sneaks.some((c) => c.id === card.id);
       return (
         <Dock
-          tone={p.effectTag === 'stabilizeDiscard' || p.effectTag === 'discard' ? 'danger' : 'turn'}
-          eyebrow={HAND_EYEBROW[p.effectTag]}
-          title={p.reason}
+          tone="turn"
+          eyebrow="Your turn"
+          title={`Evolve ${card.name}?`}
           actions={
             <>
-              <button
-                disabled={!ok}
-                onClick={() => send({
-                  type: 'resolvePrompt',
-                  playerId: me!,
-                  cardIds: selected,
-                  targetPlayerId: p.effectTag === 'giveToOpponent' ? giveTarget ?? undefined : undefined,
-                })}
-              >
-                Confirm ({selected.length}/{pickMax})
-              </button>
-              {p.optional && <button className="secondary" onClick={() => send({ type: 'resolvePrompt', playerId: me!, decline: true })}>Skip</button>}
+              <button onClick={() => send({ type: 'playTrait', playerId: me!, cardId: card.id })}>Play into my pile ▶</button>
+              {sneak && opponents.map((o) => (
+                <button key={o.id} className="secondary" onClick={() => send({ type: 'playOutOfTurn', playerId: me!, cardId: card.id, targetPlayerId: o.id })}>
+                  Slip into {o.name}'s pile
+                </button>
+              ))}
+              <button className="secondary" onClick={() => setSelected([])}>Clear</button>
             </>
           }
         >
-          Select {upTo} card{pickMax === 1 && !partial ? '' : 's'} in your hand.
-          {p.effectTag === 'giveToOpponent' && giveTarget && <> Giving to <strong>{seatName(s, giveTarget)}</strong>{opponents.length > 1 ? ' — click another plate to change.' : '.'}</>}
+          {card.text || 'No effect.'}
+          {sneak && ' Slipping it into an opponent’s pile doesn’t use up your turn.'}
         </Dock>
       );
     }
-    if (p.kind === 'chooseTraitInPile') {
-      const skip = p.optional && <button className="secondary" onClick={() => send({ type: 'resolvePrompt', playerId: me!, decline: true })}>Skip</button>;
-      if (p.scope === 'own') {
+    if (!playable.length) {
+      return (
+        <Dock
+          tone="turn"
+          eyebrow="Your turn"
+          title={myHand.length ? 'You can’t play any trait — your turn is skipped' : 'Your hand is empty — your turn is skipped'}
+          actions={
+            myHand.length ? (
+              <>
+                <button onClick={() => send({ type: 'passTurn', playerId: me! })}>Skip my turn</button>
+                <button className="secondary" onClick={() => send({ type: 'passTurn', playerId: me!, discardHand: true })}>Discard my hand, draw 3</button>
+              </>
+            ) : (
+              <button onClick={() => send({ type: 'passTurn', playerId: me! })}>Draw 5 and skip</button>
+            )
+          }
+        >
+          You don’t stabilize this turn.
+        </Dock>
+      );
+    }
+    return (
+      <Dock tone="turn" eyebrow="Your turn" title="Play one trait">
+        You must play a trait if you can. Pick one in your hand; afterwards you stabilize to {stab} cards.
+      </Dock>
+    );
+  }
+
+  function declineButton(p: DmPrompt) {
+    if (!p.optional) return null;
+    return <button className="secondary" onClick={() => answer({ decline: true })}>{p.declineLabel ?? 'Skip'}</button>;
+  }
+
+  function renderPrompt(p: DmPrompt): ReactNode {
+    const reacting = p.task.t === 'parasiticWindow' || p.task.t === 'preventWindow';
+    const tone = reacting ? 'react' : 'turn';
+    switch (p.kind) {
+      case 'cards': {
+        if (p.from === 'shown') {
+          const cards = p.cardIds.map((id) => findCard(s, id)).filter((c): c is DmTraitCard => !!c);
+          return (
+            <Dock tone={tone} eyebrow="Choose a card" title={p.title} actions={declineButton(p)}>
+              {p.detail}
+              <div className="dm-choices is-scroll">
+                {cards.map((c) => <TraitCard key={c.id} card={c} size="sm" onClick={() => answer({ cardIds: [c.id] })} />)}
+              </div>
+            </Dock>
+          );
+        }
+        const ok = selected.length >= p.min && selected.length <= p.max && selected.every((id) => handEligible.has(id));
+        const range = p.min === p.max ? `${p.min}` : `${p.min}–${p.max}`;
         return (
-          <Dock tone={p.mode === 'sacrifice' ? 'danger' : 'turn'} eyebrow="Your Trait Pile" title={p.reason} actions={skip}>
-            Click a glowing trait in your pile.
+          <Dock
+            tone={p.task.t === 'stabilize' || p.task.t === 'discardFromHand' ? 'danger' : tone}
+            eyebrow="Your hand"
+            title={p.title}
+            actions={
+              <>
+                <button disabled={!ok} onClick={() => answer({ cardIds: selected })}>Confirm ({selected.length}/{p.max})</button>
+                {declineButton(p)}
+              </>
+            }
+          >
+            {p.detail ? `${p.detail} ` : ''}Select {range} card{p.max === 1 ? '' : 's'} in your hand (glowing cards are eligible).
           </Dock>
         );
       }
-      const owners = s.seats.filter((x) => pileTargets.some((t) => t.ownerId === x.id));
-      return (
-        <Dock tone="turn" eyebrow={p.mode === 'steal' ? 'Steal' : p.mode === 'destroy' ? 'Destroy' : 'Choose a trait'} title={p.reason} actions={skip}>
-          <div className="dm-choices is-scroll">
-            {owners.map((o) => (
-              <div key={o.id} className="dm-owner">
-                <span className="dm-owner-name"><Species traits={tableauOf(s, o.id)} seedKey={o.id} tint={o.color} size={22} />{o.name}</span>
-                <div className="dm-choices" style={{ marginTop: 0 }}>
-                  {pileTargets.filter((t) => t.ownerId === o.id).map(({ card }) => (
-                    <TraitCard key={card.id} card={card} size="sm" onClick={() => pickTrait(card.id)} />
-                  ))}
+      case 'trait': {
+        const owners = s.seats.filter((x) => p.targets.some((t) => t.ownerId === x.id));
+        return (
+          <Dock tone={tone} eyebrow="Choose a trait" title={p.title} actions={declineButton(p)}>
+            {p.detail}
+            <div className="dm-choices is-scroll">
+              {owners.map((o) => (
+                <div key={o.id} className="dm-owner">
+                  <span className="dm-owner-name"><Species traits={tableauOf(s, o.id)} seedKey={o.id} tint={o.color} size={22} />{o.id === me ? 'Your pile' : o.name}</span>
+                  <div className="dm-choices" style={{ marginTop: 0 }}>
+                    {p.targets.filter((t) => t.ownerId === o.id).map(({ cardId }) => {
+                      const card = findCard(s, cardId);
+                      return card ? <TraitCard key={cardId} card={card} size="sm" onClick={() => pickTrait(cardId)} /> : null;
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        </Dock>
-      );
+              ))}
+            </div>
+          </Dock>
+        );
+      }
+      case 'player':
+        return (
+          <Dock tone={tone} eyebrow="Choose a player" title={p.title} actions={
+            <>
+              {p.playerIds.map((id) => (
+                <button key={id} onClick={() => answer({ targetPlayerId: id })}>
+                  {seatName(s, id)} ({handOf(s, id).length} in hand · {scores[id]!.total} pts)
+                </button>
+              ))}
+              {declineButton(p)}
+            </>
+          }>
+            {p.detail}
+          </Dock>
+        );
+      case 'color':
+        return (
+          <Dock tone={tone} eyebrow="Choose a colour" title={p.title} actions={
+            <div className="dm-colors">
+              {p.colors.map((col) => (
+                <button
+                  key={col}
+                  className="dm-color-btn"
+                  style={{ '--swatch': HUE[col].core } as CSSProperties}
+                  onClick={() => answer({ chosenColor: col })}
+                >
+                  <ColorCell color={col} />
+                  {COLOR_WORD[col]}
+                </button>
+              ))}
+              {declineButton(p)}
+            </div>
+          }>
+            {p.detail}
+          </Dock>
+        );
+      case 'option':
+        return (
+          <Dock tone={tone} eyebrow={reacting ? 'Out of turn' : 'Your choice'} title={p.title} actions={
+            <>
+              {p.options.map((o, i) => (
+                <button key={o.id} className={i === 0 ? undefined : 'secondary'} onClick={() => answer({ optionId: o.id })}>{o.label}</button>
+              ))}
+            </>
+          }>
+            {p.detail}
+          </Dock>
+        );
     }
-    if (p.kind === 'chooseColor') {
-      return (
-        <Dock tone="turn" eyebrow="Choose a colour" title={p.reason} actions={
-          <div className="dm-colors">
-            {DM_SCORING_COLORS.map((col) => (
-              <button
-                key={col}
-                className="dm-color-btn"
-                style={{ '--swatch': HUE[col].core } as CSSProperties}
-                disabled={p.effectTag === 'faithTo' && p.fromColor === col}
-                onClick={() => send({ type: 'resolvePrompt', playerId: me!, chosenColor: col })}
-              >
-                <ColorCell color={col} />
-                {COLOR_WORD[col]}
-              </button>
-            ))}
-          </div>
-        } />
-      );
-    }
-    // chooseFromDiscard
-    const candidates = p.mode === 'playDirectly'
-      ? s.traitDiscard.filter((c) => !c.dominant && canPlayTrait(s, me!, c))
-      : s.traitDiscard;
-    return (
-      <Dock tone="turn" eyebrow={p.mode === 'playDirectly' ? 'Play from the discard' : 'Take from the discard'} title={p.reason}>
-        <div className="dm-choices is-scroll">
-          {candidates.map((c) => <TraitCard key={c.id} card={c} size="sm" onClick={() => send({ type: 'resolvePrompt', playerId: me!, targetCardId: c.id })} />)}
-        </div>
-      </Dock>
-    );
   }
 
   // ---- side ------------------------------------------------------------------------------------------
@@ -458,7 +473,7 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
                     {x.name}{x.id === me ? ' (you)' : ''}
                     <small>{sc.faceValue} face · {sc.dropOfLifeBonus >= 0 ? '+' : ''}{sc.dropOfLifeBonus} drop{sc.worldsEndBonus ? ` · ${sc.worldsEndBonus > 0 ? '+' : ''}${sc.worldsEndBonus} end` : ''}</small>
                   </span>
-                  <span className="dm-score-total"><Tally value={sc.total} /></span>
+                  <span className="dm-score-total" title={sc.hiddenBonus ? 'Plus a bonus that depends on cards in their hand' : undefined}><Tally value={sc.hiddenBonus ? `${sc.total}+?` : sc.total} /></span>
                 </div>
               );
             })}
@@ -469,16 +484,15 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   );
 
   // ---- hand ----------------------------------------------------------------------------------------------
-  const pickable = (c: DmTraitCard) =>
-    isMyTurn ? canPlayTrait(s, me!, c) : handPrompt ? handValid.some((v) => v.id === c.id) : false;
+  const pickable = (c: DmTraitCard) => (isMyTurn ? playable.some((x) => x.id === c.id) : handPrompt ? handEligible.has(c.id) : false);
   const hand = seated ? (
     <div className="dm-hand-area">
       <div className="dm-hand-head">
         <h4>Your hand ({myHand.length})</h4>
         <div className="dm-chips">
-          <GenePool size={effectiveGenePool(s, me!)} />
-          <Chip title="Hand size you stabilize to at the end of your turn">Gene Pool {effectiveGenePool(s, me!)}</Chip>
-          {handPrompt && <Chip tone="accent">Pick {pickMax === 1 ? 'a card' : `${pickMax} cards`}</Chip>}
+          <GenePool size={genePoolOf(s, me!)} />
+          <Chip title="Hand size you stabilize to at the end of your turn">Stabilize to {stabilizeTarget(s, me!)}</Chip>
+          {handPrompt && <Chip tone="accent">Pick {handPrompt.min === handPrompt.max ? handPrompt.min : `${handPrompt.min}–${handPrompt.max}`}</Chip>}
         </div>
       </div>
       <div className="dm-hand">
@@ -496,7 +510,7 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
                   selected={selected.includes(c.id)}
                   disabled={live && !ok}
                   onClick={live && ok ? () => toggleHand(c) : undefined}
-                  title={isMyTurn && !ok ? whyNot(s, c) : undefined}
+                  title={isMyTurn && !ok ? playBlock(s, me!, c)?.why : undefined}
                 />
               );
             })}
@@ -533,6 +547,10 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
 // Pieces
 // ============================================================================
 
+function unspentDenial(s: DmState, p: PlayerId): boolean {
+  return tableauOf(s, p).some((c) => c.kind === 'denial' && !s.spentDenials.some((d) => d.cardId === c.id));
+}
+
 function ColorCell({ color }: { color: DmTraitColor }) {
   const h = HUE[color];
   return (
@@ -553,8 +571,10 @@ function EraTimeline({ state: s }: { state: DmState }) {
   const ended = s.phase === 'gameOver';
   const node = (i: number) => {
     const a = played[i];
+    const skipped = a ? s.skippedAgeIds.includes(a.id) : false;
     const cls = `dm-node${a ? (a.kind === 'catastrophe' ? ' is-cat' : ' is-age') : ''}${i === now && !ended ? ' is-now' : ''}`;
-    return <span key={`n${i}`} className={cls} title={a ? a.name.trim() : 'Still to come'}>{a ? (a.kind === 'catastrophe' ? '!' : '') : '?'}</span>;
+    const title = a ? `${a.name.trim()}${skipped ? ' (skipped by Optimistic Nihilism)' : ''}` : 'Still to come';
+    return <span key={`n${i}`} className={cls} title={title} style={skipped ? { opacity: 0.4 } : undefined}>{a ? (a.kind === 'catastrophe' ? '!' : '') : '?'}</span>;
   };
   const items: ReactNode[] = [<span key="birth" className={`dm-node is-birth${now === 0 && !ended ? ' is-now' : ''}`} title="The Birth of Life" />];
   for (let e = 0; e < eras; e++) {
@@ -593,20 +613,19 @@ function EraTimeline({ state: s }: { state: DmState }) {
 }
 
 /** Your creature and the Trait Pile it grew from. `targets` makes pile cards pickable. */
-function SpeciesPanel({ state: s, playerId, mine, targets, onPick }: {
+function SpeciesPanel({ state: s, playerId, viewer, mine, targets, onPick }: {
   state: DmState;
   playerId: PlayerId;
+  viewer: PlayerId | null;
   mine: boolean;
   targets: Set<number> | null;
   onPick: (cardId: number) => void;
 }) {
   const seat = s.seats.find((x) => x.id === playerId)!;
   const tab = tableauOf(s, playerId);
-  const sc = computePlayerScore(s, playerId);
+  const sc = computePlayerScore(s, playerId, viewer);
   const grew = useChangeKey(tab.length);
-  const obj = s.objectives[playerId];
-  const objDone = obj ? isObjectiveFulfilled(s, playerId, obj) : false;
-  const hosts = tab.filter((c) => !(c.isAttachment && c.attachedToId !== undefined && tab.some((h) => h.id === c.attachedToId)));
+  const locked = s.currentAge.ruleTag === 'protectTraitPiles';
   return (
     <section className="dm-species-panel" style={{ '--seat': seat.color } as CSSProperties}>
       <div className="dm-species-who">
@@ -615,9 +634,8 @@ function SpeciesPanel({ state: s, playerId, mine, targets, onPick }: {
         </span>
         <span className="dm-species-name">{mine ? 'Your species' : `${seat.name}'s species`}</span>
         <span className="dm-species-stats">
-          <Chip title="Gene Pool: your hand size">GP {effectiveGenePool(s, playerId)}</Chip>
-          {(s.suppressedCount[playerId] ?? 0) > 0 && <Chip title="Suppressed cards: +1 each at World's End">{s.suppressedCount[playerId]} tucked</Chip>}
-          {s.denialArmed[playerId] && <Chip tone="good" title="Ignores the next Catastrophe">Denial armed</Chip>}
+          <Chip title="Gene Pool: the hand size you stabilize to">GP {genePoolOf(s, playerId)}</Chip>
+          {unspentDenial(s, playerId) && <Chip tone="good" title="Ignores the next catastrophe">Denial ready</Chip>}
         </span>
       </div>
       <div className="dm-species-main">
@@ -628,34 +646,18 @@ function SpeciesPanel({ state: s, playerId, mine, targets, onPick }: {
             <small>{sc.faceValue} face {sc.dropOfLifeBonus >= 0 ? '+' : '−'} {Math.abs(sc.dropOfLifeBonus)} drop of life{sc.worldsEndBonus ? ` ${sc.worldsEndBonus > 0 ? '+' : '−'} ${Math.abs(sc.worldsEndBonus)} world's end` : ''}</small>
           </span>
         </div>
-        {obj && (
-          <span className={`dm-objective${objDone ? ' is-done' : ''}`} title={obj.text}>
-            {obj.kind === 'treasure' ? 'Treasure' : 'Meaning of Life'}: <strong>{obj.name}</strong> · {objDone ? `+${obj.points} secured` : `+${obj.points} if: ${obj.text}`}
-          </span>
-        )}
         <div className="dm-pile-row">
           {tab.length === 0 && <span className="dm-pile-empty">{mine ? 'Nothing yet — play a trait and watch it grow.' : 'No traits yet.'}</span>}
-          {hosts.map((c) => {
-            const attached = tab.filter((a) => a.attachedToId === c.id);
-            const pick = (card: DmTraitCard) => targets?.has(card.id) ? () => onPick(card.id) : undefined;
-            const cardEl = (card: DmTraitCard, foot?: string) => (
-              <TraitCard
-                key={card.id}
-                card={card}
-                size="sm"
-                className={`dm-pile-card${targets?.has(card.id) ? ' is-target' : ''}`}
-                protectedCard={isCardIndestructible(tab, card)}
-                onClick={pick(card)}
-                foot={foot}
-              />
-            );
-            return attached.length ? (
-              <div key={c.id} className="dm-host">
-                {cardEl(c)}
-                {attached.map((a) => cardEl(a, 'attached'))}
-              </div>
-            ) : cardEl(c);
-          })}
+          {tab.map((card) => (
+            <TraitCard
+              key={card.id}
+              card={card}
+              size="sm"
+              className={`dm-pile-card${targets?.has(card.id) ? ' is-target' : ''}`}
+              protectedCard={card.dominant || locked}
+              onClick={targets?.has(card.id) ? () => onPick(card.id) : undefined}
+            />
+          ))}
         </div>
       </div>
     </section>
@@ -673,14 +675,15 @@ function Finale({ state: s, scores, me }: {
     <div className="dm-finale">
       {order.map((x, i) => {
         const sc = scores[x.id]!;
+        const tie = s.worldsEnd?.tiebreak[x.id];
         return (
-          <div key={x.id} className={`dm-finalist${x.id === s.winnerId ? ' is-winner' : ''}`} style={{ '--i': i } as CSSProperties}>
+          <div key={x.id} className={`dm-finalist${s.winnerIds.includes(x.id) ? ' is-winner' : ''}`} style={{ '--i': i } as CSSProperties}>
             <Species traits={tableauOf(s, x.id)} seedKey={x.id} tint={x.color} size={i === 0 ? 120 : 100} />
             <span className="dm-species-name">{x.name}{x.id === me ? ' (you)' : ''}</span>
             <div className="dm-break">
               <span>{tableauOf(s, x.id).length} traits</span><b>{sc.faceValue}</b>
               <span>Drop of Life</span><b>{sc.dropOfLifeBonus >= 0 ? '+' : ''}{sc.dropOfLifeBonus}</b>
-              <span>World&apos;s End</span><b>{sc.worldsEndBonus >= 0 ? '+' : ''}{sc.worldsEndBonus}</b>
+              <span>World&apos;s End{tie !== undefined ? ' (incl. tie-break)' : ''}</span><b>{sc.worldsEndBonus >= 0 ? '+' : ''}{sc.worldsEndBonus}</b>
               <span className="is-total">Total</span><b className="is-total">{s.finalScores?.[x.id] ?? sc.total}</b>
             </div>
           </div>

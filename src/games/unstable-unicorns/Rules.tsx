@@ -38,32 +38,44 @@ export function Rules() {
               />
               <p>
                 Be the first player to collect <strong>7 Unicorns</strong> in your Stable (or{' '}
-                <strong>6 Unicorns</strong> in a 6–8 player game). Every player begins with 1 Baby Unicorn from the
-                Nursery in their Stable and 5 cards in hand.
+                <strong>6 Unicorns</strong> in a 6–8 player game). Everyone is dealt 5 cards, then each player{' '}
+                <strong>chooses</strong> a Baby Unicorn from the Nursery to start their Stable.
               </p>
               <h4>Turn Structure (4 Phases)</h4>
               <RulesGrid cols={2}>
                 <RulesTile
                   label="1. Beginning of Turn"
-                  hint='Trigger any "at the beginning of your turn" effects in your Stable.'
+                  hint='"If this card is in your Stable at the beginning of your turn" effects trigger. They happen simultaneously: you are asked about each, in no order of your choosing.'
                   accent="#f97316"
                 />
                 <RulesTile
                   label="2. Draw Phase"
-                  hint="Draw 1 card from the main deck."
+                  hint="Draw 1 card from the deck. (Diamond Edition rolls the Diamond dice first.)"
                   accent="#3b82f6"
                 />
                 <RulesTile
                   label="3. Action Phase"
-                  hint="Either play 1 card from your hand OR draw 1 extra card."
+                  hint="Either play 1 card from your hand OR draw 1 card. (Double Dutch: up to 2 plays.)"
                   accent="#22c55e"
                 />
                 <RulesTile
                   label="4. End of Turn"
-                  hint="Discard down to your hand limit (default 7 cards) if needed."
+                  hint="Discard down to your hand limit (7 unless a card says otherwise). You choose what to discard."
                   accent="#eab308"
                 />
               </RulesGrid>
+              <h4>If the deck runs out</h4>
+              <p>
+                When someone has to draw from an empty deck, the game ends: the player with the most Unicorns wins. A tie goes to
+                whoever has the most letters in the names of their Unicorn cards; a tie on both means everyone loses.
+              </p>
+              <h4>2-player games</h4>
+              <p>
+                The official 2-player rules are on by default (toggle in the lobby): every Basic Unicorn, plus Queen Bee,
+                Seductive, Rainbow, Mother Goose and Necromancer Unicorn, Nanny Cam, Sadistic Ritual, Slowdown and Yay leave the
+                2nd Edition deck, and each player starts with a Neigh on top of their 5 cards. The Original Base Deck removes its
+                own list (Basics, Extremely Fertile, Seductive, Queen Bee, Nanny Cam, Sadistic Ritual, Slowdown, Yay).
+              </p>
             </div>
           ),
         },
@@ -78,25 +90,40 @@ export function Rules() {
               />
               <ul>
                 <li>
-                  <strong>Neigh &amp; Instant Responses:</strong> Playable out of turn whenever another player plays a
-                  card. Resolves LIFO (an odd number of Neighs cancels the card; <em>Super Neigh</em> cannot be Neighed).
-                  The <strong>Adventures</strong>, <strong>Control</strong>, <strong>Chaos</strong>, and{' '}
-                  <strong>Christmas</strong> sets add special Instant cards like <em>Unicorn Net</em> (capture the played
-                  card into your hand), <em>Absorb and Reflect</em> (steal the card + force a discard),{' '}
-                  <em>Redirect</em> (redirect the played card to your own Stable or back onto the caster),{' '}
-                  <em>Flare Gun</em>, and <em>Jingle All The Neigh</em>.
+                  <strong>Neigh:</strong> Played out of turn whenever <em>another</em> player plays a card from their hand,
+                  and can itself be Neigh&apos;d: an odd number of Neighs stops the card. <em>Super Neigh</em> cannot be
+                  Neigh&apos;d. Neighs only stop cards being played: effects already in a Stable (and cards brought straight into
+                  a Stable) can&apos;t be Neigh&apos;d. Ginormous Unicorn and Slowdown stop you playing Neighs; Yay makes your
+                  cards un-Neigh-able.
+                </li>
+                <li>
+                  <strong>Where cards go:</strong> Unicorn, Upgrade and Downgrade cards can be played into <em>any</em>{' '}
+                  player&apos;s Stable; their effects belong to whoever&apos;s Stable they are in. <strong>Queen Bee Unicorn</strong>:
+                  Basic Unicorns can&apos;t enter any Stable but hers, whether played, brought, or stolen.
+                </li>
+                <li>
+                  <strong>Playing a card needs its effect to be possible:</strong> a Magic card whose mandatory effect you
+                  can&apos;t carry out can&apos;t be played (e.g. Mystical Vortex with no other card in hand, Blatant Thievery
+                  when no one else has a card, Unicorn Poison with nothing destroyable). Unicorn cards can always be played.
+                </li>
+                <li>
+                  <strong>&quot;May&quot; vs. mandatory, and &quot;then&quot;:</strong> without &quot;may&quot; an effect is
+                  mandatory (Mermaid Unicorn must return a card). After &quot;then&quot;, the second part only happens if the
+                  first did. Impossible actions (discard with an empty hand...) are simply skipped.
+                </li>
+                <li>
+                  <strong>Sacrifice / Destroy / Steal:</strong> sacrifice is from your own Stable, destroy from another&apos;s,
+                  steal moves a card from another Stable into yours. A stolen Unicorn&apos;s &quot;when this card enters your
+                  Stable&quot; effect triggers for its new owner.
                 </li>
                 <li>
                   <strong>Nursery &amp; Baby Unicorns:</strong> If a Baby Unicorn would ever be sacrificed, destroyed, or
                   returned to a hand, it returns to the shared Nursery instead.
                 </li>
                 <li>
-                  <strong>Continuous Modifiers &amp; Dragon&apos;s Blessing:</strong> Upgrades and Downgrades modify
-                  rules while in a Stable (<em>Pandamonium</em> turns your Unicorns into Pandas,{' '}
-                  <em>Blinding Light</em> disables Unicorn abilities, <em>Rainbow Aura</em> prevents Unicorn
-                  destruction, <em>Yay</em> makes your plays un-Neighable). <strong>Dragon&apos;s Blessing</strong>{' '}
-                  (&quot;Effects of your Downgrade cards do not affect you&quot;) overrides all Downgrades in your own
-                  Stable!
+                  <strong>Continuous modifiers</strong> are read off the Stable as it stands: <em>Pandamonium</em> turns your
+                  Unicorns into Pandas (they don&apos;t count toward winning), <em>Blinding Light</em> makes your Unicorns Basic
+                  with no effects, <em>Rainbow Aura</em> stops your Unicorns being destroyed.
                 </li>
               </ul>
             </div>
@@ -113,24 +140,24 @@ export function Rules() {
               />
               <RulesGrid cols={2}>
                 <RulesTile
-                  label="2nd Edition Base Deck (base-2nd)"
-                  hint="Official 135-card 2nd Edition deck (13 Baby Unicorns + 114 Main Deck cards + 8 rules cards)."
+                  label="2nd Edition Base Deck"
+                  hint="The default: 13 Baby Unicorns + 114 cards (+ 8 reference cards), checked card by card against the official list."
                   accent="#3b82f6"
                 />
                 <RulesTile
-                  label="1st / Original Print (base)"
-                  hint="Includes Extremely Fertile Unicorn, Puppicorn, Zombie Unicorn, Angel Unicorn, Unicorn Shrinkray, Extra Tail, Rainbow Mane, Summoning Ritual, and Unicorn Lasso."
+                  label="Diamond Edition"
+                  hint="The same deck plus 4 Diamond Unicorns in the Vault. Diamond Phase (after Beginning of Turn): roll the d4 to take one from the Vault, take one from another player, or send another player's or your own back. Diamond Unicorns can't be destroyed, sacrificed, or returned to a hand. Reaper's text is unconfirmed: it has no effect here."
+                  accent="#22c55e"
+                />
+                <RulesTile
+                  label="Original Base Deck (Second Print)"
+                  hint="The pre-2nd Edition deck: Extremely Fertile, Puppicorn, Zombie and Angel Unicorn, Unicorn Shrinkray, Extra Tail, Rainbow Mane, Summoning Ritual and Unicorn Lasso replace the nine 2nd Edition newcomers. Cards shared with the 2nd Edition keep their 2nd Edition wording here."
                   accent="#a855f7"
                 />
                 <RulesTile
-                  label="Control & Chaos Editions"
-                  hint="Collector's editions featuring Chronocorn, Unicorn of Order, Time Shift, Absorb and Reflect, Unicorn of Chaos, Hell's Steedicorn, Chaos Storm, and Redirect."
+                  label="Control, Chaos & Travel (approximations)"
+                  hint="Not the printed decks: the real Control and Chaos are complete base games of their own, and Travel is a cut-down deck with eight unique cards. These options are rough stand-ins."
                   accent="#f97316"
-                />
-                <RulesTile
-                  label="Diamond & Travel Editions"
-                  hint="Diamond adds 2-Unicorn Diamond Unicorns & Prismatic Shield; Travel uses a fast 82-card portable deck."
-                  accent="#22c55e"
                 />
               </RulesGrid>
               <RulesTable
@@ -149,6 +176,10 @@ export function Rules() {
                 subtitle="Mix and match any combination of expansions in the game lobby"
                 accent="linear-gradient(135deg, #ec4899, #8b5cf6)"
               />
+              <p>
+                <strong>Heads up:</strong> none of these card pools matches the printed expansion yet. Each borrows a few real card
+                names (with unconfirmed effects) and fills out the rest with stand-ins, which is why the lobby marks them unverified.
+              </p>
               <RulesGrid cols={2}>
                 {UU_EXPANSIONS.map((exp) => (
                   <RulesTile

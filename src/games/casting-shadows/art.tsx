@@ -185,7 +185,7 @@ export function GemIconSvg({ icon, size = 20, title }: { icon: GemIcon; size?: n
   );
 }
 
-const COST_ORDER: (keyof CsResourceCost)[] = ['redGem', 'blueGem', 'anyGem', 'redOrb', 'blueOrb', 'anyOrb', 'shadowFragment', 'cursedCrystal'];
+const COST_ORDER: (keyof CsResourceCost)[] = ['redGem', 'blueGem', 'purpleGem', 'anyGem', 'redOrb', 'blueOrb', 'purpleOrb', 'anyOrb', 'shadowFragment', 'cursedCrystal'];
 
 function costIcons(cost: CsResourceCost | undefined): GemIcon[] {
   const out: GemIcon[] = [];
@@ -489,9 +489,9 @@ const CASTER: Record<string, CasterLook> = {
   nuzzle: { element: 'beast', eyes: '#c6ff6b', crest: 'spines', staff: 'thorn' },
   haze: { element: 'flame', eyes: '#ffd27a', crest: 'horns', staff: 'fork' },
   talon: { element: 'arcane', eyes: '#fff3a8', crest: 'tufts', staff: 'feather' },
-  nyx: { element: 'frost', eyes: '#d9faff', crest: 'peaks', staff: 'shard' },
+  frost: { element: 'frost', eyes: '#d9faff', crest: 'peaks', staff: 'shard' },
   dread: { element: 'stone', eyes: '#ffcf7a', crest: 'shell', staff: 'hammer' },
-  ember: { element: 'flame', eyes: '#ffb36b', crest: 'wings', staff: 'flame' },
+  ashe: { element: 'flame', eyes: '#ffb36b', crest: 'wings', staff: 'flame' },
 };
 
 function casterLook(characterId: string): CasterLook {
@@ -596,13 +596,15 @@ export const TERRAIN: Record<CsHexId, { top: string; bottom: string; glow: strin
   'dusty-desert': { top: '#6a4a22', bottom: '#2a1a0a', glow: '#ffd27a' },
   'underground-volcano': { top: '#5a1418', bottom: '#1c0508', glow: '#ff5a3c' },
   'amber-mountain': { top: '#6a3f12', bottom: '#241206', glow: '#ffb347' },
-  'whispering-marsh': { top: '#0f4a3e', bottom: '#041a16', glow: '#5ff0c8' },
-  'crystal-crypt': { top: '#1c2a6a', bottom: '#070b24', glow: '#7fa8ff' },
-  'scorched-peaks': { top: '#4a1650', bottom: '#14051a', glow: '#d58bff' },
+  'floating-lake': { top: '#0f4a3e', bottom: '#041a16', glow: '#5ff0c8' },
+  'mushroom-cave': { top: '#3a1c5a', bottom: '#12071e', glow: '#e08bff' },
+  'dark-forest': { top: '#2a1a5a', bottom: '#0a0620', glow: '#c48bff' },
+  'mushroom-bog': { top: '#1f4a3a', bottom: '#081a12', glow: '#9fffc0' },
+  'desolate-glacier': { top: '#3a5a7a', bottom: '#0e1a2a', glow: '#d9f4ff' },
   'floating-temple': { top: '#2a4a7a', bottom: '#0a1430', glow: '#c9e8ff' },
-  'glimmering-woods': { top: '#2a1a5a', bottom: '#0a0620', glow: '#c48bff' },
+  'sacred-falls': { top: '#1a4a6a', bottom: '#061a28', glow: '#8fe0ff' },
   'cobble-cove': { top: '#2a4a52', bottom: '#0a1a1e', glow: '#9fe8d8' },
-  'molten-quarry': { top: '#4a1a0a', bottom: '#160604', glow: '#ff8a3c' },
+  'fiery-meadows': { top: '#4a1a0a', bottom: '#160604', glow: '#ff8a3c' },
 };
 
 export function TerrainArt({ hexId }: { hexId: CsHexId }) {
@@ -641,7 +643,7 @@ export function TerrainArt({ hexId }: { hexId: CsHexId }) {
           <path d="M10 -22 L16 -8 L10 -10 L6 -4 L2 -6 Z M-12 -10 L-7 0 L-12 -2 L-16 2 Z" fill="#ffd27a" strokeWidth={1} />
         </g>
       );
-    case 'whispering-marsh':
+    case 'floating-lake':
       return (
         <g {...k}>
           <path d="M-30 14 Q0 6 30 14 L30 24 L-30 24 Z" fill="#0f6a58" />
@@ -651,20 +653,23 @@ export function TerrainArt({ hexId }: { hexId: CsHexId }) {
           <path d="M-24 19 Q-14 16 -4 19 M6 20 Q16 17 26 20" stroke="#5ff0c8" strokeWidth={1} fill="none" />
         </g>
       );
-    case 'crystal-crypt':
+    case 'mushroom-cave':
       return (
         <g {...k}>
-          <path d="M-22 22 L-22 -4 Q-22 -20 0 -20 Q22 -20 22 -4 L22 22 Z" fill="#141c4a" />
-          <polygon points="-10,22 -6,-4 0,-14 4,-2 2,22" fill="#7fa8ff" />
-          <polygon points="4,22 10,2 16,10 14,22" fill="#4f74d8" />
-          <polygon points="-18,22 -14,8 -8,14 -10,22" fill="#4f74d8" />
+          <path d="M-22 22 L-22 -4 Q-22 -20 0 -20 Q22 -20 22 -4 L22 22 Z" fill="#1a0e2e" />
+          <path d="M-8 22 V6 M10 22 V12" stroke="#e8d8f0" strokeWidth={3} />
+          <path d="M-18 8 Q-8 -12 2 8 Z" fill="#e08bff" />
+          <path d="M3 13 Q10 0 17 13 Z" fill="#b05ad8" />
+          <circle cx={-10} cy={1} r={1.6} fill="#fff0ff" strokeWidth={0.6} />
+          <circle cx={-4} cy={4} r={1.2} fill="#fff0ff" strokeWidth={0.6} />
+          <circle cx={10} cy={7} r={1.2} fill="#fff0ff" strokeWidth={0.6} />
         </g>
       );
-    case 'scorched-peaks':
+    case 'desolate-glacier':
       return (
         <g {...k}>
-          <path d="M-30 22 L-16 -6 L-6 6 L6 -18 L18 2 L30 22 Z" fill="#3a1440" />
-          <path d="M6 -18 Q2 -26 8 -30 Q10 -24 12 -26 Q12 -20 6 -18 Z M-16 -6 Q-19 -12 -14 -15 Q-13 -10 -12 -11 Q-12 -8 -16 -6 Z" fill="#d58bff" strokeWidth={1} />
+          <path d="M-30 22 L-16 -6 L-6 6 L6 -18 L18 2 L30 22 Z" fill="#4a6a8a" />
+          <path d="M6 -18 L12 -8 L8 -9 L4 -5 L1 -8 Z M-16 -6 L-12 0 L-15 -1 L-18 2 L-19 -1 Z" fill="#e8f8ff" strokeWidth={1} />
         </g>
       );
     case 'floating-temple':
@@ -676,7 +681,7 @@ export function TerrainArt({ hexId }: { hexId: CsHexId }) {
           <path d="M-6 22 Q0 26 6 22" stroke="#c9e8ff" fill="none" strokeWidth={1} />
         </g>
       );
-    case 'glimmering-woods':
+    case 'dark-forest':
       return (
         <g {...k}>
           <path d="M-20 20 L-12 -14 L-4 20 Z M-2 20 L6 -22 L14 20 Z M12 20 L20 -6 L26 20 Z" fill="#2a1a5a" />
@@ -694,12 +699,33 @@ export function TerrainArt({ hexId }: { hexId: CsHexId }) {
           <ellipse cx={18} cy={10} rx={6} ry={4} fill="#4a5a5e" />
         </g>
       );
-    case 'molten-quarry':
+    case 'fiery-meadows':
       return (
         <g {...k}>
           <path d="M-26 20 L-18 -8 L18 -8 L26 20 Z" fill="#2a0e06" />
           <path d="M-14 -2 L-2 6 L-8 14 M6 -4 L2 8 L12 14" stroke="#ff8a3c" strokeWidth={2} fill="none" />
           <ellipse cx={0} cy={-8} rx={18} ry={4} fill="#ff8a3c" />
+        </g>
+      );
+    case 'mushroom-bog':
+      return (
+        <g {...k}>
+          <path d="M-30 14 Q0 8 30 14 L30 24 L-30 24 Z" fill="#1f5a44" />
+          <path d="M-14 14 V2 M10 14 V-2" stroke="#e8e0c8" strokeWidth={3} />
+          <path d="M-24 4 Q-14 -12 -4 4 Z" fill="#b04a6a" />
+          <path d="M-2 0 Q10 -20 22 0 Z" fill="#c85a7a" />
+          <circle cx={-16} cy={-2} r={1.6} fill="#ffe8f0" strokeWidth={0.6} />
+          <circle cx={8} cy={-8} r={2} fill="#ffe8f0" strokeWidth={0.6} />
+          <circle cx={15} cy={-5} r={1.4} fill="#ffe8f0" strokeWidth={0.6} />
+        </g>
+      );
+    case 'sacred-falls':
+      return (
+        <g {...k}>
+          <path d="M-26 -18 L-8 -18 L-8 16 L-26 16 Z M8 -18 L26 -18 L26 16 L8 16 Z" fill="#3a4a5a" />
+          <path d="M-8 -18 L8 -18 L8 16 L-8 16 Z" fill="#8fe0ff" strokeWidth={1.2} />
+          <path d="M-4 -14 V12 M2 -16 V10" stroke="#e8fbff" strokeWidth={1.2} fill="none" />
+          <path d="M-30 16 Q0 26 30 16 L30 24 L-30 24 Z" fill="#2a7aa0" />
         </g>
       );
   }

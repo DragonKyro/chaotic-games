@@ -7,10 +7,10 @@ import type { CSSProperties } from 'react';
 import { CardShell, Inspect } from '@/ui/kit';
 import { HLD_DINO_DEFS } from './cards';
 import {
-  CATEGORY_COLOR, CATEGORY_LABEL, CardBack, CardDoodle, CategoryIcon, DisasterArt, DisasterBack, HazardArt, tintOf, valueColor,
+  CATEGORY_COLOR, CATEGORY_LABEL, CardBack, CardDoodle, CategoryIcon, DisasterArt, DisasterBack, HazardArt, TraitIcon, tintOf, valueColor,
 } from './CardArt';
 import { DINO_LOOK, DinoArt, type DinoMood } from './DinoArt';
-import type { HldCard, HldDinoId, HldDisasterCard, HldHazardCard } from './types';
+import type { HldCard, HldDinoId, HldDisasterCard, HldDisasterEffect, HldHazardCard, HldTraitKey } from './types';
 
 export type CardSize = 'xs' | 'sm' | 'md' | 'lg';
 
@@ -77,6 +77,17 @@ export function PlayCard({ card, size = 'md', selected, disabled, onClick, footn
   );
 }
 
+/** A short tag for a Disaster's printed effect. */
+const EFFECT_TAG: Record<HldDisasterEffect, string> = {
+  'counts-double': 'Counts ×2',
+  'scoring-bonus': '+1 per type',
+  'hazard-token': '+ Hazard token',
+  'fruit-shower': 'Lucky Day',
+  'one-of-us': 'Lucky Day',
+  'treasure-trove': 'Lucky Day',
+  'wishful-thinking': 'Lucky Day',
+};
+
 function DisasterFace({ disaster, size }: { disaster: HldDisasterCard; size: CardSize }) {
   return (
     <>
@@ -87,7 +98,7 @@ function DisasterFace({ disaster, size }: { disaster: HldDisasterCard; size: Car
       <span className="hld-card-badge is-cat"><CategoryIcon category={disaster.category} size={24} /></span>
       <span className="hld-card-name">{disaster.name}</span>
       {size === 'lg' && <span className="hld-card-text">{disaster.text}</span>}
-      {disaster.drawsHazard && <span className="hld-card-foot">+ Hazard</span>}
+      {disaster.effect && <span className="hld-card-foot">{EFFECT_TAG[disaster.effect]}</span>}
     </>
   );
 }
@@ -116,7 +127,7 @@ function HazardFace({ hazard, size }: { hazard: HldHazardCard; size: CardSize })
   return (
     <>
       <span className="hld-card-ribbon">Hazard</span>
-      <span className="hld-card-art"><HazardArt penalty={hazard.penalty} /></span>
+      <span className="hld-card-art"><HazardArt /></span>
       <span className="hld-card-name">{hazard.name}</span>
       {size === 'lg' && <span className="hld-card-text">{hazard.text}</span>}
     </>
@@ -161,7 +172,9 @@ export function FaceDownCard({ size = 'md', deck = 'main', className, label }: {
   );
 }
 
-/** A dinosaur board: the dino, its name and its trait. */
+const TRAIT_ORDER: readonly HldTraitKey[] = ['natural', 'predator', 'emotional', 'meteor', 'hazard'];
+
+/** A dinosaur board: the dino, its name and its traits. */
 export function DinoCard({ dino, mood = 'happy', selected, onClick, compact }: {
   dino: HldDinoId;
   mood?: DinoMood;
@@ -177,10 +190,11 @@ export function DinoCard({ dino, mood = 'happy', selected, onClick, compact }: {
       <span className="hld-dino-name">{def.name}</span>
       {!compact && (
         <span className="hld-dino-traits">
-          <span className="hld-trait is-plus"><CategoryIcon category={def.plusCategory} size={16} /> +1</span>
-          {def.minusCategory
-            ? <span className="hld-trait is-minus"><CategoryIcon category={def.minusCategory} size={16} /> −1</span>
-            : <span className="hld-trait">no weakness</span>}
+          {TRAIT_ORDER.filter((k) => def.traits[k]).map((k) => {
+            const v = def.traits[k]!;
+            return <span key={k} className={`hld-trait ${v > 0 ? 'is-plus' : 'is-minus'}`}><TraitIcon trait={k} size={16} /> {v > 0 ? `+${v}` : `−${-v}`}</span>;
+          })}
+          {!TRAIT_ORDER.some((k) => (def.traits[k] ?? 0) < 0) && <span className="hld-trait">no weakness</span>}
         </span>
       )}
     </>
