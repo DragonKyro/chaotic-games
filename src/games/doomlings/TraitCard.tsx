@@ -1,12 +1,13 @@
 // Doomlings cards. A trait is a specimen slide: a membrane border in its
 // colour(s), the living cell in a round well, its face value on a cell-shaped
 // badge, marker glyphs for Dominant / Action / Drop of Life / World's End /
-// Attachment / Indestructible / Swarm. Large cards carry the rules text;
-// smaller ones show it on hover (Inspect).
+// Attachment / Indestructible / Swarm, and a Castle Glass class badge (Shell /
+// Coral / Fish, ringed by tier). Large cards carry the rules text; smaller
+// ones show it on hover (Inspect).
 
 import type { CSSProperties, ReactNode } from 'react';
 import { CardShell, Inspect } from '@/ui/kit';
-import { AgeArt, MARK_LABEL, MarkIcon, OrganelleArt, TraitBack, membraneCss, traitColors, traitMarks } from './art';
+import { AgeArt, CLASS_WORD, ClassIcon, MARK_LABEL, MarkIcon, OrganelleArt, TIER_WORD, TraitBack, membraneCss, traitColors, traitMarks } from './art';
 import { HUE } from './shapes';
 import type { DmAgeCard, DmTraitCard } from './types';
 
@@ -18,6 +19,13 @@ function colorLabel(c: DmTraitCard): string {
   return traitColors(c).map((k) => COLOR_WORD[k]).join(' / ');
 }
 
+/** "Exotic Fish", "Shell"… (Castle Glass classes). */
+export function classLabel(c: Pick<DmTraitCard, 'cls' | 'tier'>): string {
+  if (!c.cls) return '';
+  const tier = TIER_WORD[c.tier ?? 'basic'];
+  return `${tier ? `${tier} ` : ''}${CLASS_WORD[c.cls]}`;
+}
+
 /** Long single words shrink to fit the card instead of breaking mid-word. */
 function nameScale(name: string): CSSProperties | undefined {
   const longest = Math.max(...name.split(/[\s-]+/).map((w) => w.length));
@@ -26,6 +34,7 @@ function nameScale(name: string): CSSProperties | undefined {
 
 function Face({ card, size, protectedCard, foot }: { card: DmTraitCard; size: CardSize; protectedCard: boolean; foot?: ReactNode }) {
   const marks = traitMarks(card, protectedCard);
+  const subs = card.sub?.map((x) => x[0]!.toUpperCase() + x.slice(1)).join(' / ');
   return (
     <>
       <span className="dm-card-well">
@@ -39,8 +48,15 @@ function Face({ card, size, protectedCard, foot }: { card: DmTraitCard; size: Ca
           ))}
         </span>
       )}
+      {card.cls && (
+        <span className={`dm-card-class is-${card.tier ?? 'basic'}`} title={`${classLabel(card)} — a class card`}>
+          <ClassIcon cls={card.cls} />
+        </span>
+      )}
       <span className="dm-card-name" style={nameScale(card.name)}>{card.name}</span>
       {(size === 'md' || size === 'lg') && <span className="dm-card-color">{colorLabel(card)}{card.genePoolDelta ? ` · ${card.genePoolDelta > 0 ? '+' : ''}${card.genePoolDelta} gene pool` : ''}</span>}
+      {size === 'lg' && card.cls && <span className="dm-card-color dm-card-classname">{classLabel(card)}</span>}
+      {(size === 'md' || size === 'lg') && subs && <span className="dm-card-color dm-card-sub">{subs}</span>}
       {size === 'lg' && <span className="dm-card-text">{card.text}</span>}
       {foot && <span className="dm-card-foot">{foot}</span>}
     </>
@@ -77,7 +93,8 @@ export function TraitCard({ card, size = 'md', selected, disabled, onClick, insp
     '--membrane': membraneCss(card),
     '--glow': HUE[card.color].core,
   } as CSSProperties;
-  const label = `${card.name} (${colorLabel(card)}, ${card.compassStar ? 'compass star' : `${card.points} pts`})${card.text ? `: ${card.text}` : ''}`;
+  const classWords = card.cls ? `, ${classLabel(card)}` : '';
+  const label = `${card.name} (${colorLabel(card)}, ${card.compassStar ? 'compass star' : `${card.points} pts`}${classWords})${card.text ? `: ${card.text}` : ''}`;
   const zoom = inspect ?? size !== 'lg';
   return (
     <CardShell
@@ -90,7 +107,7 @@ export function TraitCard({ card, size = 'md', selected, disabled, onClick, insp
       title={title}
       preview={zoom ? <div className="dm-card dm-card-lg dm-card-preview" style={style}><Face card={card} size="lg" protectedCard={protectedCard} /></div> : undefined}
     >
-      <Face card={card} size={size} protectedCard={protectedCard} foot={foot} />
+      <Face card={card} size={size} protectedCard={protectedCard} foot={foot ?? (card.under?.length ? `+${card.under.length} suppressed` : undefined)} />
     </CardShell>
   );
 }
@@ -118,7 +135,9 @@ export function MiniTrait({ card, protectedCard, onClick, targetable }: {
       <span className="dm-mini-dot" />
       <span className="dm-mini-pts">{card.compassStar ? '★' : card.points}</span>
       {card.dominant && <MarkIcon mark="dominant" />}
+      {card.cls && <ClassIcon cls={card.cls} size={12} />}
       {protectedCard && <MarkIcon mark="shield" />}
+      {!!card.under?.length && <span className="dm-mini-under" title={`${card.under.length} suppressed card${card.under.length === 1 ? '' : 's'} (+1 each)`}>+{card.under.length}</span>}
     </>
   );
   const preview = <div className="dm-card dm-card-lg dm-card-preview" style={style}><Face card={card} size="lg" protectedCard={!!protectedCard} /></div>;

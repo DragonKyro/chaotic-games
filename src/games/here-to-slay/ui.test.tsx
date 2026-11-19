@@ -42,6 +42,8 @@ describe('Here to Slay UI', () => {
     const configs: HtsConfig[] = [
       { expansions: [], monstersToWin: 3, classesToWin: 6 },
       { expansions: ['warriors-druids', 'berserkers-necromancers', 'here-to-sleigh'], monstersToWin: 3, classesToWin: 7 },
+      { expansions: ['warriors-druids'], monstersToWin: 3 },
+      { expansions: ['berserkers-necromancers'], monstersToWin: 3 },
     ];
     for (const [i, config] of configs.entries()) {
       let s = createInitialState(config, 101 + i, makeSeats(3));
@@ -107,6 +109,142 @@ describe('Here to Slay UI', () => {
     // …and the other player sees no hint of what it was.
     view = render(<GameView state={s} localPlayerId="p2" dispatch={vi.fn()} />);
     expect(view.container.innerHTML).not.toContain('critical-boost');
+    view.unmount();
+  });
+
+  it('renders the Warriors & Druids decisions: a free attack, a look at a hand, Majestelk, a class Challenge, Muscipula Rex', () => {
+    const base = playOut({ applyAction, chooseAIAction }, createInitialState({ expansions: ['warriors-druids'], monstersToWin: 3 }, 9, makeSeats(2)), 10, (x) => x.subPhase !== 'choosingLeaders').state;
+    base.hands.p1 = [];
+    base.hands.p2 = [];
+    base.parties.p1 = [];
+    base.parties.p2 = [];
+    base.partyLeaders.p1 = { id: 8990, kind: 'leader-shadow-claw', name: 'The Shadow Claw', type: 'partyLeader', class: 'thief', text: '', abilityThreshold: null, modifierChoices: null };
+    base.partyLeaders.p2 = { id: 8991, kind: 'leader-cloaked-sage', name: 'The Cloaked Sage', type: 'partyLeader', class: 'wizard', text: '', abilityThreshold: null, modifierChoices: null };
+    const card = (id: number, kind: string, type: HtsCard['type'], cls: HtsCard['class'] = null, abilityThreshold: number | null = null, extra: Partial<HtsCard> = {}): HtsCard =>
+      ({ id, kind, name: kind, type, class: cls, text: '', abilityThreshold, modifierChoices: null, ...extra });
+    const hero = (id: number, kind: string, cls: HtsCard['class'], roll: number, low = false) => ({ card: card(id, kind, 'hero', cls, roll, low ? { rollLow: true } : {}), equippedItem: null, usedThisTurn: false });
+
+    // Big Buckley: pick a monster to attack (it rolls on click).
+    let s = cloneState(base);
+    s.parties.p1 = [hero(9101, 'big-buckley', 'druid', 8, true)];
+    s.monsterRow = s.monsterRow.map((m) => ({ ...m, requiredHeroes: 1, requiredClass: null }));
+    s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: 9101, dice: [2, 2] });
+    let view = render(<GameView state={s} localPlayerId="p1" dispatch={vi.fn()} />);
+    expect(screen.getByText('Attack a monster · free')).toBeDefined();
+    view.unmount();
+
+    // Buck Omens: the hand is shown, only its Heroes can be taken; the owner sees no card names.
+    s = cloneState(base);
+    s.parties.p1 = [hero(9111, 'buck-omens', 'druid', 6, true)];
+    s.hands.p2 = [card(9112, 'secret-hero', 'hero', 'bard', 7), card(9113, 'secret-challenge', 'challenge')];
+    s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: 9111, dice: [1, 1] });
+    s = applyAction(s, { type: 'resolvePrompt', playerId: 'p1', targetPlayerId: 'p2' });
+    view = render(<GameView state={s} localPlayerId="p1" dispatch={vi.fn()} />);
+    expect(screen.getByText('Click one of the highlighted cards.')).toBeDefined();
+    view.unmount();
+
+    // Majestelk: +5 / -5 owed before Pass.
+    s = cloneState(base);
+    s.majestelk = { p1: true };
+    s.parties.p1 = [hero(9121, 'peanut', 'bard', 7)];
+    s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: 9121, dice: [3, 3] });
+    view = render(<GameView state={s} localPlayerId="p1" dispatch={vi.fn()} />);
+    expect(screen.getAllByText('Majestelk')).toHaveLength(2);
+    expect((screen.getByText('Pass') as HTMLButtonElement).disabled).toBe(true);
+    view.unmount();
+
+    // A Druid Challenge offered to a player with a Druid.
+    s = cloneState(base);
+    s.parties.p2 = [hero(9131, 'stagguard', 'druid', 8, true)];
+    s.hands.p2 = [card(9132, 'challenge-druid', 'challenge', null, null, { name: 'Druid Challenge', challengeClass: 'druid', challengeBonus: 3 })];
+    s.hands.p1 = [card(9133, 'peanut', 'hero', 'bard', 7)];
+    s = applyAction(s, { type: 'playHero', playerId: 'p1', cardId: 9133 });
+    view = render(<GameView state={s} localPlayerId="p2" dispatch={vi.fn()} />);
+    expect(screen.getByText('Druid Challenge (+3)')).toBeDefined();
+    view.unmount();
+
+    // Muscipula Rex's free draw on your turn.
+    s = cloneState(base);
+    const rex = s.monsterRow[0]!;
+    s.trophies.p1 = [{ ...rex, card: { ...rex.card, kind: 'monster-muscipula-rex', name: 'Muscipula Rex' } }];
+    view = render(<GameView state={s} localPlayerId="p1" dispatch={vi.fn()} />);
+    expect(screen.getByText('Muscipula Rex draw · free')).toBeDefined();
+    view.unmount();
+  });
+
+  it('renders the Berserkers & Necromancers decisions: a class, a party card, a second roll, Biggest Ring Ever, a gift, an outright slay', () => {
+    const base = playOut({ applyAction, chooseAIAction }, createInitialState({ expansions: ['berserkers-necromancers'], monstersToWin: 3 }, 9, makeSeats(2)), 10, (x) => x.subPhase !== 'choosingLeaders').state;
+    for (const id of ['p1', 'p2']) {
+      base.hands[id] = [];
+      base.parties[id] = [];
+    }
+    base.partyLeaders.p1 = { id: 8990, kind: 'leader-shadow-claw', name: 'The Shadow Claw', type: 'partyLeader', class: 'thief', text: '', abilityThreshold: null, modifierChoices: null };
+    base.partyLeaders.p2 = { id: 8991, kind: 'leader-cloaked-sage', name: 'The Cloaked Sage', type: 'partyLeader', class: 'wizard', text: '', abilityThreshold: null, modifierChoices: null };
+    const card = (id: number, kind: string, type: HtsCard['type'], cls: HtsCard['class'] = null, abilityThreshold: number | null = null): HtsCard =>
+      ({ id, kind, name: kind, type, class: cls, text: '', abilityThreshold, modifierChoices: null });
+    const hero = (id: number, kind: string, cls: HtsCard['class'], roll: number, item: HtsCard | null = null) => ({ card: card(id, kind, 'hero', cls, roll), equippedItem: item, usedThisTurn: false });
+    const show = (s: HtsState, who: PlayerId, text: string | RegExp) => {
+      const view = render(<GameView state={s} localPlayerId={who} dispatch={vi.fn()} />);
+      expect(screen.getAllByText(text).length).toBeGreaterThan(0);
+      view.unmount();
+    };
+
+    // Roaryal Guard: one button per class in the game.
+    let s = cloneState(base);
+    s.parties.p1 = [hero(9201, 'roaryal-guard', 'berserker', 9)];
+    s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: 9201, dice: [5, 5] });
+    show(s, 'p1', 'Necromancer');
+
+    // Grim Pupper: a Hero or an equipped Item.
+    s = cloneState(base);
+    s.parties.p1 = [hero(9211, 'grim-pupper', 'necromancer', 8, card(9212, 'really-big-ring', 'item'))];
+    s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: 9211, dice: [4, 4] });
+    show(s, 'p1', 'Sacrifice a card');
+    show(s, 'p1', 'on grim-pupper');
+
+    // Goblet of Caffeination: roll again?
+    s = cloneState(base);
+    s.parties.p1 = [hero(9221, 'peanut', 'bard', 7, card(9222, 'goblet-of-caffeination', 'item'))];
+    s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: 9221, dice: [1, 1] });
+    show(s, 'p1', /roll again/);
+
+    // Biggest Ring Ever: cards to discard in the Modifier window.
+    s = cloneState(base);
+    s.parties.p1 = [hero(9231, 'peanut', 'bard', 7, card(9232, 'biggest-ring-ever', 'item'))];
+    s.hands.p1 = [card(9233, 'challenge', 'challenge')];
+    s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: 9231, dice: [1, 2] });
+    show(s, 'p1', /Biggest Ring Ever — discard up to 3/);
+
+    // Boston Terror: the chosen player may give a card (and sees their own hand only).
+    s = cloneState(base);
+    s.parties.p1 = [hero(9241, 'boston-terror', 'necromancer', 7)];
+    s.hands.p2 = [card(9242, 'challenge', 'challenge')];
+    s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: 9241, dice: [4, 4] });
+    s = applyAction(s, { type: 'resolvePrompt', playerId: 'p1', targetPlayerId: 'p2' });
+    show(s, 'p2', /you may give/);
+
+    // Vicious Wildcat: slay a monster outright.
+    s = cloneState(base);
+    s.parties.p1 = [hero(9251, 'vicious-wildcat', 'berserker', 12)];
+    s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: 9251, dice: [6, 6] });
+    show(s, 'p1', 'Slay a monster');
+    cleanup();
+  });
+
+  it('never names a card taken from a hand to the rest of the table (Hollow Husk)', () => {
+    let s = playOut({ applyAction, chooseAIAction }, createInitialState({ expansions: ['berserkers-necromancers'], monstersToWin: 3 }, 4, makeSeats(3)), 12, (x) => x.subPhase !== 'choosingLeaders').state;
+    for (const seat of s.seats) {
+      s.hands[seat.id] = [];
+      s.parties[seat.id] = [];
+    }
+    s.parties.p1 = [{ card: { id: 9301, kind: 'hollow-husk', name: 'Hollow Husk', type: 'hero', class: 'necromancer', text: '', abilityThreshold: 6, modifierChoices: null }, equippedItem: null, usedThisTurn: false }];
+    s.hands.p2 = [{ id: 9302, kind: 'enchanted-spell', name: 'Secretly Enchanted Spell', type: 'magic', class: null, text: '', abilityThreshold: null, modifierChoices: null }];
+    s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: 9301, dice: [6, 6] });
+    s = applyAction(s, { type: 'resolvePrompt', playerId: 'p1', targetPlayerId: 'p2' });
+    s = applyAction(s, { type: 'resolvePrompt', playerId: 'p1', targetCardId: 9302 });
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseCardsFromHand', playerId: 'p1' });
+    const view = render(<GameView state={s} localPlayerId="p3" dispatch={vi.fn()} />);
+    expect(view.container.innerHTML).not.toContain('Secretly Enchanted Spell');
     view.unmount();
   });
 

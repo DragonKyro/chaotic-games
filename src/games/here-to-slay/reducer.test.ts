@@ -13,18 +13,22 @@ import {
   HTS_WARRIORS_DRUIDS_DECK_DEFS,
   HTS_WARRIORS_DRUIDS_LEADERS,
   HTS_WARRIORS_DRUIDS_MONSTERS,
+  defToCard,
 } from './cards';
 import { chooseAIAction } from './ai';
 import { hereToSlayModule } from './module';
 import {
   applyAction,
   canAttackMonster,
+  canEquipItemToHero,
   createInitialState as createDrafting,
   getClassesToWin,
   partyClasses,
+  pickablePileCards,
   validHeroTargets,
 } from './reducer';
-import type { HtsCard, HtsConfig, HtsMonster, HtsPartyHero, HtsState } from './types';
+import type { HtsAction, HtsCard, HtsConfig, HtsMonster, HtsPartyHero, HtsState } from './types';
+import { HTS_EXPANSIONS } from './types';
 import { makeSeats, playOut } from '@/core/playout';
 import type { Seat } from '@/core/types';
 
@@ -163,258 +167,6 @@ describe('Here to Slay — mechanics & player decisions', () => {
     expect(s.finalScores).toEqual({ p1: 1, p2: 0 });
   });
 
-  it('implements Warriors & Druids: 7-class win condition, Druid low-roll heroes, Piercing Howl, Noble Shaman, Feral Dragon, and Muscipula', () => {
-    const cfg: HtsConfig = { expansions: ['warriors-druids'], monstersToWin: 3 };
-    expect(getClassesToWin(cfg)).toBe(7);
-
-    const seats = makeSeats(2);
-    let s = createInitialState(cfg, 123, seats);
-    s.hands.p1 = [];
-    s.hands.p2 = [];
-
-    // 1. Druid low-roll Hero (Big Buckley <=6) + AI preferring negative modifier on low-roll
-    const bigBuckley: HtsCard = {
-      id: 701,
-      kind: 'big-buckley',
-      name: 'Big Buckley',
-      type: 'hero',
-      class: 'druid',
-      text: '',
-      abilityThreshold: 6,
-      rollLow: true,
-      modifierChoices: null,
-    };
-    const discardedHero: HtsCard = {
-      id: 702,
-      kind: 'looting-lupo',
-      name: 'Looting Lupo',
-      type: 'hero',
-      class: 'warrior',
-      text: '',
-      abilityThreshold: 5,
-      modifierChoices: null,
-    };
-    const modCard: HtsCard = {
-      id: 703,
-      kind: 'mod-plus-1-minus-3',
-      name: 'Modifier +1/-3',
-      type: 'modifier',
-      class: null,
-      text: '',
-      abilityThreshold: null,
-      modifierChoices: [1, -3],
-    };
-
-    s.partyLeaders.p1 = {
-      id: 1,
-      kind: 'leader-noble-shaman',
-      name: 'The Noble Shaman',
-      type: 'partyLeader',
-      class: 'druid',
-      text: '',
-      abilityThreshold: null,
-      modifierChoices: null,
-    };
-    s.parties.p1 = [{ card: bigBuckley, equippedItem: null, usedThisTurn: false }];
-    s.discard = [discardedHero];
-    s.hands.p1 = [modCard];
-
-    // Roll [4, 4] = 8 for Big Buckley (needs <=6). AI should pick Modifier -3!
-    s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: 701, dice: [4, 4] });
-    expect(s.subPhase).toBe('awaitingModifiers');
-    const aiModAction = chooseAIAction(s, 'p1');
-    expect(aiModAction).toEqual({
-      type: 'playModifier',
-      playerId: 'p1',
-      cardId: 703,
-      chosenValue: -3,
-      protectingHornDelta: -1,
-    });
-    s = applyAction(s, aiModAction!);
-    // The window reopens for everyone after a Modifier (p1 still has an unused
-    // Noble Shaman); 8 - 3 = 5 is already <= 6, so the AI passes.
-    s = playOut({ applyAction, chooseAIAction }, s, 10, (x) => x.subPhase !== 'awaitingModifiers').state;
-    // Total 5 <= 6! Prompt opens to choose from discard!
-    expect(s.subPhase).toBe('awaitingPrompt');
-    expect(s.promptQueue[0]?.kind).toBe('chooseFromPile');
-    s = applyAction(s, { type: 'resolvePrompt', playerId: 'p1', targetCardId: 702 });
-    expect(s.hands.p1.some((c) => c.id === 702)).toBe(true);
-
-    // 2. Muscipula trophy draws a card when a Hero ability roll fails (e.g. rolling 10 on a <=6 Druid roll)
-    s.trophies.p1 = [
-      {
-        card: { id: 710, kind: 'monster-muscipula', name: 'Muscipula', type: 'monster', class: null, text: '', abilityThreshold: null, modifierChoices: null },
-        requiredHeroes: 2,
-        requiredClass: 'druid',
-        requirementText: '1 Druid + 1 Hero',
-        slayThreshold: 8,
-        failThreshold: 4,
-        failPenalty: 'discard2',
-      },
-    ];
-    s.parties.p1[0]!.usedThisTurn = false;
-    s.turnBuffs.nobleShamanUsed = true;
-    const handBeforeFail = s.hands.p1.length;
-    s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: 701, dice: [5, 5] });
-    expect(s.hands.p1.length).toBe(handBeforeFail + 1);
-
-    // 3. The Piercing Howl (+1 per equipped item in Party) & Agile Dagger equipping 2 items
-    s.partyLeaders.p1 = {
-      id: 2,
-      kind: 'leader-piercing-howl',
-      name: 'The Piercing Howl',
-      type: 'partyLeader',
-      class: 'warrior',
-      text: '',
-      abilityThreshold: null,
-      modifierChoices: null,
-    };
-    const agileDagger: HtsCard = {
-      id: 720,
-      kind: 'agile-dagger',
-      name: 'Agile Dagger',
-      type: 'hero',
-      class: 'warrior',
-      text: '',
-      abilityThreshold: 6,
-      maxItems: 2,
-      modifierChoices: null,
-    };
-    const ring1: HtsCard = { id: 721, kind: 'really-big-ring', name: 'Really Big Ring', type: 'item', class: null, text: '', abilityThreshold: null, modifierChoices: null };
-    const bag: HtsCard = { id: 722, kind: 'bottomless-bag', name: 'Bottomless Bag', type: 'item', class: null, text: '', abilityThreshold: null, modifierChoices: null };
-    s.parties.p1 = [{ card: agileDagger, equippedItem: null, usedThisTurn: false }];
-    s.actionPointsRemaining = 3;
-    s.hands.p1 = [ring1, bag];
-    s = applyAction(s, { type: 'equipItem', playerId: 'p1', cardId: 721, targetPlayerId: 'p1', heroCardId: 720 });
-    s = applyAction(s, { type: 'equipItem', playerId: 'p1', cardId: 722, targetPlayerId: 'p1', heroCardId: 720 });
-    expect(s.parties.p1[0]?.equippedItem?.id).toBe(721);
-    expect(s.parties.p1[0]?.extraItems?.length).toBe(1);
-  });
-
-  it('implements Berserkers & Necromancers: Raging Manticore, Gnawing Dread, Bone Collector revive, Clawed Nightmare, Venomous Gemini, and Soul Tether', () => {
-    const cfg: HtsConfig = { expansions: ['berserkers-necromancers'], monstersToWin: 3 };
-    const seats = makeSeats(2);
-    let s = createInitialState(cfg, 456, seats);
-    s.hands.p1 = [];
-    s.hands.p2 = [];
-
-    // 1. The Gnawing Dread spends 2 AP to search discard pile for any card
-    s.partyLeaders.p1 = {
-      id: 1,
-      kind: 'leader-gnawing-dread',
-      name: 'The Gnawing Dread',
-      type: 'partyLeader',
-      class: 'necromancer',
-      text: '',
-      abilityThreshold: null,
-      modifierChoices: null,
-    };
-    const boneCollector: HtsCard = {
-      id: 601,
-      kind: 'bone-collector',
-      name: 'Bone Collector',
-      type: 'hero',
-      class: 'necromancer',
-      text: '',
-      abilityThreshold: 8,
-      modifierChoices: null,
-    };
-    const fallenFighter: HtsCard = {
-      id: 602,
-      kind: 'bad-axe',
-      name: 'Bad Axe',
-      type: 'hero',
-      class: 'fighter',
-      text: '',
-      abilityThreshold: 8,
-      modifierChoices: null,
-    };
-    s.discard = [boneCollector, fallenFighter];
-    s.actionPointsRemaining = 3;
-
-    s = applyAction(s, { type: 'gnawingDreadSearch', playerId: 'p1' });
-    expect(s.actionPointsRemaining).toBe(1);
-    expect(s.subPhase).toBe('awaitingPrompt');
-    s = applyAction(s, { type: 'resolvePrompt', playerId: 'p1', targetCardId: 601 });
-    expect(s.hands.p1.some((c) => c.id === 601)).toBe(true);
-
-    // 2. Bone Collector revives Bad Axe from discard directly into Party, and Clawed Nightmare triggers free roll!
-    s.trophies.p1 = [
-      {
-        card: { id: 610, kind: 'monster-clawed-nightmare', name: 'Clawed Nightmare', type: 'monster', class: null, text: '', abilityThreshold: null, modifierChoices: null },
-        requiredHeroes: 2,
-        requiredClass: 'necromancer',
-        requirementText: '1 Necromancer + 1 Hero',
-        slayThreshold: 8,
-        failThreshold: 4,
-        failPenalty: 'discard2',
-      },
-    ];
-    s = applyAction(s, { type: 'playHero', playerId: 'p1', cardId: 601 });
-    // Roll [5, 5] = 10 for Bone Collector's free entry roll
-    s = applyAction(s, { type: 'resolvePrompt', playerId: 'p1', dice: [5, 5] });
-    // Choose fallenFighter (602) from discard to revive directly into Party
-    s = applyAction(s, { type: 'resolvePrompt', playerId: 'p1', targetCardId: 602 });
-    expect(s.parties.p1.some((h) => h.card.id === 602)).toBe(true);
-    // Clawed Nightmare triggers rollEnteredHero for the revived Hero!
-    expect(s.promptQueue[0]?.kind).toBe('rollEnteredHero');
-    s = applyAction(s, { type: 'resolvePrompt', playerId: 'p1', decline: true });
-
-    // 3. Venomous Gemini (+1 card on destroy) + Soul Tether on victim. The Raging
-    // Manticore draws on a SLAY, not a destroy, so it adds nothing here.
-    s.partyLeaders.p1 = {
-      id: 2,
-      kind: 'leader-raging-manticore',
-      name: 'The Raging Manticore',
-      type: 'partyLeader',
-      class: 'berserker',
-      text: '',
-      abilityThreshold: null,
-      modifierChoices: null,
-    };
-    s.trophies.p1.push({
-      card: { id: 611, kind: 'monster-venomous-gemini', name: 'Venomous Gemini', type: 'monster', class: null, text: '', abilityThreshold: null, modifierChoices: null },
-      requiredHeroes: 2,
-      requiredClass: 'berserker',
-      requirementText: '1 Berserker + 1 Hero',
-      slayThreshold: 8,
-      failThreshold: 4,
-      failPenalty: 'discard2',
-    });
-    const soulTether: HtsCard = {
-      id: 620,
-      kind: 'soul-tether',
-      name: 'Soul Tether',
-      type: 'item',
-      class: null,
-      text: '',
-      abilityThreshold: null,
-      modifierChoices: null,
-    };
-    const victimHero: HtsCard = {
-      id: 621,
-      kind: 'peanut',
-      name: 'Peanut',
-      type: 'hero',
-      class: 'bard',
-      text: '',
-      abilityThreshold: 7,
-      modifierChoices: null,
-    };
-    s.parties.p2 = [{ card: victimHero, equippedItem: soulTether, usedThisTurn: false }];
-    s.actionPointsRemaining = 2;
-    const p1HandBefore = s.hands.p1.length;
-
-    // Use Bad Axe (602) in p1's party to destroy p2's Peanut (621)
-    s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: 602, dice: [5, 5] });
-    s = applyAction(s, { type: 'resolvePrompt', playerId: 'p1', targetCardId: 621 });
-
-    // Venomous Gemini (+1) only.
-    expect(s.hands.p1.length).toBe(p1HandBefore + 1);
-    // Soul Tether returned Peanut (621) to p2's hand instead of the discard pile!
-    expect(s.hands.p2.some((c) => c.id === 621)).toBe(true);
-  });
-
   it('implements Here to Sleigh: Holiday Heroes, Milk and Cookies, and winning with 3 Nice List Gifts', () => {
     const cfg: HtsConfig = { expansions: ['here-to-sleigh'], monstersToWin: 3 };
     const seats = makeSeats(2);
@@ -508,7 +260,7 @@ function cleanTwoPlayer(seed = 7): HtsState {
 }
 
 function monsterFrom(kind: string): HtsMonster {
-  const def = HTS_MONSTER_DEFS.find((m) => m.kind === kind)!;
+  const def = [...HTS_MONSTER_DEFS, ...HTS_WARRIORS_DRUIDS_MONSTERS, ...HTS_BERSERKERS_NECROMANCERS_MONSTERS].find((m) => m.kind === kind)!;
   return {
     card: mk(def.kind, 'monster'),
     requiredHeroes: def.requiredHeroes,
@@ -822,5 +574,824 @@ describe('Here to Slay — rules audit', () => {
     s = applyAction(s, { type: 'useHeroAbility', playerId: 'p1', heroCardId: fuzzy.id, dice: [6, 6] });
     expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseCardsFromHand', effectTag: 'playFreeHero', optional: false });
     expect(() => applyAction(s, { type: 'resolvePrompt', playerId: 'p1', decline: true })).toThrow();
+  });
+});
+
+// ============================================================================
+// Warriors & Druids — rebuilt from the official inventory and card pages.
+// ============================================================================
+
+const WD_CFG: HtsConfig = { expansions: ['warriors-druids'], monstersToWin: 3 };
+
+/** A W&D card by kind, as dealt. */
+function wd(kind: string): HtsCard {
+  const def = HTS_WARRIORS_DRUIDS_DECK_DEFS.find((d) => d.kind === kind);
+  if (!def) throw new Error(`no W&D card ${kind}`);
+  return defToCard(def, nextTestId++);
+}
+
+/** Past the draft, empty hands and parties; leaders with no roll bonuses. */
+function cleanGame(cfg: HtsConfig = WD_CFG, players = 2, seed = 7): HtsState {
+  const s = createInitialState(cfg, seed, makeSeats(players));
+  const neutral = ['leader-shadow-claw', 'leader-cloaked-sage', 'leader-divine-arrow', 'leader-charismatic-song', 'leader-protecting-horn', 'leader-fist-of-reason'];
+  const classes: HtsCard['class'][] = ['thief', 'wizard', 'ranger', 'bard', 'guardian', 'fighter'];
+  s.seats.forEach((seat, i) => {
+    s.hands[seat.id] = [];
+    s.parties[seat.id] = [];
+    s.partyLeaders[seat.id] = leaderCard(neutral[i]!, classes[i]!);
+  });
+  return s;
+}
+
+const roll = (s: HtsState, hero: HtsCard, dice: [number, number], playerId = 'p1') => applyAction(s, { type: 'useHeroAbility', playerId, heroCardId: hero.id, dice });
+const answer = (s: HtsState, a: Omit<Extract<HtsAction, { type: 'resolvePrompt' }>, 'type' | 'playerId'>, playerId = 'p1') => applyAction(s, { type: 'resolvePrompt', playerId, ...a });
+
+describe('Here to Slay — Warriors & Druids (official card list)', () => {
+  it('matches the official inventory and card pages: 2 Party Leaders, 2 Monsters, 31 main-deck cards', () => {
+    expect(HTS_WARRIORS_DRUIDS_LEADERS.map((d) => d.name).sort()).toEqual(['The Noble Shaman', 'The Piercing Howl']);
+    const defs = HTS_WARRIORS_DRUIDS_DECK_DEFS;
+    expect(defs.reduce((n, d) => n + d.count, 0)).toBe(31);
+    expect(defs.every((d) => d.count === 1 && d.expansion === 'warriors-druids')).toBe(true);
+    const ofType = (t: HtsCard['type']) => defs.filter((d) => d.type === t).length;
+    expect([ofType('hero'), ofType('item'), ofType('cursedItem'), ofType('magic'), ofType('modifier'), ofType('challenge')]).toEqual([16, 5, 2, 2, 4, 2]);
+    // Roll requirements as printed (Druids: that number or lower).
+    const rolls = Object.fromEntries(defs.filter((d) => d.type === 'hero').map((d) => [d.name, `${d.abilityThreshold}${d.rollLow ? '-' : '+'}`]));
+    expect(rolls).toEqual({
+      'Big Buckley': '8-', 'Buck Omens': '6-', 'Doe Fallow': '7-', 'Glowing Antler': '7-', Maegisty: '7-', 'Magus Moose': '5-', Majestelk: '7-', Stagguard: '8-',
+      'Agile Dagger': '7+', 'Blinding Blade': '8+', 'Critical Fang': '6+', 'Hardened Hunter': '9+', 'Looting Lupo': '5+', 'Silent Shield': '6+', 'Tenacious Timber': '8+', 'Wolfgang Pack': '5+',
+    });
+    expect(defs.filter((d) => d.maxItems === 2).map((d) => d.name).sort()).toEqual(['Agile Dagger', 'Critical Fang']);
+    const monster = (kind: string) => {
+      const m = HTS_WARRIORS_DRUIDS_MONSTERS.find((x) => x.kind === kind)!;
+      return [m.requiredHeroes, m.requiredClass, m.slayThreshold, m.failThreshold, m.failPenalty];
+    };
+    expect(monster('monster-feral-dragon')).toEqual([2, null, 9, 6, 'sacrificeHero']);
+    expect(monster('monster-muscipula-rex')).toEqual([3, null, 10, 7, 'sacrificeHero']);
+    // The invented cards are gone.
+    for (const name of ['Wild Buck', 'Mightyvis', 'Valiant Valor', 'Dose of Dette', 'Wishing Wing', 'Muscipula']) {
+      expect(defs.some((d) => d.name === name) || HTS_WARRIORS_DRUIDS_MONSTERS.some((m) => m.name === name)).toBe(false);
+    }
+    expect(HTS_EXPANSIONS.find((e) => e.id === 'warriors-druids')?.verified).toBe(true);
+  });
+
+  it('needs seven classes to win; Druids succeed on a low roll; two-Item Warriors still take one Mask', () => {
+    expect(getClassesToWin(WD_CFG)).toBe(7);
+    expect(getClassesToWin(hereToSlayModule.defaultConfig(makeSeats(2)))).toBe(6);
+    let s = cleanGame();
+    s.partyLeaders.p1 = leaderCard('leader-noble-shaman', 'druid');
+    s.parties.p1 = [heroCard('a', 'fighter'), heroCard('b', 'bard'), heroCard('c', 'guardian'), heroCard('d', 'ranger'), heroCard('e', 'thief')].map((c) => inParty(c));
+    expect(partyClasses(s, 'p1').size).toBe(6);
+    s = applyAction(s, { type: 'endTurn', playerId: 'p1' });
+    expect(s.phase).toBe('playing');
+    s.parties.p2 = [];
+    s = applyAction(s, { type: 'endTurn', playerId: 'p2' });
+    s.parties.p1.push(inParty(heroCard('f', 'wizard')));
+    s = applyAction(s, { type: 'endTurn', playerId: 'p1' });
+    expect(s.winnerId).toBe('p1');
+
+    // Stagguard (8 or lower): 8 succeeds, 9 fails.
+    s = cleanGame();
+    const stag = wd('stagguard');
+    s.parties.p1 = [inParty(stag)];
+    expect(roll(s, stag, [4, 4]).lastRoll).toMatchObject({ actorTotal: 8, outcome: 'success' });
+    expect(roll(s, stag, [4, 4]).turnBuffs.noOpponentModifiers).toBe(true);
+    expect(roll(s, stag, [5, 4]).lastRoll).toMatchObject({ actorTotal: 9, outcome: 'failure' });
+
+    const dagger = inParty(wd('agile-dagger'));
+    expect(canEquipItemToHero(dagger, mk('really-big-ring', 'item'))).toBe(true);
+    dagger.equippedItem = mk('druid-mask', 'item', 'druid');
+    expect(canEquipItemToHero(dagger, mk('really-big-ring', 'item'))).toBe(true);
+    expect(canEquipItemToHero(dagger, mk('warrior-mask', 'item', 'warrior'))).toBe(false);
+    dagger.extraItems = [mk('really-big-ring', 'item')];
+    expect(canEquipItemToHero(dagger, mk('decoy-doll', 'item'))).toBe(false);
+    const plain = inParty(wd('blinding-blade'), mk('really-big-ring', 'item'));
+    expect(canEquipItemToHero(plain, mk('decoy-doll', 'item'))).toBe(false);
+  });
+
+  it('lets a class Challenge be played only with that class in your Party, at +3', () => {
+    const play = (s: HtsState) => {
+      const hero = heroCard('peanut', 'bard');
+      s.hands.p1 = [hero];
+      return applyAction(s, { type: 'playHero', playerId: 'p1', cardId: hero.id });
+    };
+    let s = cleanGame();
+    const ch = wd('challenge-druid');
+    s.hands.p2 = [ch];
+    expect(play(s).subPhase).not.toBe('awaitingChallenge');
+    s = cleanGame();
+    s.hands.p2 = [ch];
+    s.parties.p2 = [inParty(heroCard('x', 'bard'), mk('druid-mask', 'item', 'druid'))];
+    s = play(s);
+    expect(s.subPhase).toBe('awaitingChallenge');
+    s = applyAction(s, { type: 'playChallenge', playerId: 'p2', cardId: ch.id, actorDice: [4, 4], challengerDice: [3, 2] });
+    expect(s.lastRoll).toMatchObject({ actorTotal: 8, challengerTotal: 8, outcome: 'challengeWon' });
+  });
+
+  it('Big Buckley attacks a Monster for free (requirement still applies); Buck Omens brings a Hero from a hand into the Party', () => {
+    let s = cleanGame();
+    const bb = wd('big-buckley');
+    s.parties.p1 = [inParty(bb), inParty(heroCard('peanut', 'bard'))];
+    const fd = monsterFrom('monster-feral-dragon');
+    s.monsterRow = [fd];
+    s.actionPointsRemaining = 1;
+    s = roll(s, bb, [2, 3]);
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseMonster', mode: 'attack' });
+    s = answer(s, { targetCardId: fd.card.id, dice: [5, 5] });
+    expect(s.trophies.p1.map((m) => m.card.kind)).toEqual(['monster-feral-dragon']);
+    expect(s.actionPointsRemaining).toBe(0);
+    // With only Big Buckley there is no Monster it may attack: nothing to ask.
+    s = cleanGame();
+    s.parties.p1 = [inParty(bb)];
+    s.monsterRow = [monsterFrom('monster-feral-dragon')];
+    expect(roll(s, bb, [2, 3]).subPhase).toBe('awaitingAction');
+
+    s = cleanGame();
+    const bo = wd('buck-omens');
+    const theirs = heroCard('bad-axe', 'fighter', 8);
+    const other = mk('challenge', 'challenge');
+    s.parties.p1 = [inParty(bo)];
+    s.hands.p2 = [theirs, other];
+    s = roll(s, bo, [1, 2]);
+    s = answer(s, { targetPlayerId: 'p2' });
+    const look = s.promptQueue[0]!;
+    if (look.kind !== 'chooseFromPile') throw new Error('expected a look at the hand');
+    expect(look.cards).toHaveLength(2);
+    expect(pickablePileCards(look).map((c) => c.id)).toEqual([theirs.id]);
+    expect(() => answer(s, { targetCardId: other.id })).toThrow();
+    s = answer(s, { targetCardId: theirs.id });
+    expect(s.parties.p1.map((h) => h.card.id)).toEqual([bo.id, theirs.id]);
+    expect(s.subPhase).toBe('awaitingAction'); // not played: no Challenge, no free roll
+  });
+
+  it('Doe Fallow sacrifices then draws to 7; Majestelk sacrifices and owes +5 / -5 on each roll until the next turn', () => {
+    let s = cleanGame();
+    const doe = wd('doe-fallow');
+    const spare = heroCard('peanut', 'bard');
+    s.parties.p1 = [inParty(doe), inParty(spare)];
+    s.hands.p1 = [mk('a', 'challenge'), mk('b', 'challenge')];
+    s = roll(s, doe, [3, 3]);
+    s = answer(s, { targetCardId: spare.id });
+    expect(s.hands.p1).toHaveLength(7);
+    expect(s.discard.some((c) => c.id === spare.id)).toBe(true);
+
+    s = cleanGame();
+    const elk = wd('majestelk');
+    const stag = wd('stagguard');
+    s.parties.p1 = [inParty(elk), inParty(heroCard('peanut', 'bard')), inParty(stag)];
+    s = roll(s, elk, [3, 3]);
+    s = answer(s, { targetCardId: s.parties.p1[1]!.card.id });
+    expect(s.majestelk?.p1).toBe(true);
+    s = roll(s, stag, [5, 4]);
+    expect(s.subPhase).toBe('awaitingModifiers');
+    expect(s.activePlayerId).toBe('p1');
+    expect(() => applyAction(s, { type: 'declineModifier', playerId: 'p1' })).toThrow(/Majestelk/);
+    expect(chooseAIAction(s, 'p1')).toEqual({ type: 'majestelkSign', playerId: 'p1', sign: -1, targetSide: 'actor' });
+    s = applyAction(s, { type: 'majestelkSign', playerId: 'p1', sign: -1 });
+    expect(s.lastRoll).toMatchObject({ actorTotal: 4, outcome: 'success' });
+    s = applyAction(s, { type: 'endTurn', playerId: 'p1' });
+    expect(s.majestelk?.p1).toBe(true); // until *your* next turn
+    s = applyAction(s, { type: 'endTurn', playerId: 'p2' });
+    expect(s.majestelk?.p1).toBe(false);
+  });
+
+  it('Glowing Antler plays its two Magic cards one after the other, even when the first is Challenged', () => {
+    let s = cleanGame();
+    const antler = wd('glowing-antler');
+    const spell1 = mk('enchanted-spell', 'magic');
+    const spell2 = mk('enchanted-spell', 'magic');
+    s.parties.p1 = [inParty(antler)];
+    s.hands.p1 = [spell1, spell2];
+    s.hands.p2 = [mk('challenge', 'challenge')];
+    s = roll(s, antler, [2, 2]);
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseCardsFromHand', effectTag: 'playFreeMagicsUpTo2', sequence: 1 });
+    s = answer(s, { cardIds: [spell1.id] });
+    expect(s.subPhase).toBe('awaitingChallenge');
+    s = applyAction(s, { type: 'declineChallenge', playerId: 'p2' });
+    expect(s.turnBuffs.rollBonus).toBe(2);
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseCardsFromHand', sequence: 2 });
+    s = answer(s, { cardIds: [spell2.id] });
+    s = applyAction(s, { type: 'declineChallenge', playerId: 'p2' });
+    expect(s.turnBuffs.rollBonus).toBe(4);
+    expect(s.subPhase).toBe('awaitingAction');
+  });
+
+  it('Maegisty returns a Hero about to be destroyed to its hand (with its Item) until its owner\'s next turn', () => {
+    let s = cleanGame();
+    const maeg = wd('maegisty');
+    const ringed = heroCard('peanut', 'bard');
+    const ring = mk('really-big-ring', 'item');
+    s.parties.p1 = [inParty(maeg), inParty(ringed, ring)];
+    s = roll(s, maeg, [3, 3]);
+    s = applyAction(s, { type: 'endTurn', playerId: 'p1' });
+    const axe = heroCard('bad-axe', 'fighter', 8);
+    s.parties.p2 = [inParty(axe)];
+    s = roll(s, axe, [5, 5], 'p2');
+    s = answer(s, { targetCardId: ringed.id }, 'p2');
+    expect(s.hands.p1.map((c) => c.id).sort()).toEqual([ringed.id, ring.id].sort());
+    expect(s.discard.some((c) => c.id === ringed.id)).toBe(false);
+    s = applyAction(s, { type: 'endTurn', playerId: 'p2' });
+    expect(s.returnToHandShield?.p1).toBe(false);
+  });
+
+  it('Magus Moose plays the Hero it finds, and that play can be Challenged', () => {
+    let s = cleanGame();
+    const moose = wd('magus-moose');
+    const fallen = heroCard('bad-axe', 'fighter', 8);
+    s.parties.p1 = [inParty(moose)];
+    s.discard = [fallen];
+    s.hands.p2 = [mk('challenge', 'challenge')];
+    s = roll(s, moose, [2, 2]);
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseFromPile', then: 'playImmediately' });
+    s = answer(s, { targetCardId: fallen.id });
+    expect(s.subPhase).toBe('awaitingChallenge');
+    s = applyAction(s, { type: 'declineChallenge', playerId: 'p2' });
+    expect(s.parties.p1.some((h) => h.card.id === fallen.id)).toBe(true);
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'rollEnteredHero' });
+  });
+
+  it('Warriors: Blinding Blade may pick yourself, Critical Fang, Hardened Hunter, Looting Lupo, Wolfgang Pack, Tenacious Timber', () => {
+    let s = cleanGame();
+    const blade = wd('blinding-blade');
+    const curse = mk('curse-of-the-snakes-eyes', 'cursedItem');
+    s.parties.p1 = [inParty(blade, curse)];
+    s = roll(s, blade, [6, 6]); // 12 - 2 for the curse it wears
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'choosePlayer', includeSelf: true });
+    s = answer(s, { targetPlayerId: 'p1' });
+    expect(s.hands.p1.map((c) => c.id)).toEqual([curse.id]);
+
+    s = cleanGame();
+    const fang = wd('critical-fang');
+    const tortoise = monsterFrom('monster-terratuga'); // 1 Hero, slay 11+
+    s.parties.p1 = [inParty(fang)];
+    s.monsterRow = [tortoise];
+    s = roll(s, fang, [3, 3]);
+    s = applyAction(s, { type: 'attackMonster', playerId: 'p1', monsterCardId: tortoise.card.id, dice: [3, 4] });
+    expect(s.lastRoll).toMatchObject({ actorTotal: 11, outcome: 'slain' });
+
+    s = cleanGame();
+    const hunter = wd('hardened-hunter');
+    s.parties.p1 = [inParty(hunter)];
+    s.trophies.p2 = [monsterFrom('monster-orthus'), monsterFrom('monster-dracos')];
+    expect(roll(s, hunter, [5, 5]).hands.p1).toHaveLength(2);
+
+    s = cleanGame();
+    const lupo = wd('looting-lupo');
+    s.parties.p1 = [inParty(lupo, mk('really-big-ring', 'item')), inParty(heroCard('x', 'bard'), mk('decoy-doll', 'item'))];
+    expect(roll(s, lupo, [3, 3]).hands.p1).toHaveLength(2);
+    s.parties.p1 = [inParty(lupo)];
+    expect(roll(s, lupo, [3, 3]).hands.p1).toHaveLength(0);
+
+    s = cleanGame();
+    const wolf = wd('wolfgang-pack');
+    s.parties.p1 = [inParty(wolf), inParty(heroCard('x', 'bard')), inParty(heroCard('y', 'thief'))];
+    expect(roll(s, wolf, [3, 3]).turnBuffs.rollBonus).toBe(2);
+
+    s = cleanGame();
+    const timber = wd('tenacious-timber');
+    const a = heroCard('a', 'bard');
+    const b = heroCard('b', 'thief');
+    s.parties.p1 = [inParty(timber)];
+    s.parties.p2 = [inParty(a), inParty(b)];
+    s.trophies.p1 = [monsterFrom('monster-orthus'), monsterFrom('monster-dracos')];
+    s = roll(s, timber, [4, 4]);
+    s = answer(s, { targetCardId: a.id });
+    s = answer(s, { targetCardId: b.id });
+    expect(s.parties.p1).toHaveLength(3);
+    expect(s.parties.p2).toHaveLength(0);
+  });
+
+  it('Silent Shield offers a discard-pile Hero each time you sacrifice or destroy a Hero this turn', () => {
+    let s = cleanGame();
+    const shield = wd('silent-shield');
+    const axe = heroCard('bad-axe', 'fighter', 8);
+    const victim = heroCard('peanut', 'bard');
+    const old = heroCard('old', 'wizard');
+    s.parties.p1 = [inParty(shield), inParty(axe)];
+    s.parties.p2 = [inParty(victim)];
+    s.discard = [old];
+    s = roll(s, shield, [3, 3]);
+    s = roll(s, axe, [5, 5]);
+    s = answer(s, { targetCardId: victim.id });
+    const search = s.promptQueue[0]!;
+    expect(search).toMatchObject({ kind: 'chooseFromPile', optional: true, source: 'discard' });
+    if (search.kind !== 'chooseFromPile') throw new Error('expected a search');
+    expect(search.cards.map((c) => c.id).sort()).toEqual([old.id, victim.id].sort());
+    s = answer(s, { targetCardId: old.id });
+    expect(s.hands.p1.map((c) => c.id)).toEqual([old.id]);
+  });
+
+  it('Items: Bottomless Bag rolls twice a turn, Even Bigger Ring +4, Temporal Hourglass refunds a failed roll', () => {
+    let s = cleanGame();
+    const peanut = heroCard('peanut', 'bard', 7);
+    s.parties.p1 = [inParty(peanut, mk('bottomless-bag', 'item'))];
+    s = roll(s, peanut, [6, 6]);
+    s = roll(s, peanut, [6, 6]);
+    expect(s.actionPointsRemaining).toBe(1);
+    expect(s.hands.p1).toHaveLength(4);
+    s.parties.p1 = [inParty(peanut)];
+    s.parties.p1[0]!.usedThisTurn = true;
+    expect(() => roll(s, peanut, [6, 6])).toThrow(/already used/);
+
+    s = cleanGame();
+    s.parties.p1 = [inParty(peanut, mk('even-bigger-ring', 'item'))];
+    expect(roll(s, peanut, [1, 2]).lastRoll).toMatchObject({ actorTotal: 7, outcome: 'success' });
+
+    s = cleanGame();
+    s.parties.p1 = [inParty(peanut, mk('temporal-hourglass', 'item'))];
+    expect(roll(s, peanut, [1, 1]).actionPointsRemaining).toBe(3);
+  });
+
+  it('Cursed Items: Cursed Glove follows a stolen partymate; Soul Tether goes down with a fallen one', () => {
+    let s = cleanGame();
+    const napper = heroCard('kit-napper', 'thief', 9);
+    const a = heroCard('a', 'bard');
+    const gloved = heroCard('b', 'wizard');
+    s.parties.p1 = [inParty(napper)];
+    s.parties.p2 = [inParty(a), inParty(gloved, wd('cursed-glove'))];
+    s = roll(s, napper, [5, 5]);
+    s = answer(s, { targetCardId: a.id });
+    expect(s.parties.p1.map((h) => h.card.id)).toEqual([napper.id, a.id, gloved.id]);
+    expect(s.parties.p2).toHaveLength(0);
+
+    s = cleanGame();
+    const axe = heroCard('bad-axe', 'fighter', 8);
+    const tether = wd('soul-tether');
+    const tethered = heroCard('c', 'ranger');
+    s.parties.p1 = [inParty(axe)];
+    s.parties.p2 = [inParty(a), inParty(tethered, tether)];
+    s = roll(s, axe, [5, 5]);
+    s = answer(s, { targetCardId: a.id });
+    expect(s.parties.p2).toHaveLength(0);
+    expect(s.discard.map((c) => c.id)).toEqual(expect.arrayContaining([a.id, tethered.id, tether.id]));
+  });
+
+  it('Magic: Beast Call turns the Monsters over and adds an action point; Rapid Refresh draws 4', () => {
+    let s = cleanGame();
+    const call = wd('beast-call');
+    const before = s.monsterRow.map((m) => m.card.id);
+    const next3 = s.monsterDeck.slice(0, 3).map((m) => m.card.id);
+    s.hands.p1 = [call];
+    s = applyAction(s, { type: 'playMagic', playerId: 'p1', cardId: call.id });
+    expect(s.monsterRow.map((m) => m.card.id)).toEqual(next3);
+    expect(s.monsterDeck.slice(-3).map((m) => m.card.id)).toEqual(before);
+    expect(s.actionPointsRemaining).toBe(3);
+
+    s = cleanGame();
+    const refresh = wd('rapid-refresh');
+    s.hands.p1 = [refresh, mk('a', 'challenge'), mk('b', 'challenge')];
+    s = applyAction(s, { type: 'playMagic', playerId: 'p1', cardId: refresh.id });
+    expect(s.hands.p1).toHaveLength(4);
+  });
+
+  it('Modifiers: +1/-1 draws 2, +2/-1 draws 1, +4 draws above 12, -4 searches the discard below 2', () => {
+    const withMod = (mod: HtsCard, value: number, dice: [number, number]) => {
+      let s = cleanGame();
+      const peanut = heroCard('peanut', 'bard', 7);
+      s.parties.p1 = [inParty(peanut)];
+      s.hands.p2 = [mod];
+      s.discard = [mk('lost', 'challenge')];
+      s = roll(s, peanut, dice);
+      return applyAction(s, { type: 'playModifier', playerId: 'p2', cardId: mod.id, chosenValue: value });
+    };
+    expect(withMod(wd('mod-wd-plus-1-minus-1'), -1, [3, 4]).hands.p2).toHaveLength(2);
+    expect(withMod(wd('mod-wd-plus-2-minus-1'), 2, [3, 4]).hands.p2).toHaveLength(1);
+    expect(withMod(wd('mod-wd-plus-4'), 4, [6, 4]).hands.p2).toHaveLength(1); // 14 > 12
+    expect(withMod(wd('mod-wd-plus-4'), 4, [3, 4]).hands.p2).toHaveLength(0); // 11
+    const low = withMod(wd('mod-wd-minus-4'), -4, [2, 3]); // 1 < 2
+    expect(low.promptQueue[0]).toMatchObject({ kind: 'chooseFromPile', playerId: 'p2', source: 'discard' });
+    expect(withMod(wd('mod-wd-minus-4'), -4, [3, 3]).subPhase).toBe('awaitingAction'); // 2: not below
+  });
+
+  it('Monsters: Feral Dragon draws on any sacrifice; Muscipula Rex gives one free draw a turn', () => {
+    let s = cleanGame();
+    s.trophies.p2 = [monsterFrom('monster-feral-dragon')];
+    const doe = wd('doe-fallow');
+    s.parties.p1 = [inParty(doe)];
+    s.hands.p1 = Array.from({ length: 7 }, (_, i) => mk(`c${i}`, 'challenge'));
+    s = roll(s, doe, [3, 3]);
+    s = answer(s, { targetCardId: doe.id });
+    expect(s.hands.p2).toHaveLength(1);
+
+    s = cleanGame();
+    s.trophies.p1 = [monsterFrom('monster-muscipula-rex')];
+    s = applyAction(s, { type: 'muscipulaDraw', playerId: 'p1' });
+    expect(s.hands.p1).toHaveLength(1);
+    expect(s.actionPointsRemaining).toBe(3);
+    expect(() => applyAction(s, { type: 'muscipulaDraw', playerId: 'p1' })).toThrow();
+  });
+
+  it('plays AI-vs-AI Warriors & Druids games to the end at every player count', () => {
+    for (const players of [2, 3, 4, 5, 6]) {
+      for (const seed of [3, 11]) {
+        const { state, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState(WD_CFG, seed * 13 + players, makeSeats(players)), 4000);
+        expect(stuck).toBe(false);
+        expect(state.phase).toBe('gameOver');
+      }
+    }
+  });
+});
+
+// ============================================================================
+// Berserkers & Necromancers — rebuilt from the official inventory and card pages.
+// ============================================================================
+
+const BN_CFG: HtsConfig = { expansions: ['berserkers-necromancers'], monstersToWin: 3 };
+
+function bn(kind: string): HtsCard {
+  const def = HTS_BERSERKERS_NECROMANCERS_DECK_DEFS.find((d) => d.kind === kind);
+  if (!def) throw new Error(`no B&N card ${kind}`);
+  return defToCard(def, nextTestId++);
+}
+
+describe('Here to Slay — Berserkers & Necromancers (official card list)', () => {
+  it('matches the official inventory and card pages: 2 Party Leaders, 2 Monsters, 31 main-deck cards', () => {
+    expect(HTS_BERSERKERS_NECROMANCERS_LEADERS.map((d) => d.name).sort()).toEqual(['The Gnawing Dread', 'The Raging Manticore']);
+    const defs = HTS_BERSERKERS_NECROMANCERS_DECK_DEFS;
+    expect(defs.reduce((n, d) => n + d.count, 0)).toBe(31);
+    const ofType = (t: HtsCard['type']) => defs.filter((d) => d.type === t).reduce((n, d) => n + d.count, 0);
+    expect([ofType('hero'), ofType('item'), ofType('cursedItem'), ofType('magic'), ofType('modifier'), ofType('challenge')]).toEqual([16, 5, 2, 4, 2, 2]);
+    expect(defs.filter((d) => d.count === 2).map((d) => d.name).sort()).toEqual(['Lightning Labrys', 'Mass Sacrifice']);
+    const rolls = Object.fromEntries(defs.filter((d) => d.type === 'hero').map((d) => [d.name, d.abilityThreshold]));
+    expect(rolls).toEqual({
+      'Bark Hexer': 7, 'Beholden Retriever': 5, 'Bone Collector': 7, 'Boston Terror': 7, 'Grim Pupper': 8, 'Hollow Husk': 6, 'Perfect Vessel': 4, 'Shadow Saint': 5,
+      Annihilator: 6, 'Brawling Spirit': 9, 'Gruesome Gladiator': 10, Meowntain: 6, 'Rabid Beast': 6, 'Roaryal Guard': 9, 'Unbridled Fury': 8, 'Vicious Wildcat': 12,
+    });
+    expect(defs.some((d) => d.rollLow)).toBe(false);
+    expect(defs.filter((d) => d.maxItems === 2).map((d) => d.name).sort()).toEqual(['Meowntain', 'Vicious Wildcat']);
+    const monster = (kind: string) => {
+      const m = HTS_BERSERKERS_NECROMANCERS_MONSTERS.find((x) => x.kind === kind)!;
+      return [m.requiredHeroes, m.requiredClass, m.slayThreshold, m.failThreshold, m.failPenalty];
+    };
+    expect(monster('monster-doombringer')).toEqual([2, 'necromancer', 8, 4, 'discardHand']);
+    expect(monster('monster-reptilian-ripper')).toEqual([2, 'berserker', 7, 6, 'sacrificeTwoHeroes']);
+    for (const name of ['Soul Tether', 'Bloodstone', 'Clawed Nightmare', 'Venomous Gemini']) {
+      expect(defs.some((d) => d.name === name) || HTS_BERSERKERS_NECROMANCERS_MONSTERS.some((m) => m.name === name)).toBe(false);
+    }
+    expect(HTS_EXPANSIONS.find((e) => e.id === 'berserkers-necromancers')?.verified).toBe(true);
+    expect(getClassesToWin(BN_CFG)).toBe(7);
+    expect(getClassesToWin({ expansions: ['warriors-druids', 'berserkers-necromancers'], monstersToWin: 3 })).toBe(7);
+  });
+
+  it('Necromancer costs come first: unpaid, the rest of the effect does not happen', () => {
+    // Bark Hexer: DISCARD a card, then each other player DISCARDS 2.
+    let s = cleanGame(BN_CFG);
+    const hexer = bn('bark-hexer');
+    s.parties.p1 = [inParty(hexer)];
+    s.hands.p2 = [mk('a', 'challenge'), mk('b', 'challenge'), mk('c', 'challenge')];
+    expect(roll(s, hexer, [4, 4]).hands.p2).toHaveLength(3); // no card to pay with
+    s.hands.p1 = [mk('cost', 'challenge')];
+    s = roll(s, hexer, [4, 4]);
+    s = answer(s, { cardIds: [s.hands.p1[0]!.id] });
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseCardsFromHand', playerId: 'p2', count: 2 });
+
+    // Shadow Saint: DISCARD a Modifier card, then no other Modifiers this turn.
+    s = cleanGame(BN_CFG);
+    const saint = bn('shadow-saint');
+    s.parties.p1 = [inParty(saint)];
+    s.hands.p1 = [mk('not-a-modifier', 'challenge')];
+    expect(roll(s, saint, [3, 3]).turnBuffs.noOpponentModifiers).toBe(false);
+    const mod = mk('mod-plus-4', 'modifier', null, { modifierChoices: [4] });
+    s.hands.p1.push(mod);
+    s = roll(s, saint, [3, 3]);
+    s = applyAction(s, { type: 'declineModifier', playerId: 'p1' }); // p1 could have modified the roll
+    expect(() => answer(s, { cardIds: [s.hands.p1[0]!.id] })).toThrow();
+    s = answer(s, { cardIds: [mod.id] });
+    expect(s.turnBuffs.noOpponentModifiers).toBe(true);
+
+    // Bone Collector: SACRIFICE an Item card, then fetch a Hero and play it.
+    s = cleanGame(BN_CFG);
+    const bones = bn('bone-collector');
+    const fallen = heroCard('bad-axe', 'fighter', 8);
+    s.parties.p1 = [inParty(bones)];
+    s.discard = [fallen];
+    expect(roll(s, bones, [4, 4]).subPhase).toBe('awaitingAction'); // no Item: nothing
+    const ring = mk('really-big-ring', 'item');
+    s.parties.p1 = [inParty(bones, ring)];
+    s = roll(s, bones, [3, 3]); // 6 + 2 for the ring
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'choosePartyCard', filter: 'item' });
+    s = answer(s, { targetCardId: ring.id });
+    s = answer(s, { targetCardId: fallen.id });
+    expect(s.parties.p1.map((h) => h.card.id)).toEqual([bones.id, fallen.id]);
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'rollEnteredHero' });
+
+    // Beholden Retriever: SACRIFICE a Hero, then fetch a Hero or Item and play it (an Item asks where).
+    s = cleanGame(BN_CFG);
+    const retriever = bn('beholden-retriever');
+    const spare = heroCard('peanut', 'bard');
+    const doll = mk('decoy-doll', 'item');
+    s.parties.p1 = [inParty(retriever), inParty(spare)];
+    s.discard = [doll];
+    s = roll(s, retriever, [3, 3]);
+    s = answer(s, { targetCardId: spare.id });
+    s = answer(s, { targetCardId: doll.id });
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseHeroTarget', mode: 'equipItem', itemCardId: doll.id });
+    s = answer(s, { targetCardId: retriever.id });
+    expect(s.parties.p1[0]!.equippedItem?.id).toBe(doll.id);
+
+    // Perfect Vessel: SACRIFICE this card, then STEAL a Hero.
+    s = cleanGame(BN_CFG);
+    const vessel = bn('perfect-vessel');
+    const theirs = heroCard('kit-napper', 'thief', 9);
+    s.parties.p1 = [inParty(vessel)];
+    s.parties.p2 = [inParty(theirs)];
+    s = roll(s, vessel, [2, 2]);
+    s = answer(s, { targetCardId: theirs.id });
+    expect(s.parties.p1.map((h) => h.card.id)).toEqual([theirs.id]);
+    expect(s.discard.some((c) => c.id === vessel.id)).toBe(true);
+  });
+
+  it('Boston Terror: the chosen player may give a card; if not, you may take 2 from the discard pile', () => {
+    const start = () => {
+      const s = cleanGame(BN_CFG);
+      const terror = bn('boston-terror');
+      s.parties.p1 = [inParty(terror)];
+      s.discard = [mk('d1', 'challenge'), mk('d2', 'challenge'), mk('d3', 'challenge')];
+      return { s: roll(s, terror, [4, 4]), terror };
+    };
+    let { s } = start();
+    const gift = mk('gift', 'challenge');
+    s.hands.p2 = [gift];
+    s = answer(s, { targetPlayerId: 'p2' });
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseCardsFromHand', playerId: 'p2', optional: true, effectTag: 'bostonTerrorGive' });
+    const given = answer(s, { cardIds: [gift.id] }, 'p2');
+    expect(given.hands.p1.map((c) => c.id)).toEqual([gift.id]);
+    expect(given.subPhase).toBe('awaitingAction');
+    let refused = answer(s, { decline: true }, 'p2');
+    expect(refused.promptQueue[0]).toMatchObject({ kind: 'chooseFromPile', playerId: 'p1', optional: true });
+    refused = answer(refused, { targetCardId: refused.discard[0]!.id });
+    refused = answer(refused, { targetCardId: refused.discard[0]!.id });
+    expect(refused.hands.p1).toHaveLength(2);
+    // Nothing in hand to give: straight to the discard pile.
+    ({ s } = start());
+    s = answer(s, { targetPlayerId: 'p2' });
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseFromPile', playerId: 'p1' });
+  });
+
+  it('"SACRIFICE a card" takes a Hero or an equipped Item: Grim Pupper, Brawling Spirit, Meowntain, Rabid Beast', () => {
+    let s = cleanGame(BN_CFG, 3);
+    const pupper = bn('grim-pupper');
+    const ringed = heroCard('peanut', 'bard');
+    const ring = mk('really-big-ring', 'item');
+    s.parties.p1 = [inParty(pupper)];
+    s.parties.p2 = [inParty(ringed, ring)];
+    s = roll(s, pupper, [4, 4]);
+    expect(s.promptQueue.map((p) => p.playerId)).toEqual(['p1', 'p2', 'p3']);
+    s = answer(s, { targetCardId: pupper.id });
+    expect(s.activePlayerId).toBe('p2'); // p3 has nothing to sacrifice: skipped after
+    s = answer(s, { targetCardId: ring.id }, 'p2');
+    expect(s.parties.p2[0]!.equippedItem).toBeNull();
+    expect(s.discard.map((c) => c.id)).toEqual(expect.arrayContaining([pupper.id, ring.id]));
+    expect(s.subPhase).toBe('awaitingAction');
+
+    // Brawling Spirit: only Parties of more than 3 cards (Heroes and their Items).
+    s = cleanGame(BN_CFG, 3);
+    const brawler = bn('brawling-spirit');
+    s.parties.p1 = [inParty(brawler)];
+    s.parties.p2 = [inParty(heroCard('a', 'bard'), mk('r1', 'item')), inParty(heroCard('b', 'thief'), mk('r2', 'item'))];
+    s.parties.p3 = [inParty(heroCard('c', 'bard')), inParty(heroCard('d', 'thief')), inParty(heroCard('e', 'wizard'))];
+    s = roll(s, brawler, [5, 5]);
+    expect(s.promptQueue.map((p) => p.playerId)).toEqual(['p2']);
+
+    // Meowntain: +5 this turn and a card sacrificed.
+    s = cleanGame(BN_CFG);
+    const cat = bn('meowntain');
+    s.parties.p1 = [inParty(cat), inParty(heroCard('x', 'bard'))];
+    s = roll(s, cat, [3, 3]);
+    expect(s.turnBuffs.rollBonus).toBe(5);
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'choosePartyCard', optional: false, mode: 'sacrifice' });
+
+    // Rabid Beast: sacrifice any number, then destroy that many.
+    s = cleanGame(BN_CFG);
+    const beast = bn('rabid-beast');
+    const curse = mk('sealing-key', 'cursedItem');
+    const fodder = heroCard('fodder', 'bard');
+    const t1 = heroCard('t1', 'bard');
+    const t2 = heroCard('t2', 'thief');
+    s.parties.p1 = [inParty(beast), inParty(fodder, curse)];
+    s.parties.p2 = [inParty(t1), inParty(t2, mk('t2ring', 'item'))];
+    s = roll(s, beast, [3, 3]);
+    s = answer(s, { targetCardId: curse.id });
+    s = answer(s, { targetCardId: fodder.id });
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'choosePartyCard', effectTag: 'rabidBeastSacrifice', tally: 2 });
+    s = answer(s, { decline: true });
+    expect(s.promptQueue.filter((p) => p.kind === 'choosePartyCard' && p.mode === 'destroy')).toHaveLength(2);
+    s = answer(s, { targetCardId: t1.id });
+    s = answer(s, { targetCardId: t2.id });
+    expect(s.parties.p2).toHaveLength(0);
+  });
+
+  it('Hollow Husk takes a Magic card it may play; Gruesome Gladiator takes a card from every other hand; Annihilator finds a Challenge', () => {
+    let s = cleanGame(BN_CFG);
+    const husk = bn('hollow-husk');
+    const spell = mk('enchanted-spell', 'magic');
+    s.parties.p1 = [inParty(husk)];
+    s.hands.p2 = [spell, heroCard('h', 'bard')];
+    s = roll(s, husk, [3, 3]);
+    s = answer(s, { targetPlayerId: 'p2' });
+    s = answer(s, { targetCardId: spell.id });
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseCardsFromHand', effectTag: 'playFreeMagic', onlyCardIds: [spell.id], optional: true });
+    s = answer(s, { cardIds: [spell.id] });
+    expect(s.turnBuffs.rollBonus).toBe(2);
+
+    s = cleanGame(BN_CFG, 3);
+    const glad = bn('gruesome-gladiator');
+    s.parties.p1 = [inParty(glad)];
+    s.hands.p2 = [mk('a', 'challenge')];
+    s.hands.p3 = [mk('b', 'challenge'), mk('c', 'challenge')];
+    s = roll(s, glad, [5, 5]);
+    s = answer(s, { targetCardId: s.hands.p2[0]!.id });
+    s = answer(s, { targetCardId: s.hands.p3[1]!.id });
+    expect(s.hands.p1).toHaveLength(2);
+    expect(s.hands.p3).toHaveLength(1);
+
+    s = cleanGame(BN_CFG);
+    const anni = bn('annihilator');
+    const ch = mk('challenge', 'challenge');
+    s.parties.p1 = [inParty(anni)];
+    s.discard = [mk('x', 'magic'), ch];
+    s = roll(s, anni, [3, 3]);
+    s = answer(s, { targetCardId: ch.id });
+    expect(s.hands.p1.map((c) => c.id)).toEqual([ch.id]);
+  });
+
+  it('Roaryal Guard sends a whole class home (Masks count); Unbridled Fury gains a point on a Berserker; Vicious Wildcat slays outright and ends the turn', () => {
+    let s = cleanGame(BN_CFG);
+    const guard = bn('roaryal-guard');
+    const bard = heroCard('bard', 'bard');
+    const masked = heroCard('masked', 'thief');
+    const mask = mk('bard-mask', 'item', 'bard');
+    s.parties.p1 = [inParty(guard)];
+    s.parties.p2 = [inParty(bard), inParty(masked, mask), inParty(heroCard('wiz', 'wizard'))];
+    s = roll(s, guard, [5, 5]);
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseClass' });
+    if (s.promptQueue[0]!.kind !== 'chooseClass') throw new Error('expected a class prompt');
+    expect(s.promptQueue[0]!.classes).toContain('berserker');
+    s = answer(s, { className: 'bard' });
+    expect(s.parties.p2.map((h) => h.card.kind)).toEqual(['wiz']);
+    expect(s.hands.p2.map((c) => c.id).sort()).toEqual([bard.id, masked.id, mask.id].sort());
+
+    s = cleanGame(BN_CFG);
+    const fury = bn('unbridled-fury');
+    const zerk = bn('annihilator');
+    const plain = heroCard('plain', 'bard');
+    s.parties.p1 = [inParty(fury)];
+    s.parties.p2 = [inParty(zerk), inParty(plain)];
+    s = roll(s, fury, [4, 4]);
+    expect(answer(s, { targetCardId: zerk.id }).actionPointsRemaining).toBe(3);
+    expect(answer(s, { targetCardId: plain.id }).actionPointsRemaining).toBe(2);
+
+    s = cleanGame(BN_CFG);
+    const wildcat = bn('vicious-wildcat');
+    s.parties.p1 = [inParty(wildcat)];
+    const big = s.monsterRow[0]!;
+    big.requiredHeroes = 4;
+    s = roll(s, wildcat, [6, 6]);
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseMonster', mode: 'slay' });
+    s = answer(s, { targetCardId: big.card.id });
+    expect(s.trophies.p1.map((m) => m.card.id)).toEqual([big.card.id]);
+    expect(s.turnPlayerId).toBe('p2');
+  });
+
+  it('Items: Biggest Ring Ever, Goblet of Caffeination, Silver Lining; Cursed: Dragon\'s Bile, Soulbound Grimoire', () => {
+    let s = cleanGame(BN_CFG);
+    const peanut = heroCard('peanut', 'bard', 7);
+    s.parties.p1 = [inParty(peanut, bn('biggest-ring-ever'))];
+    s.hands.p1 = [mk('a', 'challenge'), mk('b', 'challenge')];
+    s = roll(s, peanut, [1, 2]);
+    expect(s.subPhase).toBe('awaitingModifiers');
+    expect(chooseAIAction(s, 'p1')).toMatchObject({ type: 'biggestRingDiscard', cardIds: expect.any(Array) });
+    s = applyAction(s, { type: 'biggestRingDiscard', playerId: 'p1', cardIds: s.hands.p1.map((c) => c.id) });
+    expect(s.lastRoll).toMatchObject({ actorTotal: 7, outcome: 'success' });
+
+    s = cleanGame(BN_CFG);
+    const goblet = bn('goblet-of-caffeination');
+    s.parties.p1 = [inParty(peanut, goblet)];
+    s = roll(s, peanut, [1, 1]);
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'rerollHero', itemCardId: goblet.id });
+    s = answer(s, { dice: [6, 6] });
+    expect(s.lastRoll).toMatchObject({ actorTotal: 12, outcome: 'success' });
+    expect(s.parties.p1[0]!.equippedItem).toBeNull();
+    expect(s.discard.some((c) => c.id === goblet.id)).toBe(true);
+
+    s = cleanGame(BN_CFG);
+    s.parties.p1 = [inParty(peanut, bn('silver-lining'))];
+    expect(roll(s, peanut, [1, 1]).turnBuffs.rollBonus).toBe(2);
+
+    s = cleanGame(BN_CFG);
+    s.parties.p1 = [inParty(peanut, bn('dragons-bile')), inParty(heroCard('x', 'thief'))];
+    expect(roll(s, peanut, [1, 1]).promptQueue[0]).toMatchObject({ kind: 'chooseHeroTarget', mode: 'sacrifice', scope: 'own' });
+
+    s = cleanGame(BN_CFG);
+    s.parties.p1 = [inParty(peanut, bn('soulbound-grimoire'))];
+    expect(roll(s, peanut, [6, 6]).actionPointsRemaining).toBe(1);
+    s.actionPointsRemaining = 1;
+    expect(() => roll(s, peanut, [6, 6])).toThrow(/AP/);
+  });
+
+  it('Modifiers: +2/-2 becomes +4 on your own Monster attack; +7 discards the rest of your hand', () => {
+    let s = cleanGame(BN_CFG);
+    const m22 = bn('mod-bn-plus-2-minus-2');
+    const tortoise = monsterFrom('monster-terratuga');
+    s.parties.p1 = [inParty(heroCard('x', 'bard'))];
+    s.monsterRow = [tortoise];
+    s.hands.p1 = [m22];
+    s = applyAction(s, { type: 'attackMonster', playerId: 'p1', monsterCardId: tortoise.card.id, dice: [3, 4] });
+    expect(() => applyAction(s, { type: 'playModifier', playerId: 'p1', cardId: m22.id, chosenValue: 2 })).toThrow();
+    s = applyAction(s, { type: 'playModifier', playerId: 'p1', cardId: m22.id, chosenValue: 4 });
+    expect(s.lastRoll).toMatchObject({ actorTotal: 11, outcome: 'slain' });
+
+    s = cleanGame(BN_CFG);
+    const seven = bn('mod-bn-plus-7');
+    const peanut = heroCard('peanut', 'bard', 7);
+    s.parties.p1 = [inParty(peanut)];
+    s.hands.p2 = [seven, mk('a', 'challenge'), mk('b', 'challenge')];
+    s = roll(s, peanut, [1, 1]);
+    s = applyAction(s, { type: 'playModifier', playerId: 'p2', cardId: seven.id, chosenValue: 7 });
+    expect(s.hands.p2).toHaveLength(0);
+    expect(s.lastRoll).toMatchObject({ actorTotal: 9, outcome: 'success' });
+  });
+
+  it('Magic: Lightning Labrys makes one chosen player sacrifice per card discarded; Mass Sacrifice redraws 5', () => {
+    let s = cleanGame(BN_CFG, 3);
+    const labrys = bn('lightning-labrys');
+    s.hands.p1 = [labrys, mk('a', 'challenge'), mk('b', 'challenge')];
+    s.parties.p2 = [inParty(heroCard('x', 'bard')), inParty(heroCard('y', 'thief'))];
+    s.parties.p3 = [inParty(heroCard('z', 'wizard'))];
+    s = applyAction(s, { type: 'playMagic', playerId: 'p1', cardId: labrys.id });
+    s = answer(s, { cardIds: s.hands.p1.map((c) => c.id) });
+    expect(s.promptQueue.filter((p) => p.kind === 'choosePlayer')).toHaveLength(2);
+    s = answer(s, { targetPlayerId: 'p2' });
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseHeroTarget', playerId: 'p2', mode: 'sacrifice' });
+    s = answer(s, { targetCardId: s.parties.p2[0]!.card.id }, 'p2');
+    s = answer(s, { targetPlayerId: 'p2' });
+    s = answer(s, { targetCardId: s.parties.p2[0]!.card.id }, 'p2');
+    expect(s.parties.p2).toHaveLength(0);
+
+    s = cleanGame(BN_CFG);
+    const mass = bn('mass-sacrifice');
+    s.hands.p1 = [mass, mk('a', 'challenge')];
+    s = applyAction(s, { type: 'playMagic', playerId: 'p1', cardId: mass.id });
+    expect(s.hands.p1).toHaveLength(5);
+  });
+
+  it('Monsters: Doombringer (discard your hand; a pick from the discard pile per sacrifice), Reptilian Ripper (sacrifice 2; +2 to attack)', () => {
+    let s = cleanGame(BN_CFG);
+    const doom = monsterFrom('monster-doombringer');
+    s.partyLeaders.p1 = leaderCard('leader-gnawing-dread', 'necromancer');
+    s.parties.p1 = [inParty(heroCard('x', 'bard'))];
+    s.hands.p1 = [mk('a', 'challenge'), mk('b', 'challenge')];
+    s.monsterRow = [doom];
+    s = applyAction(s, { type: 'attackMonster', playerId: 'p1', monsterCardId: doom.card.id, dice: [1, 2] });
+    expect(s.hands.p1).toHaveLength(0);
+
+    s = cleanGame(BN_CFG);
+    s.trophies.p1 = [monsterFrom('monster-doombringer')];
+    const pupper = bn('grim-pupper');
+    s.parties.p1 = [inParty(pupper)];
+    s.discard = [mk('treasure', 'magic')];
+    s = roll(s, pupper, [4, 4]);
+    s = answer(s, { targetCardId: pupper.id });
+    expect(s.promptQueue[0]).toMatchObject({ kind: 'chooseFromPile', playerId: 'p1', optional: true });
+    s = answer(s, { targetCardId: s.discard.find((c) => c.kind === 'treasure')!.id });
+    expect(s.hands.p1.map((c) => c.kind)).toEqual(['treasure']);
+
+    s = cleanGame(BN_CFG);
+    const ripper = monsterFrom('monster-reptilian-ripper');
+    s.partyLeaders.p1 = leaderCard('leader-raging-manticore', 'berserker');
+    s.parties.p1 = [inParty(heroCard('x', 'bard')), inParty(heroCard('y', 'thief'))];
+    s.monsterRow = [ripper];
+    s = applyAction(s, { type: 'attackMonster', playerId: 'p1', monsterCardId: ripper.card.id, dice: [2, 3] });
+    expect(s.promptQueue.filter((p) => p.kind === 'chooseHeroTarget' && p.mode === 'sacrifice')).toHaveLength(2);
+    s = cleanGame(BN_CFG);
+    s.trophies.p1 = [monsterFrom('monster-reptilian-ripper')];
+    s.parties.p1 = [inParty(heroCard('x', 'bard'))];
+    const tortoise = monsterFrom('monster-terratuga');
+    s.monsterRow = [tortoise];
+    s = applyAction(s, { type: 'attackMonster', playerId: 'p1', monsterCardId: tortoise.card.id, dice: [4, 5] });
+    expect(s.lastRoll).toMatchObject({ actorTotal: 11, outcome: 'slain' });
+  });
+
+  it('Berserker / Necromancer Challenges need that class in your Party', () => {
+    let s = cleanGame(BN_CFG);
+    const ch = bn('challenge-necromancer');
+    s.hands.p2 = [ch];
+    const hero = heroCard('peanut', 'bard');
+    s.hands.p1 = [hero];
+    expect(applyAction(s, { type: 'playHero', playerId: 'p1', cardId: hero.id }).subPhase).not.toBe('awaitingChallenge');
+    s.partyLeaders.p2 = leaderCard('leader-gnawing-dread', 'necromancer');
+    s = applyAction(s, { type: 'playHero', playerId: 'p1', cardId: hero.id });
+    expect(s.subPhase).toBe('awaitingChallenge');
+  });
+
+  it('plays AI-vs-AI games to the end with Berserkers & Necromancers, alone and with Warriors & Druids', () => {
+    for (const cfg of [BN_CFG, { expansions: ['warriors-druids', 'berserkers-necromancers'], monstersToWin: 3 } as HtsConfig]) {
+      for (const players of [2, 3, 4, 5, 6]) {
+        for (const seed of [5, 17]) {
+          const { state, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState(cfg, seed * 19 + players, makeSeats(players)), 4000);
+          expect(stuck).toBe(false);
+          expect(state.phase).toBe('gameOver');
+        }
+      }
+    }
   });
 });

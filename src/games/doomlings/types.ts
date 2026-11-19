@@ -1,23 +1,52 @@
-// Doomlings — types for the Classic (2nd edition) base game.
+// Doomlings — types for the Classic (2nd edition) base game and its expansions.
 //
 // This file is the design doc. Sources, in order of authority:
 //   1. The official Classic rulesheet (Doomlings_Rulebook.pdf, 2024 upload),
 //      transcribed in github.com/nycocado/doomlings-atlas
 //      (assets/doomlings/rules/classic.md).
-//   2. Card data for every Classic card, from the same repo
-//      (assets/doomlings/classic/cards.json — taken from the Tabletop Simulator
-//      mod that uses the publisher's card images, checked card by card).
+//   2. Card data for every card, from the same repo
+//      (assets/doomlings/<set>/cards.json — taken from the Tabletop Simulator
+//      mod that uses the publisher's card images, checked card by card), and
+//      the expansions' official rules cards (assets/doomlings/rules/<set>.md,
+//      from the rules guide in the same mod).
 //   3. Cross-check: github.com/azabicki/DoomPy (cards.xlsx + scoring rules).
 //      Face values, colours and Dominant flags agree with (2) for every Classic
 //      trait; DoomPy also lists some 1st-edition variants, which we ignore.
+//      DoomPy covers Overlush but none of the later packs.
 //
-// Expansions: the seven packs this game used to ship (Overlush, Imaginary
-// Ends, Legends of Enderas, Ancient Fates, Shadow Puppets, Castle Glass,
-// Mokoko Village) were **invented** card lists, not the published ones —
-// "Ancient Fates" does not appear in any source at all. They were removed.
-// The six real expansions are listed in DM_EXPANSIONS so the lobby can show
-// them, locked, until someone ports their published card lists (the atlas
-// repo has all of them).
+// Expansions. The atlas has nine published sets besides Classic (set.json):
+// Upgrade (2023), Overlush (2023), Imaginary Ends (2024), Legends of Enderas,
+// Castle Glass, Mokoko Village, Nightflower Island and Shadow Puppets (2025),
+// and the Special Edition cards. All nine are listed in DM_EXPANSIONS; a pack
+// is playable only once it is built completely from its card data AND its
+// rulesheet (`DM_BUILT_EXPANSIONS`). The others are locked in the lobby with
+// the reason (`dmExpansionLockedReason`) and rejected by `validateConfig`.
+//
+//   Overlush — BUILT. The Mystery expansion: the whole collection the atlas
+//     lists (146 traits incl. 35 Dominants, 28 Ages, 15 Catastrophes — the
+//     173 numbered cards, their secret rares and the Relic printings). Its
+//     rulesheet's setup is followed: each game draws 40 basic traits,
+//     8 Dominants, 8 Ages and 4 Catastrophes from it into the Classic decks.
+//     No new card types, but many new timings (removal reactions, Pinchy /
+//     Snap-Trap, Elusive / Muse, Procrastination, Sleepy), Age of Certainty's
+//     face-up deck and Psychedelic's restart.
+//   Imaginary Ends — BUILT (its four creature collections). Deeplings,
+//     Glitterlings, Moonlings and Fuzelings: 64 traits (7 Dominants), 8 Ages,
+//     4 Catastrophes, matching their rules cards. New: suppress (cards hidden
+//     face down under a trait, +1 each — `DmTraitCard.under`), subspecies,
+//     "friends" (= opponents). The same box's Magical Merchants (11 merchant
+//     Ages, 40 trinkets) is a separate add-on on its rulesheet, with its own
+//     setup; it is listed on its own ('magical-merchants') and locked.
+//   Castle Glass — BUILT. 40 numbered cards ("01/40 | CSGL"): 30 traits,
+//     7 Dominants, 2 Ages, 1 Catastrophe, as its rules card says. The atlas
+//     also files Luminous and Radiant under Castle Glass, but their cards are
+//     printed "Special Edition | CSGL", not numbered in the 40 — they are left
+//     out. New: trait classes (Shell / Coral / Fish, with Curious and Exotic
+//     tiers) scored as class bonuses after Drop of Life (`classBonusOf`).
+//
+// The seven packs this game used to ship before the 2026-11-19 rules audit
+// (including "Ancient Fates", which appears in no source) were invented card
+// lists and were removed.
 //
 // Rule readings we had to choose (no source settles them) are marked
 // UNCONFIRMED where they are implemented, and listed in Rules.tsx.
@@ -33,29 +62,54 @@ import type { LogEntry } from '@/core/state';
 export type DmExpansionId =
   | 'overlush'
   | 'imaginary-ends'
+  | 'magical-merchants'
   | 'legends-of-enderas'
+  | 'castle-glass'
   | 'mokoko-village'
   | 'shadow-puppets'
-  | 'castle-glass';
+  | 'nightflower-island'
+  | 'upgrade'
+  | 'special-edition';
 
 export type DmCardSource = 'classic' | DmExpansionId;
 
+/** Packs built completely from their card data and rulesheet. Only these can be enabled. */
+export const DM_BUILT_EXPANSIONS: readonly DmExpansionId[] = ['castle-glass', 'overlush', 'imaginary-ends'];
+
 /**
- * The published Doomlings expansions (names and contents per the atlas card
- * data). None is implemented yet: the lobby shows them locked and
- * `validateConfig` rejects them.
+ * Every published Doomlings set in the sources besides Classic (names and
+ * contents per the atlas card data). `verified` is true only for built packs.
  */
 export const DM_EXPANSIONS: readonly ExpansionMeta[] = [
-  { id: 'overlush', name: 'Overlush', summary: 'Mystery expansion: 146 traits (dual-colour traits included), 28 Ages and 15 Catastrophes.', verified: true },
-  { id: 'imaginary-ends', name: 'Imaginary Ends', summary: 'Dinoling / Mythling / Techling traits, plus Trinkets and Merchants.', verified: true },
-  { id: 'legends-of-enderas', name: 'Legends of Enderas', summary: 'New traits and hidden one-use Treasure cards.', verified: true },
-  { id: 'mokoko-village', name: 'Mokoko Village', summary: 'Bolster expansion: 43 traits, 3 Ages and 1 Catastrophe.', verified: true },
-  { id: 'shadow-puppets', name: 'Shadow Puppets', summary: 'Bolster expansion: 37 traits, 2 Ages and 1 Catastrophe.', verified: true },
-  { id: 'castle-glass', name: 'Castle Glass', summary: 'Bolster expansion: Shell / Coral / Fish trait classes with class bonuses.', verified: true },
+  { id: 'castle-glass', name: 'Castle Glass', summary: 'Bolster: 30 traits, 7 Dominants, 2 Ages and 1 Catastrophe. Shell, Coral and Fish trait classes score class bonuses.', verified: true },
+  { id: 'overlush', name: 'Overlush', summary: 'Mystery expansion: 146 traits, 28 Ages and 15 Catastrophes. Each game adds a random 40 traits, 8 Dominants, 8 Ages and 4 Catastrophes.', verified: true },
+  { id: 'imaginary-ends', name: 'Imaginary Ends', summary: 'Deeplings (suppress), Glitterlings, Moonlings and Fuzelings: 64 traits, 8 Ages and 4 Catastrophes.', verified: true },
+  { id: 'magical-merchants', name: 'Imaginary Ends: Magical Merchants', summary: 'The box’s add-on: 11 merchant Ages and 40 trinkets with pocket objectives.', verified: false },
+  { id: 'legends-of-enderas', name: 'Legends of Enderas', summary: 'Techlings (attachments), Mythlings (spells), Dinolings and Fuzelings: 82 traits, 8 Ages, 4 Catastrophes, plus 26 hidden Treasures.', verified: false },
+  { id: 'mokoko-village', name: 'Mokoko Village', summary: '43 traits, 3 Ages and 1 Catastrophe.', verified: false },
+  { id: 'shadow-puppets', name: 'Shadow Puppets', summary: 'Deepling, Glitterling and Moonling traits: 37 traits, 2 Ages and 1 Catastrophe.', verified: false },
+  { id: 'nightflower-island', name: 'Nightflower Island', summary: '35 traits and 7 Ages, mixing earlier packs’ subspecies and classes.', verified: false },
+  { id: 'upgrade', name: 'Upgrade', summary: 'The Meaning of Life (hidden objectives) and the first Techlings, Dinolings, Mythlings and Multicolor boosters: 58 traits, 3 Ages, 3 Catastrophes.', verified: false },
+  { id: 'special-edition', name: 'Special Edition', summary: '19 Special Edition traits and 1 Age.', verified: false },
 ];
 
-/** Why every expansion toggle is locked (shown in the lobby). */
-export const DM_EXPANSION_LOCKED_REASON = 'Not implemented yet — only the Classic base game is playable.';
+const LOCKED_REASON: Record<DmExpansionId, string | null> = {
+  'castle-glass': null,
+  overlush: null,
+  'imaginary-ends': null,
+  'magical-merchants': 'Not built yet — the trinkets’ powers and pocket objectives and the merchant Ages aren’t implemented.',
+  'legends-of-enderas': 'Not built yet — attachments, spells and Treasures aren’t implemented.',
+  'mokoko-village': 'No rulesheet in the sources (card data only).',
+  'shadow-puppets': 'No rulesheet in the sources (card data only).',
+  'nightflower-island': 'No rulesheet in the sources (card data only).',
+  upgrade: 'Not built yet (The Meaning of Life and the first-edition boosters).',
+  'special-edition': 'Not built yet.',
+};
+
+/** Why an expansion toggle is locked (null = playable), shown in the lobby. */
+export function dmExpansionLockedReason(id: string): string | null {
+  return id in LOCKED_REASON ? LOCKED_REASON[id as DmExpansionId] : 'Unknown expansion.';
+}
 
 export interface DmConfig extends ExpansionConfig {
   expansions: string[];
@@ -71,7 +125,7 @@ export type DmTraitColor = 'red' | 'blue' | 'green' | 'purple' | 'colorless';
 export const DM_SCORING_COLORS: readonly DmTraitColor[] = ['red', 'blue', 'green', 'purple'];
 
 /** Every Classic trait, by card name. Behaviour is dispatched on this. */
-export type DmTraitKind =
+export type DmClassicKind =
   | 'adorable' | 'altruistic' | 'antlers' | 'apex-predator' | 'appealing' | 'automimicry' | 'bad' | 'bark'
   | 'big-ears' | 'blubber' | 'boredom' | 'branches' | 'brave' | 'brute-strength' | 'camouflage' | 'chromatophores'
   | 'clever' | 'cold-blood' | 'confusion' | 'costly-signaling' | 'deep-roots' | 'delicious' | 'denial'
@@ -88,6 +142,56 @@ export type DmTraitKind =
   | 'territorial' | 'the-third-eye' | 'tiny' | 'tiny-little-melons' | 'trunk' | 'vampirism' | 'venomous' | 'viral'
   | 'voracious' | 'warm-blood' | 'woody-stems';
 
+/** Castle Glass traits (30 + 7 Dominants). */
+export type DmCastleGlassKind =
+  | 'aposematic' | 'banal' | 'benthic' | 'biochromatic' | 'black-and-blue' | 'brainy' | 'buttery-fins' | 'conchomancy'
+  | 'copper-band' | 'countershading' | 'crystal-skeleton' | 'fish-collector' | 'fragmentation' | 'glass-predator'
+  | 'glossy' | 'guanine-crystals' | 'harboring' | 'keystone' | 'mucous-coating' | 'natural-symmetry' | 'opulent'
+  | 'pearl' | 'pip' | 'porous' | 'pteridines' | 'radial-symmetry' | 'resplendent' | 'sandy' | 'sea-glass'
+  | 'spiny-fins' | 'spiral-dome' | 'spiral-motion' | 'striated' | 'sunny' | 'tabular' | 'thermal-tolerance'
+  | 'tidal-tolerance';
+
+/** Overlush traits (138 distinct; its Kidneys and Swarms reuse the Classic kinds). */
+export type DmOverlushKind =
+  | 'adrenalized' | 'agile' | 'antennae' | 'apricity' | 'arrested-muscles' | 'backbiter' | 'barbels' | 'big-feller'
+  | 'bitter-berries' | 'blossom' | 'booming-call' | 'booster' | 'bottomfeeder' | 'bushwhacker' | 'caffeinated' | 'cap'
+  | 'cheek-pouches' | 'chompers' | 'citrus' | 'cocoa' | 'collector' | 'compound-eyes' | 'constrictor' | 'contagious'
+  | 'dart' | 'docile' | 'down' | 'ear-flaps' | 'electroreception' | 'elusive' | 'epic' | 'euphoric'
+  | 'eusocial' | 'eyestalks' | 'fabled' | 'face-hugger' | 'fardingbag' | 'fearful-symmetry' | 'fierce' | 'filter-feeder'
+  | 'firebite' | 'fleece' | 'fleshy-scales' | 'floofy' | 'freckles' | 'grooming-claws' | 'gular-pouch' | 'harmony'
+  | 'harrier' | 'haustorium' | 'hive-mind' | 'hydrofuge' | 'illusory' | 'indomitable' | 'infectious' | 'ironwood'
+  | 'jumpy' | 'lily-pad' | 'lucky' | 'mammoth' | 'mandibles' | 'mane' | 'meek' | 'metamorphosis'
+  | 'mimicry' | 'motion-dazzle' | 'muse' | 'mutualism' | 'mycelium' | 'mycotoxins' | 'nectar' | 'nimble'
+  | 'noxious' | 'nuptial-plumage' | 'nutty' | 'opposable-thumbs' | 'patches' | 'pinchy' | 'playful' | 'procrastination'
+  | 'prolific' | 'prowler' | 'psychedelic' | 'pyrophyte' | 'quills' | 'ravenous' | 'rover' | 'ruffled'
+  | 'sapient' | 'scavenger' | 'scruffy' | 'seedwing' | 'seeker' | 'self-pruning' | 'shady' | 'shy'
+  | 'silk' | 'skimmer' | 'sleek' | 'sleepy' | 'slender-gams' | 'snap-trap' | 'snuffler' | 'sour-grapes'
+  | 'sparkles' | 'spearfisher' | 'spectacled' | 'spicy' | 'spores' | 'spots' | 'sprightly' | 'stasher'
+  | 'sticky-stalks' | 'stinging-tendrils' | 'strange' | 'super-sneaky' | 'swampy' | 'sweet' | 'sycophant' | 'tenacious'
+  | 'tiny-teeth' | 'toe-beans' | 'torpor' | 'toxic' | 'trapper' | 'tricky-vines' | 'trippy' | 'ursine'
+  | 'vagabond' | 'vivacious' | 'wanderlust' | 'webber' | 'whistler' | 'willow' | 'woolly' | 'xylophage';
+
+/** Imaginary Ends traits (Deeplings, Glitterlings, Moonlings, Fuzelings). */
+export type DmImaginaryEndsKind =
+  | 'atavism' | 'awesome' | 'baffling' | 'bedazzled' | 'bubbly' | 'chemotroph' | 'cryptic' | 'decaying-ooze'
+  | 'dipped' | 'eccentric' | 'effervescent' | 'elegance' | 'enigma' | 'ephemeral' | 'ethereal' | 'extravagant'
+  | 'feisty' | 'frumious' | 'frumple-pumple' | 'fuffle-nuffs' | 'fumplepop' | 'glamorous' | 'gob-lopters' | 'gossamer'
+  | 'grobblebobble' | 'gurvendirs' | 'hidden' | 'humdumpling' | 'hurmflerm' | 'imaginative' | 'jibwib' | 'lure'
+  | 'magic-beans' | 'merry' | 'mimsy' | 'monstrosity' | 'mufflemops' | 'nurplers' | 'pink' | 'polka-dots'
+  | 'popplebelly' | 'rainbow-magic' | 'remarkable' | 'rogloblers' | 'scintillant' | 'scrappy' | 'slithy' | 'spineless'
+  | 'sprinkles' | 'still' | 'stygian' | 'telescopic-eyes' | 'thwopplers' | 'toasty' | 'translucent' | 'turkendurt'
+  | 'umbleboos' | 'undulating' | 'untold' | 'urf' | 'whimsy' | 'whip-tail' | 'whopple' | 'wishful';
+
+export type DmTraitKind = DmClassicKind | DmCastleGlassKind | DmOverlushKind | DmImaginaryEndsKind;
+
+/** Imaginary Ends subspecies, printed on the card. */
+export type DmSubspecies = 'deepling' | 'glitterling' | 'moonling';
+
+/** Castle Glass trait classes, printed at the bottom of a card. */
+export type DmClass = 'shell' | 'coral' | 'fish';
+/** A class card's tier: worth +1 / +2 / +3 each in a class of 2 or more. */
+export type DmClassTier = 'basic' | 'curious' | 'exotic';
+
 export interface DmTraitCard {
   id: number;
   kind: DmTraitKind;
@@ -96,6 +200,23 @@ export interface DmTraitCard {
   color: DmTraitColor;
   /** Second colour of a dual-colour trait (expansions only — none in Classic). */
   secondaryColor?: DmTraitColor;
+  /** Castle Glass: the trait's class and tier. */
+  cls?: DmClass;
+  tier?: DmClassTier;
+  /** Overlush's Opposable Thumbs: the Dominant this card became an exact copy of. */
+  copyOf?: string;
+  /** Imaginary Ends: all four colours at once (Awesome!, Rainbow Magic). */
+  isAllColors?: boolean;
+  /** Imaginary Ends: the Suppress icon. */
+  suppress?: boolean;
+  /** Imaginary Ends: Deepling / Glitterling / Moonling. */
+  sub?: DmSubspecies[];
+  /**
+   * Imaginary Ends: cards suppressed face down under this trait (only on a
+   * trait in a pile). Not traits; +1 point each; go to the bottom of the
+   * trait deck if this trait leaves the pile.
+   */
+  under?: DmTraitCard[];
   /** Printed face value. Compass-star traits ("Value is equal to…") count as 0. */
   points: number;
   compassStar?: boolean;
@@ -125,7 +246,7 @@ export interface DmTraitCard {
 
 export type DmAgeCardKind = 'birthOfLife' | 'age' | 'catastrophe';
 
-/** One tag per Classic Age (25), plus 'none' for The Birth of Life and catastrophes. */
+/** One tag per Age (Classic 25, Castle Glass 2), plus 'none' for The Birth of Life and catastrophes. */
 export type DmAgeRuleTag =
   | 'none'
   | 'dracula'          // Age of Dracula
@@ -152,13 +273,32 @@ export type DmAgeRuleTag =
   | 'protectTraitPiles' // Reforestation
   | 'noGreen'          // Tectonic Shift
   | 'messiah'          // The Messiah
-  | 'noColorless';     // Tropical Lands
+  | 'noColorless'      // Tropical Lands
+  // ---- Castle Glass
+  | 'castleGlass'      // Castle Glass
+  | 'magicHour'        // Magic Hour
+  // ---- Imaginary Ends (8)
+  | 'quietMoment' | 'reverie' | 'solitude' | 'fadingAway' | 'glitterstorm' | 'moonlight'
+  | 'teaParties' | 'unusualFriends'
+  // ---- Overlush (28)
+  | 'adventure' | 'certainty' | 'discovery' | 'noNegative' | 'envy' | 'backwoods'
+  | 'cleansingRains' | 'crackletown' | 'duelingMoons' | 'glimmeringGardens' | 'harlequinFalls' | 'kingOfTheJungle'
+  | 'noMulticolor' | 'discardPurple' | 'discardGreen' | 'nostalgia' | 'discardBlue' | 'ramblinRiver'
+  | 'rustlingMeadows' | 'noDominants' | 'starTails' | 'discardRed' | 'swamplands' | 'tangledCanopies'
+  | 'mokokoLegend' | 'livingLibrary' | 'paintedValley' | 'stranger';
 
-/** One tag per Classic Catastrophe (15). */
+/** One tag per Catastrophe (Classic 15, Castle Glass 1). */
 export type DmCatastropheTag =
   | 'aiTakeover' | 'deusExMachina' | 'glacialMeltdown' | 'greyGoo' | 'iceAge' | 'massExtinction'
   | 'megaTsunami' | 'nuclearWinter' | 'overpopulation' | 'pulseEvent' | 'retrovirus' | 'solarFlare'
-  | 'superVolcano' | 'theBigOne' | 'fourHorsemen';
+  | 'superVolcano' | 'theBigOne' | 'fourHorsemen'
+  | 'stillWater'
+  // ---- Imaginary Ends (4)
+  | 'abyssStaresBack' | 'isolation' | 'moonpocalypse' | 'tooMuchPink'
+  // ---- Overlush (15)
+  | 'algalSuperbloom' | 'ancientCorruption' | 'ashlands' | 'chokingVines' | 'ecologicalCollapse' | 'endlessMonsoon'
+  | 'greatDeluge' | 'invasiveSpecies' | 'jungleRot' | 'planetaryDeforestation' | 'sacrifice' | 'strangeMatter'
+  | 'tragedyOfTheCommons' | 'tropicalSuperstorm' | 'volcanicWinter';
 
 export interface DmAgeCard {
   id: number;
@@ -194,11 +334,16 @@ export type DmTask =
   | { t: 'beginTurns' }
   | { t: 'turnStart'; p: PlayerId }
   | { t: 'endTurn'; p: PlayerId }
-  | { t: 'enlightenment'; p: PlayerId }
+  | { t: 'enlightenment'; p: PlayerId; why?: string }
   | { t: 'stabilizeChoice'; p: PlayerId }
-  | { t: 'stabilize'; p: PlayerId }
+  /**
+   * `to`: an explicit hand size (Fragmentation's 4, Sunny's 8, Harboring's 6); default the current target.
+   * `source`: where the draws come from (Scavenger may take the top of the discard pile).
+   */
+  | { t: 'stabilize'; p: PlayerId; to?: number; source?: 'deck' | 'discard' }
   | { t: 'afterStabilize'; p: PlayerId }
-  | { t: 'late'; p: PlayerId }
+  /** After you stabilize: Late, "at any time" traits, and Overlush's Firebite / Harrier / Illusory / Mimicry. */
+  | { t: 'late'; p: PlayerId; used?: string[] }
   | { t: 'nextTurn' }
   | { t: 'nihilism' }
   // ---- age effects (before turns) ---------------------------------------
@@ -207,7 +352,9 @@ export type DmTask =
   | { t: 'reasonKeep'; p: PlayerId; cardIds: number[] }
   | { t: 'alienTerraform'; p: PlayerId }
   | { t: 'heroRises'; p: PlayerId }
-  | { t: 'discardFromHand'; p: PlayerId; count: number; why: string }
+  | { t: 'discardFromHand'; p: PlayerId; count: number; why: string; noClass?: boolean }
+  | { t: 'draw'; p: PlayerId; n: number; why: string }
+  | { t: 'magicHour'; p: PlayerId }
   // ---- catastrophes ----------------------------------------------------------
   | { t: 'catastropheEffect'; p: PlayerId; tag: DmCatastropheTag }
   | { t: 'keepOne'; p: PlayerId; why: string }
@@ -240,7 +387,21 @@ export type DmTask =
   | { t: 'preventWindow'; actor: PlayerId; srcId: number; kind: DmTraitKind; asked: PlayerId[] }
   | { t: 'action'; actor: PlayerId; srcId: number; kind: DmTraitKind }
   | { t: 'extraPlay'; p: PlayerId; rule: 'colorless' | 'effectless' }
-  | { t: 'playAnother'; p: PlayerId; why: string; triggerAction: boolean; cardIds?: number[]; optional?: boolean }
+  | {
+      t: 'playAnother';
+      p: PlayerId;
+      why: string;
+      triggerAction: boolean;
+      cardIds?: number[];
+      optional?: boolean;
+      /** Only traits matching this rule (Copper Band: face value 1). */
+      filter?: DmPlayFilter;
+      /** Then do this to the trait just played (Spiny Fins / Spiral Motion). */
+      then?: 'discard' | 'return';
+      /** Play it into this player's pile instead (Shady). */
+      into?: PlayerId;
+    }
+  | { t: 'afterPlayed'; p: PlayerId; cardId: number; mode: 'discard' | 'return'; why: string }
   // ---- action steps ----------------------------------------------------------
   | {
       t: 'pickTrait';
@@ -256,26 +417,124 @@ export type DmTask =
       filter?: DmTraitKind;
       /** Cost steps: how the trait being paid for is then played. */
       cost?: { from: DmPlayFrom; triggerAction: boolean };
+      /** The chooser may decline ("up to"). */
+      optional?: boolean;
+      /** Piles already used by this effect (Fish Collector: two different piles). */
+      skipOwners?: PlayerId[];
+      /** Only these traits (Snap-Trap, Vagabond: the ones just played). */
+      ids?: number[];
     }
   | { t: 'pickPlayer'; p: PlayerId; mode: DmPlayerMode; srcId: number; ref?: number }
   | { t: 'pickColor'; p: PlayerId; mode: DmColorMode; srcId: number; from?: DmTraitColor }
   | { t: 'pickDiscard'; p: PlayerId; srcId: number; triggerAction: boolean }
   | { t: 'cleverReveal'; actor: PlayerId; opp: PlayerId }
+  | { t: 'spotsPick'; actor: PlayerId; color: DmTraitColor }
   | { t: 'cleverSteal'; actor: PlayerId }
   | { t: 'nosySteal'; actor: PlayerId; opp: PlayerId; cardIds: number[] }
-  | { t: 'dotingPick'; p: PlayerId }
-  | { t: 'dotingTo'; p: PlayerId; cardId: number }
+  | { t: 'dotingPick'; p: PlayerId; why?: string; times?: number }
+  | { t: 'dotingTo'; p: PlayerId; cardId: number; why?: string }
   | { t: 'memory'; p: PlayerId }
   | { t: 'regenDraw'; p: PlayerId }
   | { t: 'prepper'; p: PlayerId }
   | { t: 'sneaky'; p: PlayerId; cardId: number }
+  // ---- Castle Glass ------------------------------------------------------------
+  | { t: 'radialSymmetry'; p: PlayerId }
+  | { t: 'benthic'; p: PlayerId }
+  | { t: 'pearl'; p: PlayerId; used: DmTraitColor[] }
+  | { t: 'pip'; p: PlayerId }
+  | { t: 'pipPlay'; p: PlayerId; value: number; tried: number[]; negative?: boolean }
+  // ---- Overlush: ages ------------------------------------------------------------
+  | { t: 'adventure'; p: PlayerId; colors?: DmTraitColor[] }
+  | { t: 'optDiscard'; p: PlayerId; why: string; max: number; then?: 'draw1'; negativeOnly?: boolean }
+  | { t: 'colorDiscard'; p: PlayerId; color: DmTraitColor; why: string }
+  | { t: 'passColor'; from: PlayerId; to: PlayerId; color: DmTraitColor }
+  | { t: 'duelingMoons'; p: PlayerId }
+  | { t: 'toDeck'; p: PlayerId; where: 'top' | 'bottom'; min: number; max: number; why: string }
+  | { t: 'kingReveal'; p: PlayerId }
+  | { t: 'kingResolve' }
+  | { t: 'mokokoPlay'; p: PlayerId }
+  | { t: 'livingLibrary'; p: PlayerId }
+  | { t: 'swampDiscard'; p: PlayerId }
+  | { t: 'procrastination'; asked: PlayerId[] }
+  | { t: 'restartAge' }
+  // ---- Overlush: catastrophes ------------------------------------------------------
+  | { t: 'sleepyWindow'; catId: number; asked: PlayerId[] }
+  | { t: 'catastropheGp'; catId: number }
+  | { t: 'passRight'; colors: DmTraitColor[] | 'colorless' }
+  | { t: 'weInvasive'; p: PlayerId }
+  // ---- Overlush: traits --------------------------------------------------------------
+  | { t: 'removalWindow'; owner: PlayerId; cardId: number; by: PlayerId | null; byDominant: boolean; asked: PlayerId[] }
+  | { t: 'elusive'; p: PlayerId; cardId: number }
+  | { t: 'muse'; p: PlayerId; cardId: number }
+  | { t: 'mycelium'; p: PlayerId }
+  | { t: 'snapTrap'; actor: PlayerId; ids: number[]; asked: PlayerId[] }
+  | { t: 'pinchyReplay'; p: PlayerId }
+  | { t: 'skimmer'; p: PlayerId }
+  | { t: 'strange'; p: PlayerId }
+  | { t: 'afterBorrow'; p: PlayerId; mode: 'discardHand' | 'discardRandom' | 'returnToOwner' | 'discardIt'; cardId: number; owner: PlayerId }
+  | { t: 'agile'; p: PlayerId; done: number }
+  | { t: 'fierce'; p: PlayerId; done: number }
+  | { t: 'hiveMind'; p: PlayerId; done: number }
+  | { t: 'selfPruning'; p: PlayerId }
+  | { t: 'fromDiscard'; p: PlayerId; why: string; rule: 'face2' | 'any'; optional: boolean }
+  | { t: 'gift'; p: PlayerId; to: PlayerId[]; why: string; pending?: boolean }
+  | { t: 'discardIds'; p: PlayerId; ids: number[]; why: string }
+  | { t: 'applyPending' }
+  | { t: 'rover'; p: PlayerId; color: DmTraitColor }
+  | { t: 'sapient'; p: PlayerId }
+  | { t: 'seeker'; p: PlayerId }
+  | { t: 'seekerPlay'; p: PlayerId; value: number; drawn: number[] }
+  | { t: 'shady'; p: PlayerId }
+  | { t: 'torpor'; p: PlayerId }
+  | { t: 'trapper'; p: PlayerId; done: number }
+  | { t: 'vagabondPlay'; p: PlayerId; actor: PlayerId }
+  | { t: 'vagabondChoice'; actor: PlayerId; ids: number[] }
+  | { t: 'wanderlust'; p: PlayerId; first: number }
+  | { t: 'electro'; p: PlayerId; drawn: number[] }
+  | { t: 'collector'; p: PlayerId; drawn: number[]; used: DmTraitColor[] }
+  | { t: 'fabledCost'; p: PlayerId; cardId: number; from: DmPlayFrom; triggerAction: boolean }
+  | { t: 'illusoryEnd'; p: PlayerId; cardId: number }
+  | { t: 'harrier'; p: PlayerId }
+  | { t: 'illusory'; p: PlayerId }
+  | { t: 'woolly'; p: PlayerId }
+  | { t: 'chompers'; p: PlayerId }
+  | { t: 'lilyPad'; p: PlayerId; cardId: number; done: number }
+  | { t: 'pyrophyte'; p: PlayerId; drawn: number[] }
+  // ---- Imaginary Ends -----------------------------------------------------------------
+  /** Choose `count` cards (one at a time) from your hand / pile to suppress. */
+  | { t: 'suppressPick'; p: PlayerId; source: 'hand' | 'pile'; count: number; optional: boolean; why: string; exclude: number[] }
+  /** Suppress these cards (in your hand or pile) under a host you choose. */
+  | { t: 'suppressCards'; p: PlayerId; ids: number[]; why: string }
+  | { t: 'glitterstorm'; p: PlayerId }
+  | { t: 'setGenePool'; p: PlayerId; value: number; why: string }
+  | { t: 'lureColor'; p: PlayerId; victim: PlayerId }
+  | { t: 'bedazzled'; p: PlayerId }
+  | { t: 'magicBeans'; p: PlayerId }
+  | { t: 'effervescent'; p: PlayerId }
+  | { t: 'scrappy'; p: PlayerId; srcId: number; drawn: number[] }
+  | { t: 'giveCards'; p: PlayerId; n: number; why: string; to?: PlayerId }
+  | { t: 'mimsy'; p: PlayerId }
+  | { t: 'polkaDots'; p: PlayerId; ids: number[] }
+  | { t: 'imaginative'; p: PlayerId }
+  | { t: 'urf'; p: PlayerId }
+  | { t: 'gobLopters'; p: PlayerId; cardId: number; from: DmPlayFrom; triggerAction: boolean }
+  | { t: 'whimsy'; p: PlayerId; cardId: number; from: DmPlayFrom; triggerAction: boolean }
   // ---- World's End -------------------------------------------------------
   | { t: 'worldsEnd' }
   | { t: 'weTraits'; order: PlayerId[]; idx: number }
   | { t: 'weResolve'; p: PlayerId; cardId: number }
   | { t: 'weCatastrophe' }
-  | { t: 'weDiscardTrait'; p: PlayerId; rule: 'blue' | 'green' | 'red' | 'purple' | 'colorless' | 'face4' }
+  | { t: 'weDiscardTrait'; p: PlayerId; rule: 'blue' | 'green' | 'red' | 'purple' | 'colorless' | 'face4' | 'dropOfLife' }
   | { t: 'score' };
+
+/** Which traits a "play another" step allows (all set fields must hold). */
+export interface DmPlayFilter {
+  face?: number;
+  maxFace?: number;
+  negative?: boolean;
+  nonDominant?: boolean;
+  color?: DmTraitColor;
+}
 
 /** What a "choose a trait in a trait pile" step does with the trait. */
 export type DmPickMode =
@@ -291,7 +550,10 @@ export type DmPickMode =
   | 'borrowAction'     // Inventive (opponents' piles) / Painted Shell (yours)
   | 'vampirism'        // steal a trait, then play its action
   | 'moralityGift'     // Morality's cost: a positive-value trait to give away
-  | 'clawsCost';       // Retractable Claws' cost: a red trait to discard
+  | 'clawsCost'        // Retractable Claws' cost: a red trait to discard
+  // ---- Overlush
+  | 'returnOwn'        // Nostalgia, Sacrifice, Sleek, Lily Pad: back to your hand
+  | 'discardCost';     // Metamorphosis / Xylophage: traits discarded to play
 
 export type DmPlayerMode =
   | 'swapHands'     // Flight
@@ -299,9 +561,21 @@ export type DmPlayerMode =
   | 'nosy'          // Nosy
   | 'moveSource'    // Venomous: who receives it
   | 'giveTrait'     // Scutes / Morality: who receives `ref`
-  | 'reckless';     // Reckless: which opponent
+  | 'reckless'      // Reckless: which opponent
+  | 'tolerance'     // Thermal / Tidal Tolerance: whose pile is counted
+  | 'peekHand'      // Eyestalks
+  | 'extravagant'   // Imaginary Ends: who gets your Moonlings and Glitterlings
+  | 'baffling'      // Imaginary Ends: whose pile Baffling moves into
+  | 'gurvendirs'    // Imaginary Ends: who gets the cards (`ref`: how many)
+  | 'nutty'         // Nutty: who draws 3 and gives you 1
+  | 'shady';        // Shady: whose pile the card goes into
 
-export type DmColorMode = 'persuasive' | 'hyperIntelligence' | 'sentience' | 'viral' | 'faithFrom' | 'faithTo';
+export type DmColorMode =
+  | 'persuasive' | 'hyperIntelligence' | 'sentience' | 'viral' | 'faithFrom' | 'faithTo'
+  // ---- Overlush
+  | 'rover' | 'nectar' | 'spots' | 'harlequin' | 'paintedValley' | 'ramblin' | 'crackletown' | 'tragedy'
+  // ---- Imaginary Ends
+  | 'stygian';
 
 // ============================================================================
 // Prompts
@@ -353,6 +627,49 @@ export interface DmWorldsEnd {
   deusDraws: Record<PlayerId, number>;
   /** Tie-break draws: face value of the trait each tied player drew. */
   tiebreak: Record<PlayerId, number>;
+  /** Thermal / Tidal Tolerance: the opponent each card counts, by card id. */
+  chosenPlayer: Record<number, PlayerId>;
+  /** Overlush Lily Pad: traits each card returned, by card id. */
+  lilyPad?: Record<number, number>;
+  /** Overlush Invasive Species / Imaginary Ends Isolation: the face value each player adds to their score. */
+  addFace?: Record<PlayerId, number>;
+  /** Imaginary Ends Too Much Pink: the colours of the card turned up. */
+  pinkColors?: DmTraitColor[];
+}
+
+/** One-turn effects of the turn player's own Actions (reset at the start of every turn). */
+export interface DmTurnFx {
+  p: PlayerId;
+  /** Guanine Crystals: draw 2 instead of stabilizing at the end of this turn. */
+  draw2?: boolean;
+  /** Harboring: stabilize to this many at the end of this turn. */
+  stabilizeTo?: number;
+  /** "Cannot play this effect twice in 1 turn" (Spiral Motion, Booming Call, Skimmer). */
+  used: DmTraitKind[];
+  /** Overlush Cheek Pouches: don't stabilize this turn. */
+  noStabilize?: boolean;
+  /** Traits the turn player played this turn (Snap-Trap, Mimicry). */
+  plays?: number[];
+  /** Actions the turn player resolved this turn (Illusory). */
+  actions?: number;
+  /** Overlush Illusory: this action's other Actions are ignored. */
+  ignoreActions?: boolean;
+}
+
+/** Overlush one-round Age effects (reset whenever an age is flipped or restarted). */
+export interface DmAgeFx {
+  /** Ramblin' River Markets: colours a player can't play this round. */
+  bans: { p: PlayerId; color: DmTraitColor }[];
+  /** Star Tails: players who can't draw any more this round. */
+  noDraw: PlayerId[];
+  /** Swamplands: Action traits each player played this round. */
+  swamp: { p: PlayerId; cardId: number }[];
+  /** Procrastination: players already asked / who took an extra turn this round. */
+  procrastinated: PlayerId[];
+  /** Psychedelic: this age has already been restarted once. */
+  restarted?: boolean;
+  /** Sleepy: players who ignore this catastrophe's Gene Pool effect. */
+  sleepy?: PlayerId[];
 }
 
 export interface DmState extends GameStateShape {
@@ -395,6 +712,18 @@ export interface DmState extends GameStateShape {
   revealed: { ownerId: PlayerId; cardId: number }[];
   /** The Big One: gifts chosen from each original hand, applied together. */
   pendingGifts: { from: PlayerId; to: PlayerId; cardId: number }[];
+  /** Brainy: colours a player can't play on their next turn (cleared when that turn ends). */
+  turnBans: { p: PlayerId; color: DmTraitColor; srcId: number }[];
+  turnFx: DmTurnFx;
+  ageFx: DmAgeFx;
+  /** True while an age's (or catastrophe's) effect resolves, before turns start. */
+  agePhase: boolean;
+  /** Overlush Eyestalks: the hand `viewer` may see this turn. */
+  peekHand: { viewer: PlayerId; owner: PlayerId } | null;
+  /** Overlush Sapient: the last two ages in the age deck a player has seen. */
+  peekedLast: Record<PlayerId, number[]>;
+  /** Overlush King of the Jungle: cards chosen face down, revealed together. */
+  pendingReveal: { p: PlayerId; cardId: number }[];
 
   tasks: DmTask[];
   prompt: DmPrompt | null;
@@ -414,8 +743,19 @@ export interface DmState extends GameStateShape {
 
 export type DmAction =
   /** Your one trait for the turn (main stage only). */
-  | { type: 'playTrait'; playerId: PlayerId; cardId: number }
-  /** Self-Awareness, played "at any time" into an opponent's pile (offered during your own turn). */
+  | {
+      type: 'playTrait';
+      playerId: PlayerId;
+      cardId: number;
+      /** Overlush, The Legend of Mokoko Village (with Heroic): play 2 traits, ignoring their Actions. */
+      twoIgnoringActions?: boolean;
+    }
+  /** Overlush Nimble (from your hand) / Seedwing (from your pile): discard it for its effect, on your turn. */
+  | { type: 'useCard'; playerId: PlayerId; cardId: number }
+  /**
+   * A Play-When trait played "at any time" (offered during your own turn): Self-Awareness into an
+   * opponent's pile; Castle Glass's Conchomancy, Sea Glass and Sunny into your own (target = you).
+   */
   | { type: 'playOutOfTurn'; playerId: PlayerId; cardId: number; targetPlayerId: PlayerId }
   /** Only legal when you can't play any trait: skip your turn (optionally discarding your hand to draw 3). */
   | { type: 'passTurn'; playerId: PlayerId; discardHand?: boolean }

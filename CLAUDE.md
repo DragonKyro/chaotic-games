@@ -34,10 +34,10 @@ shows "unverified") or locked, never passed off as official.
 |---|---|---|
 | Exploding Kittens | ✅ verified against the official rule-sheet PDFs | ✅ Imploding, Streaking, Barking, Zombie Kittens, Party Pack verified · ⚠ Recipes for Disaster: placeholder, recipes not modeled |
 | Unstable Unicorns | ✅ 2nd Edition verified; Original Base (Second Print) and Diamond Edition rebuilt to their inventories | ⚠ all 8 expansions and the Control / Chaos / Travel editions are approximations, flagged unverified (real card lists in `types.ts`) |
-| Here to Slay | ✅ verified against the official rulebook | ⚠ all 3 expansions are approximations, flagged unverified (their three Party Leaders are correct) |
+| Here to Slay | ✅ verified against the official rulebook | ✅ Warriors & Druids, Berserkers & Necromancers built and verified · ⚠ Here to Sleigh is an approximation, flagged unverified |
 | Casting Shadows | ✅ rebuilt from the rulebook, hex reference sheet and card pages | ⚠ hexes and characters official, decks still the app's own, flagged unverified (official lists in `cards.ts`) |
 | Happy Little Dinosaurs | ✅ verified | ✅ 5–6 Player, Perils of Puberty, Dating Disasters verified · ⚠ Hazards Ahead partial (its tokens and Hazard cards are no-ops), unverified |
-| Doomlings | ✅ Classic (2nd edition) rebuilt from scratch and verified | ⛔ none implemented — the earlier seven were invented; the six published packs are listed but locked |
+| Doomlings | ✅ Classic (2nd edition) rebuilt from scratch and verified | ✅ Castle Glass, Overlush, Imaginary Ends (creature sets) built and verified · ⛔ Magical Merchants, Legends of Enderas, Upgrade, Mokoko Village, Shadow Puppets, Nightflower Island, Special Edition locked |
 
 Each game has a pure deterministic reducer, interactive prompts for every
 player decision (the audit's main check: no decision the rules give a player
@@ -46,7 +46,7 @@ direction (original SVG card art system, card back, board, home-page
 `Thumbnail`, a `Gallery` of every card face), a `GameView` built on the shared
 kit with state-driven FX, `LobbyConfig`, `Rules`, and unit + AI-vs-AI tests.
 
-433 tests pass (`npm run test:run`): every game's rules (one test per audit
+532 tests pass (`npm run test:run`): every game's rules (one test per audit
 fix), AI-vs-AI playouts across player counts, editions and expansion sets, UI
 tests for all six games (every state of full AI games renders; no hidden card
 leaks to another seat), the online layer (rooms, lobby, action log, races,
@@ -279,10 +279,16 @@ player on one roll; Challenges apply to cards played "immediately" by effects
 too; dice rolls are public (`lastRoll`); `finalScores` is winner 1, everyone
 else 0 (the rulebook has no scoring).
 
-**Not the printed sets:** all three expansions (Warriors & Druids, Berserkers &
-Necromancers, Here to Sleigh) are flagged unverified — only their three Party
-Leaders were corrected to published text. Sources for a rebuild are listed in
-`types.ts`; Here to Sleigh needs its rulesheet first.
+**Expansions.** Warriors & Druids and Berserkers & Necromancers are built to
+their official inventories (official per-card wiki pages for most cards; two
+open-source datasets that agree for the rest) with their rules: 7 classes to
+win, Druids succeed at or below their number, two-Item Warriors / Berserkers,
+Necromancers pay their cost first. Readings no source settles are marked
+UNCONFIRMED and listed in `Rules.tsx`. Here to Sleigh is still an
+approximation, flagged unverified — its rulesheet survives only as images.
+
+Known AI gap: the AI never casts Magic cards from its hand (they reach play
+only through other effects).
 
 ### Casting Shadows (`src/games/casting-shadows/`)
 
@@ -344,8 +350,15 @@ the Catastrophe's World's End effect → scoring. Tied players each draw a trait
 and add its face value. Live scores never count bonuses that depend on hidden
 hands (shown as "+?").
 
-**Expansions: none implemented.** The six published packs are listed in the
-lobby but locked; `doomlings-atlas` has their card lists for a rebuild.
+**Expansions** (card lists in `packs/*.ts`, from `doomlings-atlas`): Castle
+Glass (Shell / Coral / Fish classes and their bonuses), Overlush (each game
+draws 40 basic traits, 8 Dominants, 8 Ages and 4 Catastrophes from it into the
+Classic decks) and Imaginary Ends' four creature sets (Suppress, subspecies)
+are built, verified and unlocked. Still locked, with the reason shown in the
+lobby: Imaginary Ends' Magical Merchants add-on (trinkets), Legends of Enderas
+(attachments, Mythling spells, hidden Treasures with a Cloak reaction window),
+Upgrade, Special Edition, and Mokoko Village / Shadow Puppets / Nightflower
+Island (no rulesheet in the sources).
 
 ## Rules sources
 
@@ -411,8 +424,9 @@ through.
 
 ## Where to start next
 
-1. **Rebuild the flagged expansions from their official card lists**, smallest first: Here to Slay's Warriors & Druids and Berserkers & Necromancers (sources listed in its `types.ts`), Casting Shadows' expansion decks (lists in `cards.ts`), Doomlings' six packs (`doomlings-atlas`), then Unstable Unicorns' 8 expansions and 3 editions (lists in `types.ts`; 300+ effects). Here to Sleigh and Hazards Ahead need their rulebooks first; Recipes for Disaster needs its 13 recipe booklets.
+1. **Rebuild the remaining flagged expansions**, best-sourced first: Doomlings' Legends of Enderas and Magical Merchants (rulebooks and card data in `doomlings-atlas`), then Unstable Unicorns' 8 expansions and 3 editions (lists in `types.ts`; 300+ effects). Casting Shadows' expansion decks, Here to Sleigh and Recipes for Disaster depend on reading card text or rules from archived images; Hazards Ahead needs its rulebook. Consider dropping "Uncut Unicorns", which isn't a real product.
 2. **Settle the UNCONFIRMED rules** each game lists in `Rules.tsx` once a source turns up.
+3. **Main bundle size:** every game's rules and card data load with the home page (≈260 KB gzipped). Lazy-loading each game's logic would need the contract to allow an async `createInitialState` / module load.
 
 ## UI and art
 

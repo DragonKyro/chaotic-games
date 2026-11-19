@@ -12,6 +12,7 @@ import type {
   HtsMonster,
   HtsPartyHero,
   HtsPendingRoll,
+  HtsPileFilter,
   HtsPrompt,
   HtsRollRecord,
   HtsState,
@@ -80,17 +81,12 @@ export function createInitialState(config: HtsConfig, seed: number, seats: Seat[
 
     protectedFromSteal: Object.fromEntries(seats.map((s) => [s.id, false])),
     protectedFromDestroy: Object.fromEntries(seats.map((s) => [s.id, false])),
+    returnToHandShield: {},
+    majestelk: {},
 
     turnPlayerId: first.id,
     actionPointsRemaining: 3,
-    turnBuffs: {
-      rollBonus: 0,
-      unchallengeable: false,
-      shadowClawUsed: false,
-      nobleShamanUsed: false,
-      gnawingDreadUsed: false,
-      noOpponentModifiers: false,
-    },
+    turnBuffs: freshTurnBuffs(),
 
     bearyWisePool: [],
     pendingPlay: null,
@@ -194,21 +190,30 @@ export function heroHasItemKind(h: HtsPartyHero, kind: string): boolean {
   return heroEquippedItems(h).some((i) => i.kind === kind);
 }
 
-function heroMaxItems(h: HtsPartyHero): number {
-  if (heroHasItemKind(h, 'bottomless-bag')) return 3;
-  return h.card.maxItems ?? 1;
-}
-
+/**
+ * One Item per Hero (rulebook); two on a Warrior / Berserker printed with the
+ * two-Item symbol, of which at most one may be a Mask (W&D, B&N rulesheets).
+ */
 export function canEquipItemToHero(h: HtsPartyHero, itemCard?: HtsCard): boolean {
   const existing = heroEquippedItems(h);
-  if (itemCard?.kind === 'bottomless-bag') {
-    return existing.length < 3;
-  }
-  if (existing.length >= heroMaxItems(h)) return false;
-  if (itemCard?.class && existing.some((i) => i.class !== null)) {
-    return false;
-  }
+  if (existing.length >= (h.card.maxItems ?? 1)) return false;
+  if (itemCard?.class && existing.some((i) => i.class !== null)) return false;
   return true;
+}
+
+/**
+ * Whether this Hero's effect can be rolled for now: once per turn, unless it
+ * wears Bottomless Bag ("more than once per turn, at a cost of one action
+ * point for each roll"). Sealing Key forbids it outright.
+ */
+export function canRollHero(h: HtsPartyHero): boolean {
+  if (heroHasItemKind(h, 'sealing-key')) return false;
+  return !h.usedThisTurn || heroHasItemKind(h, 'bottomless-bag');
+}
+
+/** Action points to roll for a Hero's effect (Soulbound Grimoire: 2). */
+export function heroRollCost(h: HtsPartyHero): number {
+  return heroHasItemKind(h, 'soulbound-grimoire') ? 2 : 1;
 }
 
 function equipItemOnHero(h: HtsPartyHero, itemCard: HtsCard): boolean {
@@ -229,11 +234,39 @@ function countPartyEquippedItems(s: HtsState, playerId: PlayerId): number {
   return total;
 }
 
-function heroEffectiveClass(h: HtsPartyHero): HtsBaseClass | null {
+export function heroEffectiveClass(h: HtsPartyHero): HtsBaseClass | null {
   for (const item of heroEquippedItems(h)) {
     if (item.class) return item.class;
   }
   return h.card.class;
+}
+
+/**
+ * A class symbol in your Party: a Hero of that class (Masks count) or your
+ * Party Leader of that class — the rulebook's reading of a Monster's class
+ * requirement, used for the class Challenge cards too.
+ */
+export function partyHasClassSymbol(s: HtsState, playerId: PlayerId, cls: HtsBaseClass): boolean {
+  if (s.partyLeaders[playerId]?.class === cls) return true;
+  return partyOf(s, playerId).some((h) => heroEffectiveClass(h) === cls);
+}
+
+/**
+ * "Cards in their Party" (Brawling Spirit): the Hero cards and the Item cards
+ * equipped to them — the rulebook's Party is "the area in front of you in
+ * which you play Hero cards and Item cards". Leaving out the Party Leader and
+ * slain Monsters is UNCONFIRMED.
+ */
+export function partyCardCount(s: HtsState, playerId: PlayerId): number {
+  return partyOf(s, playerId).reduce((n, h) => n + 1 + heroEquippedItems(h).length, 0);
+}
+
+/** Every class in this game (base six plus each class expansion's two), for "Choose a Class". */
+export function classesInGame(s: HtsState): HtsBaseClass[] {
+  const classes: HtsBaseClass[] = ['fighter', 'bard', 'guardian', 'ranger', 'thief', 'wizard'];
+  if (s.config.expansions.includes('warriors-druids')) classes.push('warrior', 'druid');
+  if (s.config.expansions.includes('berserkers-necromancers')) classes.push('berserker', 'necromancer');
+  return classes;
 }
 
 export function partyClasses(s: HtsState, playerId: PlayerId): Set<HtsBaseClass> {
@@ -290,7 +323,7 @@ export function validHeroTargets(
     if (prompt.mode === 'steal' && !canStealPartyHero(s, ownerId)) continue;
 
     for (const h of partyOf(s, ownerId)) {
-      if ((prompt.mode === 'bounceItem' || prompt.mode === 'stealItem') && heroEquippedItems(h).length === 0) continue;
+      if (prompt.mode === 'bounceItem' && heroEquippedItems(h).length === 0) continue;
       if (prompt.mode === 'returnCursedItem' && !heroEquippedItems(h).some((i) => i.type === 'cursedItem')) continue;
       if (prompt.mode === 'equipItem' && !canEquipItemToHero(h, item)) continue;
       if (prompt.mode === 'steal' && prompt.sourceHeroId === h.card.id) continue;
@@ -298,6 +331,28 @@ export function validHeroTargets(
     }
   }
   return results;
+}
+
+/**
+ * The cards a 'choosePartyCard' prompt can pick: Heroes (with their Items)
+ * and single equipped Items. Not Party Leaders ("cannot be sacrificed,
+ * destroyed, stolen"), and not slain Monster cards (UNCONFIRMED).
+ */
+export function validPartyCardTargets(
+  s: HtsState,
+  prompt: Extract<HtsPrompt, { kind: 'choosePartyCard' }>,
+): { ownerId: PlayerId; hero: HtsPartyHero; item: HtsCard | null }[] {
+  const out: { ownerId: PlayerId; hero: HtsPartyHero; item: HtsCard | null }[] = [];
+  for (const seat of s.seats) {
+    const ownerId = seat.id;
+    if (prompt.scope === 'own' ? ownerId !== prompt.playerId : ownerId === prompt.playerId) continue;
+    const heroesOk = prompt.filter === 'any' && (prompt.mode !== 'destroy' || canDestroyPartyHero(s, ownerId));
+    for (const h of partyOf(s, ownerId)) {
+      if (heroesOk) out.push({ ownerId, hero: h, item: null });
+      for (const item of heroEquippedItems(h)) out.push({ ownerId, hero: h, item });
+    }
+  }
+  return out;
 }
 
 /**
@@ -328,16 +383,11 @@ export function computeRollTotals(s: HtsState, r: HtsPendingRoll): { actorTotal:
     if (hasTrophy(s, r.byPlayerId, 'monster-frostbite-krampus')) actorTotal += 1;
 
     const hero = partyOf(s, r.byPlayerId).find((h) => h.card.id === r.sourceCardId);
-    if (hero?.card.kind === 'hardened-hunter') {
-      actorTotal += countPartyEquippedItems(s, r.byPlayerId);
-    }
     if (hero) {
       for (const item of heroEquippedItems(hero)) {
         if (item.kind === 'really-big-ring' || item.kind === 'freshly-sharpened-skates') actorTotal += 2;
-        if (item.kind === 'bloodstone') actorTotal += 3;
         if (item.kind === 'even-bigger-ring') actorTotal += 4;
-        if (item.kind === 'bottomless-bag') actorTotal += 1;
-        if (item.kind === 'curse-of-the-snakes-eyes' || item.kind === 'cursed-glove') actorTotal -= 2;
+        if (item.kind === 'curse-of-the-snakes-eyes') actorTotal -= 2;
       }
     }
   } else if (r.reason === 'monsterAttack') {
@@ -345,16 +395,20 @@ export function computeRollTotals(s: HtsState, r: HtsPendingRoll): { actorTotal:
     if (leaderKind === 'leader-divine-arrow') actorTotal += 1;
     if (leaderKind === 'leader-holly-spirit') actorTotal += 1;
     if (hasTrophy(s, r.byPlayerId, 'monster-abominable-snowbeast')) actorTotal += 2;
+    // Reptilian Ripper: "Each time you roll to ATTACK a Monster card, +2 to your roll."
+    if (hasTrophy(s, r.byPlayerId, 'monster-reptilian-ripper')) actorTotal += 2;
+    // Critical Fang: "+4 to your rolls to ATTACK a Monster card until the end of your turn."
+    if (r.byPlayerId === s.turnPlayerId) actorTotal += s.turnBuffs.attackBonus ?? 0;
   } else if (r.reason === 'challengeDuel') {
     if (s.partyLeaders[r.byPlayerId]?.kind === 'leader-fist-of-reason') actorTotal += 2;
     if (hasTrophy(s, r.byPlayerId, 'monster-titan-wyvern')) actorTotal += 1;
-    if (hasTrophy(s, r.byPlayerId, 'monster-feral-dragon')) actorTotal += 2;
     if (r.challengerId) {
       if (r.challengerId === s.turnPlayerId) challengerTotal += s.turnBuffs.rollBonus;
       if (hasTrophy(s, r.challengerId, 'monster-anuran-cauldron')) challengerTotal += 1;
       if (s.partyLeaders[r.challengerId]?.kind === 'leader-fist-of-reason') challengerTotal += 2;
       if (hasTrophy(s, r.challengerId, 'monster-titan-wyvern')) challengerTotal += 1;
-      if (hasTrophy(s, r.challengerId, 'monster-feral-dragon')) challengerTotal += 2;
+      // A class Challenge card's own "+3 to your roll".
+      challengerTotal += r.challengerBonus ?? 0;
     }
   }
 
@@ -529,8 +583,10 @@ function advanceFlow(s: HtsState) {
       if (s.pendingPlay || s.pendingRoll) return;
       continue;
     }
+    if (front.kind === 'chooseFromPile') refreshPilePrompt(s, front);
     if (isPromptImpossible(s, front)) {
       s.promptQueue.shift();
+      onPromptSkipped(s, front);
       continue;
     }
     break;
@@ -544,6 +600,14 @@ function advanceFlow(s: HtsState) {
 
   if (checkWinCondition(s)) return;
 
+  // Vicious Wildcat: "SLAY any Monster card, then end your turn."
+  if (s.endTurnPending) {
+    s.endTurnPending = false;
+    pushLog(s, s.turnPlayerId, `${seatName(s, s.turnPlayerId)}'s turn ends.`, 'normal');
+    finishTurnAdvance(s);
+    return;
+  }
+
   s.subPhase = 'awaitingAction';
   s.activePlayerId = s.turnPlayerId;
 }
@@ -552,6 +616,9 @@ function runStep(s: HtsState, p: Extract<HtsPrompt, { kind: 'step' }>) {
   const st = p.step;
   if (st.type === 'draw') {
     drawCards(s, p.playerId, st.count);
+  } else if (st.type === 'drawUntil') {
+    const need = st.handSize - handOf(s, p.playerId).length;
+    if (need > 0) drawCards(s, p.playerId, need);
   } else if (st.type === 'moveHero') {
     if (partyOf(s, st.fromPlayerId).some((h) => h.card.id === st.heroCardId)) {
       removeHeroFromParty(s, st.fromPlayerId, st.heroCardId, 'move', { toPlayerId: st.toPlayerId });
@@ -561,21 +628,44 @@ function runStep(s: HtsState, p: Extract<HtsPrompt, { kind: 'step' }>) {
 }
 
 function isPromptImpossible(s: HtsState, p: HtsPrompt): boolean {
-  if (p.kind === 'chooseHeroTarget') {
-    return validHeroTargets(s, p).length === 0;
+  switch (p.kind) {
+    case 'chooseHeroTarget':
+      return validHeroTargets(s, p).length === 0;
+    case 'choosePartyCard':
+      return validPartyCardTargets(s, p).length === 0;
+    case 'chooseCardsFromHand':
+      return !p.keepIfEmpty && validHandCardsForPrompt(s, p).length === 0;
+    case 'chooseFromPile':
+    case 'bullseyePeek':
+      return p.cards.length === 0;
+    case 'chooseMonster':
+      return validMonsterTargets(s, p).length === 0;
+    case 'rerollHero':
+      return !partyOf(s, p.playerId).some((h) => h.card.id === p.heroCardId && heroEquippedItems(h).some((i) => i.id === p.itemCardId));
+    default:
+      return false;
   }
-  if (p.kind === 'chooseCardsFromHand') {
-    if (p.keepIfEmpty) return false;
-    const valid = validHandCardsForPrompt(s, p);
-    return valid.length === 0;
+}
+
+/** A prompt dropped for want of targets may still owe the rest of its effect. */
+function onPromptSkipped(s: HtsState, p: HtsPrompt) {
+  if (p.kind === 'choosePartyCard' && p.effectTag === 'rabidBeastSacrifice') queueRabidBeastDestroys(s, p.playerId, p.tally ?? 0);
+}
+
+/** Boston Terror, when no card is given: "you may choose 2 cards from the discard pile and add them to your hand." */
+function queueBostonTerrorPicks(s: HtsState, playerId: PlayerId) {
+  for (const n of [2, 1]) {
+    queueDiscardSearch(s, playerId, 'any', `Boston Terror (${n} of 2): you may choose a card from the discard pile to add to your hand.`, { optional: true, front: true });
   }
-  if (p.kind === 'chooseFromPile') {
-    return p.cards.length === 0;
-  }
-  if (p.kind === 'bullseyePeek') {
-    return p.cards.length === 0;
-  }
-  return false;
+}
+
+const CLASS_LABEL: Record<HtsBaseClass, string> = {
+  fighter: 'Fighter', bard: 'Bard', guardian: 'Guardian', ranger: 'Ranger', thief: 'Thief', wizard: 'Wizard',
+  warrior: 'Warrior', druid: 'Druid', berserker: 'Berserker', necromancer: 'Necromancer',
+};
+
+export function validMonsterTargets(s: HtsState, p: Extract<HtsPrompt, { kind: 'chooseMonster' }>): HtsMonster[] {
+  return p.mode === 'attack' ? s.monsterRow.filter((m) => canAttackMonster(s, p.playerId, m)) : [...s.monsterRow];
 }
 
 export function validHandCardsForPrompt(
@@ -593,8 +683,91 @@ export function validHandCardsForPrompt(
       return !playsItem || s.seats.some((st) => partyOf(s, st.id).some((h) => canEquipItemToHero(h, c)));
     }
     if (p.filter === 'magic') return c.type === 'magic';
+    if (p.effectTag === 'shadowSaintCost') return c.type === 'modifier';
     return true;
   });
+}
+
+// ============================================================================
+// Pile searches
+// ============================================================================
+
+export function matchesPileFilter(c: HtsCard, filter: HtsPileFilter | undefined): boolean {
+  switch (filter ?? 'any') {
+    case 'any': return true;
+    case 'hero': return c.type === 'hero';
+    case 'item': return c.type === 'item' || c.type === 'cursedItem';
+    case 'magic': return c.type === 'magic';
+    case 'modifier': return c.type === 'modifier';
+    case 'challenge': return c.type === 'challenge';
+    case 'heroOrItem': return c.type === 'hero' || c.type === 'item' || c.type === 'cursedItem';
+    default: return false;
+  }
+}
+
+/** "Search the discard pile for …": the choices are read when the prompt comes up. */
+function queueDiscardSearch(
+  s: HtsState,
+  playerId: PlayerId,
+  filter: HtsPileFilter,
+  reason: string,
+  opts: { optional?: boolean; then?: Extract<HtsPrompt, { kind: 'chooseFromPile' }>['then']; front?: boolean; at?: number } = {},
+) {
+  const prompt: HtsPrompt = {
+    kind: 'chooseFromPile',
+    playerId,
+    reason,
+    optional: !!opts.optional,
+    cards: s.discard.filter((c) => matchesPileFilter(c, filter)),
+    source: 'discard',
+    filter,
+    then: opts.then,
+  };
+  if (opts.at !== undefined) s.promptQueue.splice(opts.at, 0, prompt);
+  else if (opts.front) s.promptQueue.unshift(prompt);
+  else s.promptQueue.push(prompt);
+}
+
+/** "Look at another player's hand. Choose a <type> card (if they have one)…" */
+function lookAtHandPrompt(
+  s: HtsState,
+  playerId: PlayerId,
+  opponentId: PlayerId,
+  filter: HtsPileFilter,
+  reason: string,
+  then?: Extract<HtsPrompt, { kind: 'chooseFromPile' }>['then'],
+): HtsPrompt {
+  const p: Extract<HtsPrompt, { kind: 'chooseFromPile' }> = {
+    kind: 'chooseFromPile',
+    playerId,
+    reason,
+    optional: false,
+    cards: [],
+    source: 'opponentHand',
+    opponentId,
+    filter,
+    then,
+  };
+  refreshPilePrompt(s, p);
+  return p;
+}
+
+/** Re-read a queued search from the live discard pile / hand. */
+function refreshPilePrompt(s: HtsState, p: Extract<HtsPrompt, { kind: 'chooseFromPile' }>) {
+  if (p.source === 'discard' && p.filter) {
+    p.cards = s.discard.filter((c) => matchesPileFilter(c, p.filter));
+  } else if (p.source === 'discard') {
+    // A fixed list (Here to Sleigh's Snow Slinger): drop whatever has left the pile.
+    p.cards = p.cards.filter((c) => s.discard.some((d) => d.id === c.id));
+  } else if (p.source === 'opponentHand' && p.opponentId && p.filter) {
+    p.cards = [...handOf(s, p.opponentId)];
+    if (p.filter !== 'any') p.onlyCardIds = p.cards.filter((c) => matchesPileFilter(c, p.filter)).map((c) => c.id);
+  }
+}
+
+/** The cards a chooseFromPile prompt lets you take (the others are only shown). */
+export function pickablePileCards(p: Extract<HtsPrompt, { kind: 'chooseFromPile' }>): HtsCard[] {
+  return p.onlyCardIds ? p.cards.filter((c) => p.onlyCardIds!.includes(c.id)) : p.cards;
 }
 
 // ============================================================================
@@ -616,6 +789,17 @@ function removeItemFromHero(hero: HtsPartyHero, predicate: (item: HtsCard) => bo
   return null;
 }
 
+/**
+ * A Hero (and its Items) back to its owner's hand: "If a Hero card with an
+ * equipped Item card is … returned to your hand, that Item card is also …
+ * returned to your hand along with the Hero card" (rulebook).
+ */
+function returnHeroToHand(s: HtsState, ownerId: PlayerId, hero: HtsPartyHero) {
+  handOf(s, ownerId).push(...heroEquippedItems(hero), hero.card);
+  hero.equippedItem = null;
+  hero.extraItems = [];
+}
+
 function removeHeroFromParty(
   s: HtsState,
   ownerId: PlayerId,
@@ -626,6 +810,8 @@ function removeHeroFromParty(
     toPlayerId?: PlayerId;
     stealEquippedItemToHand?: PlayerId;
     skipSabretoothCheck?: boolean;
+    /** Logged once the Hero really goes (after any replacement effect), before what that triggers. */
+    announce?: string;
   },
 ): 'done' | 'deferred' | 'saved' | 'missing' {
   const party = partyOf(s, ownerId);
@@ -634,7 +820,7 @@ function removeHeroFromParty(
   const hero = party[idx]!;
 
   // Corrupted Sabretooth check: "Each time you would DESTROY a Hero card, you may STEAL that Hero card instead."
-  // (Only if the Hero could be stolen — Calming Voice / Roaryal Guard block it.)
+  // (Only if the Hero could be stolen — Calming Voice blocks it.)
   if (
     reason === 'destroy' &&
     opts?.byPlayerId &&
@@ -653,26 +839,47 @@ function removeHeroFromParty(
     return 'deferred';
   }
 
-  // Decoy Doll check on sacrifice or destroy
-  if ((reason === 'destroy' || reason === 'sacrifice') && heroHasItemKind(hero, 'decoy-doll')) {
-    const doll = removeItemFromHero(hero, (i) => i.kind === 'decoy-doll');
-    if (doll) s.discard.push(doll);
-    pushLog(s, ownerId, `Decoy Doll sacrificed itself to save ${hero.card.name}!`, 'good');
-    return 'saved';
+  if (reason === 'destroy' || reason === 'sacrifice') {
+    // Decoy Doll: "If the equipped Hero card would be sacrificed or destroyed, move this card to the discard pile instead."
+    if (heroHasItemKind(hero, 'decoy-doll')) {
+      const doll = removeItemFromHero(hero, (i) => i.kind === 'decoy-doll');
+      if (doll) s.discard.push(doll);
+      pushLog(s, ownerId, `Decoy Doll sacrificed itself to save ${hero.card.name}!`, 'good');
+      return 'saved';
+    }
+    // Maegisty: "Until your next turn, if a Hero card in your Party would be
+    // sacrificed or destroyed, return it to your hand instead." Replaced, so
+    // nothing that triggers on a sacrifice / destroy fires.
+    if (s.returnToHandShield?.[ownerId]) {
+      party.splice(idx, 1);
+      returnHeroToHand(s, ownerId, hero);
+      pushLog(s, ownerId, `Maegisty: ${hero.card.name} returns to ${seatName(s, ownerId)}'s hand instead.`, 'good');
+      return 'saved';
+    }
   }
 
   party.splice(idx, 1);
+  if (opts?.announce) pushLog(s, opts.byPlayerId ?? ownerId, opts.announce, reason === 'destroy' ? 'danger' : 'normal');
 
   if (reason === 'steal' || reason === 'move') {
     const destId = opts?.toPlayerId ?? opts?.byPlayerId;
     if (destId) {
       partyOf(s, destId).push(hero);
+      // Cursed Glove: "If another Hero card in your Party is stolen, move the
+      // equipped Hero card to the Party of the player who stole it as well."
+      if (reason === 'steal') {
+        for (const gloved of party.filter((h) => heroHasItemKind(h, 'cursed-glove'))) {
+          party.splice(party.indexOf(gloved), 1);
+          partyOf(s, destId).push(gloved);
+          pushLog(s, ownerId, `Cursed Glove drags ${gloved.card.name} along to ${seatName(s, destId)}'s Party.`, 'danger');
+        }
+      }
     }
     return 'done';
   }
 
-  // Destroy or Sacrifice
-  const hadSoulTether = heroHasItemKind(hero, 'soul-tether');
+  // Destroy or Sacrifice: the Hero and its Items go to the discard pile
+  // (Shurikitty takes the Items instead).
   for (const item of heroEquippedItems(hero)) {
     if (opts?.stealEquippedItemToHand) {
       handOf(s, opts.stealEquippedItemToHand).push(item);
@@ -682,28 +889,62 @@ function removeHeroFromParty(
   }
   hero.equippedItem = null;
   hero.extraItems = [];
+  s.discard.push(hero.card);
 
-  if (hadSoulTether) {
-    handOf(s, ownerId).push(hero.card);
-    pushLog(s, ownerId, `Soul Tether returned ${hero.card.name} to ${seatName(s, ownerId)}'s hand!`, 'good');
-  } else {
-    s.discard.push(hero.card);
+  if (reason === 'destroy' && hasTrophy(s, ownerId, 'monster-dracos')) {
+    drawCards(s, ownerId, 1);
+    pushLog(s, ownerId, `Dracos: ${seatName(s, ownerId)} drew a card when their Hero was destroyed.`, 'good');
   }
-
-  if (reason === 'destroy') {
-    if (hasTrophy(s, ownerId, 'monster-dracos')) {
-      drawCards(s, ownerId, 1);
-      pushLog(s, ownerId, `Dracos: ${seatName(s, ownerId)} drew a card when their Hero was destroyed.`, 'good');
-    }
-    const destroyerId = opts?.byPlayerId;
-    if (destroyerId) {
-      if (hasTrophy(s, destroyerId, 'monster-venomous-gemini')) {
-        drawCards(s, destroyerId, 1);
-        pushLog(s, destroyerId, `Venomous Gemini: ${seatName(s, destroyerId)} drew a card for destroying a Hero!`, 'good');
-      }
-    }
-  }
+  afterHeroGone(s, ownerId, reason, opts?.byPlayerId);
   return 'done';
+}
+
+/** What fires once a Hero has been sacrificed or destroyed. */
+function afterHeroGone(s: HtsState, ownerId: PlayerId, reason: 'destroy' | 'sacrifice', byPlayerId: PlayerId | undefined) {
+  if (reason === 'sacrifice') onCardSacrificed(s, ownerId);
+  // Silent Shield: "For the rest of your turn, if you SACRIFICE or DESTROY a
+  // Hero card, you may search the discard pile for a Hero card…"
+  const doer = reason === 'sacrifice' ? ownerId : byPlayerId;
+  if (doer && doer === s.turnPlayerId && s.turnBuffs.silentShield) {
+    queueDiscardSearch(s, doer, 'hero', 'Silent Shield: you may search the discard pile for a Hero card and add it to your hand.', { optional: true, front: true });
+  }
+  // Soul Tether: "If any Hero card in your Party is sacrificed or destroyed, SACRIFICE the equipped Hero card."
+  for (const tethered of partyOf(s, ownerId).filter((h) => heroHasItemKind(h, 'soul-tether'))) {
+    pushLog(s, ownerId, `Soul Tether: ${seatName(s, ownerId)} must sacrifice ${tethered.card.name} too.`, 'danger');
+    removeHeroFromParty(s, ownerId, tethered.card.id, 'sacrifice', { byPlayerId: ownerId });
+  }
+}
+
+/** Every "SACRIFICE a card" — a Hero or an Item — passes through here. */
+function onCardSacrificed(s: HtsState, sacrificerId: PlayerId) {
+  // Feral Dragon: "Each time any player sacrifices a card, DRAW a card."
+  for (const seat of s.seats) {
+    if (hasTrophy(s, seat.id, 'monster-feral-dragon')) {
+      drawCards(s, seat.id, 1);
+      pushLog(s, seat.id, `Feral Dragon: ${seatName(s, seat.id)} draws a card for ${seatName(s, sacrificerId)}'s sacrifice.`, 'good');
+    }
+  }
+  // Doombringer: "Each time you SACRIFICE a card, you may choose a card from the discard pile and add it to your hand."
+  if (hasTrophy(s, sacrificerId, 'monster-doombringer')) {
+    queueDiscardSearch(s, sacrificerId, 'any', 'Doombringer: you sacrificed a card — you may choose a card from the discard pile to add to your hand.', { optional: true, front: true });
+  }
+}
+
+/** SACRIFICE an equipped Item card (it leaves its Hero for the discard pile). */
+function sacrificeItem(s: HtsState, ownerId: PlayerId, hero: HtsPartyHero, itemId: number) {
+  const item = removeItemFromHero(hero, (i) => i.id === itemId);
+  if (!item) return;
+  s.discard.push(item);
+  pushLog(s, ownerId, `${seatName(s, ownerId)} sacrificed ${item.name}.`, 'normal');
+  onCardSacrificed(s, ownerId);
+}
+
+/** DESTROY an equipped Item card in another player's Party. */
+function destroyItem(s: HtsState, byPlayerId: PlayerId, ownerId: PlayerId, hero: HtsPartyHero, itemId: number) {
+  const item = removeItemFromHero(hero, (i) => i.id === itemId);
+  if (!item) return;
+  s.discard.push(item);
+  pushLog(s, byPlayerId, `${seatName(s, byPlayerId)} destroyed ${item.name} on ${seatName(s, ownerId)}'s ${hero.card.name}.`, 'danger');
 }
 
 // ============================================================================
@@ -718,16 +959,27 @@ function seatsFrom(s: HtsState, from: PlayerId): PlayerId[] {
 }
 
 /**
+ * Whether `playerId` may play this Challenge card. Class Challenges (W&D,
+ * B&N) need that class in your Party: the official card pages list the class
+ * symbol under "Requirement to Play Card". A Party Leader of the class meeting
+ * it (as it does a Monster's class symbol) is UNCONFIRMED.
+ */
+export function canPlayChallengeCard(s: HtsState, playerId: PlayerId, card: HtsCard): boolean {
+  if (card.type !== 'challenge') return false;
+  return !card.challengeClass || partyHasClassSymbol(s, playerId, card.challengeClass);
+}
+
+/**
  * Who may CHALLENGE a card being played: every other player holding a
- * Challenge card, clockwise from the player's left. A card can only be
- * challenged once, so the window closes after the first Challenge lands.
+ * Challenge card they can play, clockwise from the player's left. A card can
+ * only be challenged once, so the window closes after the first Challenge lands.
  */
 function buildChallengeQueue(s: HtsState, byPlayerId: PlayerId, card: HtsCard): PlayerId[] {
   if (s.turnBuffs.unchallengeable && byPlayerId === s.turnPlayerId) return [];
   if ((card.type === 'item' || card.type === 'cursedItem') && hasTrophy(s, byPlayerId, 'monster-warworn-owlbear')) {
     return [];
   }
-  return seatsFrom(s, byPlayerId).filter((id) => id !== byPlayerId && handOf(s, id).some((c) => c.type === 'challenge'));
+  return seatsFrom(s, byPlayerId).filter((id) => id !== byPlayerId && handOf(s, id).some((c) => canPlayChallengeCard(s, id, c)));
 }
 
 /**
@@ -735,9 +987,10 @@ function buildChallengeQueue(s: HtsState, byPlayerId: PlayerId, card: HtsCard): 
  * effect that plays a card from your hand "immediately". Either way it is
  * played from your hand, so it can be Challenged (rulebook: "when that player
  * attempts to play a Hero, Item, or Magic card from their hand"). The caller
- * must not run advanceFlow afterwards: resolution does that.
+ * must not run advanceFlow afterwards: resolution does that. `after` is queued
+ * once the play has resolved, whether it stood or was challenged away.
  */
-function beginPlay(s: HtsState, by: PlayerId, card: HtsCard, target?: { playerId: PlayerId; heroCardId: number }) {
+function beginPlay(s: HtsState, by: PlayerId, card: HtsCard, target?: { playerId: PlayerId; heroCardId: number }, after?: HtsPrompt[]) {
   s.pendingPlay = {
     byPlayerId: by,
     card,
@@ -745,6 +998,7 @@ function beginPlay(s: HtsState, by: PlayerId, card: HtsCard, target?: { playerId
     targetHeroCardId: target?.heroCardId ?? null,
     responderQueue: [],
   };
+  if (after?.length) s.pendingPlay.after = after;
   openOrResolvePlay(s);
 }
 
@@ -774,6 +1028,25 @@ function queueEquipTarget(s: HtsState, by: PlayerId, item: HtsCard, front: boole
   else s.promptQueue.push(prompt);
 }
 
+/** "…then play it immediately": a card just added to your hand is played from it. */
+function playFromHandNow(s: HtsState, by: PlayerId, card: HtsCard) {
+  const hand = handOf(s, by);
+  if (card.type === 'item' || card.type === 'cursedItem') {
+    // Stays in hand until a Hero to wear it is chosen (no Hero: it stays there).
+    queueEquipTarget(s, by, card, true);
+    advanceFlow(s);
+    return;
+  }
+  const idx = hand.findIndex((c) => c.id === card.id);
+  if (idx < 0) {
+    advanceFlow(s);
+    return;
+  }
+  hand.splice(idx, 1);
+  pushLog(s, by, `${seatName(s, by)} played ${card.type === 'hero' ? 'Hero' : 'Magic card'} ${card.name}.`, 'normal');
+  beginPlay(s, by, card);
+}
+
 function openOrResolvePlay(s: HtsState) {
   const p = s.pendingPlay;
   if (!p) throw new Error('openOrResolvePlay with no pending play');
@@ -796,6 +1069,7 @@ function resolvePendingPlay(s: HtsState, cancelled: boolean) {
   if (cancelled) {
     s.discard.push(p.card);
     pushLog(s, p.byPlayerId, `${p.card.name} was defeated in a Challenge and discarded!`, 'danger');
+    if (p.after) s.promptQueue.push(...p.after);
     advanceFlow(s);
     return;
   }
@@ -830,6 +1104,7 @@ function resolvePendingPlay(s: HtsState, cancelled: boolean) {
     resolveMagicEffect(s, by, p.card);
   }
 
+  if (p.after) s.promptQueue.push(...p.after);
   advanceFlow(s);
 }
 
@@ -846,24 +1121,69 @@ export function canUseNobleShaman(s: HtsState, id: PlayerId): boolean {
   return s.partyLeaders[id]?.kind === 'leader-noble-shaman' && !s.turnBuffs.nobleShamanUsed;
 }
 
+/** The stand-in card a Majestelk adjustment is recorded under (not a Modifier card: never discarded). */
+const MAJESTELK_SIGN: HtsCard = {
+  id: -1,
+  kind: 'majestelk-sign',
+  name: 'Majestelk',
+  type: 'hero',
+  class: 'druid',
+  text: '+5 or -5 to each of your rolls until your next turn.',
+  abilityThreshold: null,
+  modifierChoices: [5, -5],
+};
+
+/**
+ * Majestelk: "+5 or -5 to each of your rolls until your next turn." The
+ * player declares the sign on each roll, after seeing the dice, like a
+ * two-option Modifier (per-roll choice: UNCONFIRMED). Which of this roll's
+ * sides `playerId` still owes a sign on.
+ */
+export function majestelkSidesOwed(s: HtsState, r: HtsPendingRoll, playerId: PlayerId): ('actor' | 'challenger')[] {
+  if (!s.majestelk?.[playerId]) return [];
+  const sides: ('actor' | 'challenger')[] = [];
+  if (r.byPlayerId === playerId) sides.push('actor');
+  if (r.challengerId === playerId) sides.push('challenger');
+  return sides.filter((side) => !r.modifiers.some((m) => m.playerId === playerId && m.card.kind === MAJESTELK_SIGN.kind && m.targetSide === side));
+}
+
+/**
+ * Biggest Ring Ever: "Each time you roll to use the equipped Hero card's
+ * effect, you may DISCARD up to 3 cards. For each card discarded, +2 to your
+ * roll." Used once per roll, in the Modifier window.
+ */
+export function canUseBiggestRing(s: HtsState, r: HtsPendingRoll, playerId: PlayerId): boolean {
+  if (r.reason !== 'heroAbility' || r.byPlayerId !== playerId || r.ringUsed) return false;
+  const hero = partyOf(s, playerId).find((h) => h.card.id === r.sourceCardId);
+  return !!hero && heroHasItemKind(hero, 'biggest-ring-ever') && handOf(s, playerId).length > 0;
+}
+
+/**
+ * The values a Modifier card offers on this roll. B&N's Modifier +2/-2: "If
+ * you are attacking a Monster card, +4 to that roll instead."
+ */
+export function modifierValuesFor(r: HtsPendingRoll, playerId: PlayerId, card: HtsCard): number[] {
+  if (card.kind === 'mod-bn-plus-2-minus-2' && r.reason === 'monsterAttack' && r.byPlayerId === playerId) return [4];
+  return card.modifierChoices ?? [];
+}
+
 /**
  * Everyone who could still change the roll, clockwise from the roller.
  * "Each player may play any number of Modifier cards on the same roll", so the
  * queue is rebuilt after every Modifier — including the player who just
  * played one. It terminates: each play spends a card, each decline advances.
  */
-function buildModifierQueue(s: HtsState, rollerId: PlayerId): PlayerId[] {
-  return seatsFrom(s, rollerId).filter((id) => {
-    if (!canPlayModifiers(s, id)) return false;
-    const hasModifierCard = handOf(s, id).some((c) => c.type === 'modifier');
-    return hasModifierCard || canUseNobleShaman(s, id);
+function buildModifierQueue(s: HtsState, r: HtsPendingRoll): PlayerId[] {
+  return seatsFrom(s, r.byPlayerId).filter((id) => {
+    const hasModifierCard = canPlayModifiers(s, id) && handOf(s, id).some((c) => c.type === 'modifier');
+    return hasModifierCard || canUseNobleShaman(s, id) || majestelkSidesOwed(s, r, id).length > 0 || canUseBiggestRing(s, r, id);
   });
 }
 
 function openOrResolveRoll(s: HtsState) {
   const r = s.pendingRoll;
   if (!r) throw new Error('openOrResolveRoll with no pendingRoll');
-  const queue = buildModifierQueue(s, r.byPlayerId);
+  const queue = buildModifierQueue(s, r);
   r.responderQueue = queue;
   const first = queue[0];
   if (!first) {
@@ -874,21 +1194,96 @@ function openOrResolveRoll(s: HtsState) {
   s.activePlayerId = first;
 }
 
+/**
+ * Modifier cards whose bonus depends on the final roll (W&D): Modifier +4
+ * "If the roll is modified above 12, DRAW a card"; Modifier -4 "If the roll is
+ * modified below 2, choose a card from the discard pile". Checked against the
+ * side's final total once every Modifier is in (UNCONFIRMED timing).
+ */
+function modifierAftermath(s: HtsState, r: HtsPendingRoll, totals: { actorTotal: number; challengerTotal: number }) {
+  for (const mod of r.modifiers) {
+    const total = mod.targetSide === 'challenger' ? totals.challengerTotal : totals.actorTotal;
+    if (mod.card.kind === 'mod-wd-plus-4' && total > 12) {
+      drawCards(s, mod.playerId, 1);
+      pushLog(s, mod.playerId, `Modifier +4: the roll went above 12, so ${seatName(s, mod.playerId)} draws a card.`, 'good');
+    } else if (mod.card.kind === 'mod-wd-minus-4' && total < 2) {
+      queueDiscardSearch(s, mod.playerId, 'any', 'Modifier -4: the roll went below 2 — choose a card from the discard pile to add to your hand.');
+    }
+  }
+}
+
+/** Move a face-up Monster to `playerId`'s Party and flip its replacement. */
+function slayMonster(s: HtsState, playerId: PlayerId, monster: HtsMonster) {
+  const idx = s.monsterRow.findIndex((m) => m.card.id === monster.card.id);
+  if (idx < 0) return;
+  s.monsterRow.splice(idx, 1);
+  trophiesOf(s, playerId).push(monster);
+  if (monster.card.kind === 'monster-frostbite-krampus') {
+    claimNiceGift(s, playerId);
+  }
+  // The Raging Manticore: "Each time you SLAY a Monster card, DRAW 2 cards."
+  if (s.partyLeaders[playerId]?.kind === 'leader-raging-manticore') {
+    drawCards(s, playerId, 2);
+    pushLog(s, playerId, `The Raging Manticore: ${seatName(s, playerId)} draws 2 cards for the slay.`, 'good');
+  }
+  const replacement = s.monsterDeck.shift();
+  if (replacement) s.monsterRow.push(replacement);
+}
+
+function queueMonsterPenalty(s: HtsState, playerId: PlayerId, monster: HtsMonster) {
+  const name = monster.card.name;
+  const sacrifice = (reason: string): HtsPrompt => ({ kind: 'chooseHeroTarget', playerId, reason, optional: false, scope: 'own', mode: 'sacrifice' });
+  switch (monster.failPenalty) {
+    case 'sacrificeHero':
+      s.promptQueue.push(sacrifice(`${name} penalty: you must SACRIFICE a Hero card.`));
+      break;
+    case 'sacrificeTwoHeroes':
+      s.promptQueue.push(
+        sacrifice(`${name} penalty (1 of 2): you must SACRIFICE a Hero card.`),
+        sacrifice(`${name} penalty (2 of 2): you must SACRIFICE another Hero card.`),
+      );
+      break;
+    case 'discard2':
+      if (handOf(s, playerId).length > 0) {
+        s.promptQueue.push({
+          kind: 'chooseCardsFromHand',
+          playerId,
+          reason: `${name} penalty: you must DISCARD 2 cards.`,
+          count: Math.min(2, handOf(s, playerId).length),
+          optional: false,
+          filter: 'any',
+          effectTag: 'discard',
+        });
+      }
+      break;
+    case 'discardHand': {
+      const hand = handOf(s, playerId);
+      s.discard.push(...hand);
+      s.hands[playerId] = [];
+      pushLog(s, playerId, `${name}: ${seatName(s, playerId)} discards their hand.`, 'danger');
+      break;
+    }
+  }
+}
+
 function resolvePendingRoll(s: HtsState) {
   const r = s.pendingRoll;
   if (!r) throw new Error('no pendingRoll');
   s.pendingRoll = null;
 
+  // Modifier cards go to the discard pile; leader skills and the Majestelk sign were never cards.
   for (const mod of r.modifiers) {
-    if (mod.card.type !== 'partyLeader') {
+    if (mod.card.type === 'modifier') {
       s.discard.push(mod.card);
     }
   }
 
-  const { actorTotal, challengerTotal } = computeRollTotals(s, r);
+  const totals = computeRollTotals(s, r);
+  const { actorTotal, challengerTotal } = totals;
   const record = (subject: string, outcome: HtsRollRecord['outcome']) => {
     s.lastRoll = { seq: (s.lastRoll?.seq ?? 0) + 1, roll: { ...r, responderQueue: [] }, actorTotal, challengerTotal, subject, outcome };
   };
+  modifierAftermath(s, r, totals);
 
   if (r.reason === 'challengeDuel') {
     const challengerWon = challengerTotal >= actorTotal;
@@ -940,19 +1335,8 @@ function resolvePendingRoll(s: HtsState) {
       if (hero) {
         resolveHeroAbilityEffect(s, r.byPlayerId, hero.card);
       }
-    } else {
-      if (hero && heroHasItemKind(hero, 'particularly-rusty-coin')) {
-        drawCards(s, r.byPlayerId, 1);
-        pushLog(s, r.byPlayerId, 'Particularly Rusty Coin: drew a card after a failed roll!', 'good');
-      }
-      if (hero && heroHasItemKind(hero, 'temporal-hourglass')) {
-        s.actionPointsRemaining += 1;
-        pushLog(s, r.byPlayerId, 'Temporal Hourglass: gained +1 AP after a failed roll!', 'good');
-      }
-      if (hasTrophy(s, r.byPlayerId, 'monster-muscipula')) {
-        drawCards(s, r.byPlayerId, 1);
-        pushLog(s, r.byPlayerId, 'Muscipula: drew a card after an unsuccessful Hero roll!', 'good');
-      }
+    } else if (hero) {
+      heroRollFailed(s, r.byPlayerId, hero);
     }
 
     advanceFlow(s);
@@ -960,8 +1344,7 @@ function resolvePendingRoll(s: HtsState) {
   }
 
   if (r.reason === 'monsterAttack') {
-    const idx = s.monsterRow.findIndex((m) => m.card.id === r.sourceCardId);
-    const monster = idx >= 0 ? s.monsterRow[idx] : null;
+    const monster = s.monsterRow.find((m) => m.card.id === r.sourceCardId);
     if (!monster) {
       advanceFlow(s);
       return;
@@ -972,46 +1355,56 @@ function resolvePendingRoll(s: HtsState) {
     record(monster.card.name, slain ? 'slain' : failed ? 'penalty' : 'nothing');
 
     if (slain) {
-      s.monsterRow.splice(idx, 1);
-      trophiesOf(s, r.byPlayerId).push(monster);
-      if (monster.card.kind === 'monster-frostbite-krampus') {
-        claimNiceGift(s, r.byPlayerId);
-      }
-      // The Raging Manticore: "Each time you SLAY a Monster card, DRAW 2 cards."
-      if (s.partyLeaders[r.byPlayerId]?.kind === 'leader-raging-manticore') {
-        drawCards(s, r.byPlayerId, 2);
-        pushLog(s, r.byPlayerId, `The Raging Manticore: ${seatName(s, r.byPlayerId)} draws 2 cards for the slay.`, 'good');
-      }
-      const replacement = s.monsterDeck.shift();
-      if (replacement) s.monsterRow.push(replacement);
+      slayMonster(s, r.byPlayerId, monster);
       pushLog(s, r.byPlayerId, `⚔️ ${seatName(s, r.byPlayerId)} rolled ${actorTotal} and SLEW ${monster.card.name}!`, 'good');
     } else if (failed) {
       pushLog(s, r.byPlayerId, `💀 ${seatName(s, r.byPlayerId)} rolled ${actorTotal} against ${monster.card.name} and takes the penalty!`, 'danger');
-      if (monster.failPenalty === 'sacrificeHero') {
-        s.promptQueue.push({
-          kind: 'chooseHeroTarget',
-          playerId: r.byPlayerId,
-          reason: `${monster.card.name} penalty: you must SACRIFICE a Hero card.`,
-          optional: false,
-          scope: 'own',
-          mode: 'sacrifice',
-        });
-      } else if (monster.failPenalty === 'discard2' && handOf(s, r.byPlayerId).length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseCardsFromHand',
-          playerId: r.byPlayerId,
-          reason: `${monster.card.name} penalty: you must DISCARD 2 cards.`,
-          count: Math.min(2, handOf(s, r.byPlayerId).length),
-          optional: false,
-          filter: 'any',
-          effectTag: 'discard',
-        });
-      }
+      queueMonsterPenalty(s, r.byPlayerId, monster);
     } else {
       pushLog(s, r.byPlayerId, `${seatName(s, r.byPlayerId)} rolled ${actorTotal} against ${monster.card.name} — no effect.`, 'normal');
     }
 
     advanceFlow(s);
+  }
+}
+
+/** "If you unsuccessfully roll to use the equipped Hero card's effect, …" */
+function heroRollFailed(s: HtsState, playerId: PlayerId, hero: HtsPartyHero) {
+  if (heroHasItemKind(hero, 'particularly-rusty-coin')) {
+    drawCards(s, playerId, 1);
+    pushLog(s, playerId, 'Particularly Rusty Coin: drew a card after a failed roll!', 'good');
+  }
+  // Temporal Hourglass: "…you may spend an extra action point this turn." Pure upside: taken.
+  if (heroHasItemKind(hero, 'temporal-hourglass') && playerId === s.turnPlayerId) {
+    s.actionPointsRemaining += 1;
+    pushLog(s, playerId, 'Temporal Hourglass: +1 action point this turn after the failed roll.', 'good');
+  }
+  // Silver Lining: "…+2 to all of your rolls for the rest of your turn."
+  if (heroHasItemKind(hero, 'silver-lining') && playerId === s.turnPlayerId) {
+    s.turnBuffs.rollBonus += 2;
+    pushLog(s, playerId, 'Silver Lining: +2 to all of your rolls for the rest of your turn.', 'good');
+  }
+  // Dragon's Bile: "…SACRIFICE a Hero card."
+  if (heroHasItemKind(hero, 'dragons-bile')) {
+    s.promptQueue.push({
+      kind: 'chooseHeroTarget',
+      playerId,
+      reason: "Dragon's Bile: the roll failed — you must SACRIFICE a Hero card.",
+      optional: false,
+      scope: 'own',
+      mode: 'sacrifice',
+    });
+  }
+  // Goblet of Caffeination: "…you may SACRIFICE this card, then roll to use that effect again immediately."
+  const goblet = heroEquippedItems(hero).find((i) => i.kind === 'goblet-of-caffeination');
+  if (goblet) {
+    s.promptQueue.push({
+      kind: 'rerollHero',
+      playerId,
+      heroCardId: hero.card.id,
+      itemCardId: goblet.id,
+      reason: `Goblet of Caffeination: sacrifice it to roll for ${hero.card.name} again?`,
+    });
   }
 }
 
@@ -1206,20 +1599,9 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
       s.protectedFromSteal[byPlayerId] = true;
       pushLog(s, byPlayerId, 'Calming Voice: Heroes in your Party cannot be stolen until your next turn.', 'good');
       break;
-    case 'guiding-light': {
-      const heroes = s.discard.filter((c) => c.type === 'hero');
-      if (heroes.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Guiding Light: choose a Hero card from the discard pile to add to your hand.',
-          optional: false,
-          cards: heroes,
-          source: 'discard',
-        });
-      }
+    case 'guiding-light':
+      queueDiscardSearch(s, byPlayerId, 'hero', 'Guiding Light: choose a Hero card from the discard pile to add to your hand.');
       break;
-    }
     case 'holy-curselifter':
       s.promptQueue.push({
         kind: 'chooseHeroTarget',
@@ -1238,20 +1620,9 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
       s.protectedFromDestroy[byPlayerId] = true;
       pushLog(s, byPlayerId, 'Mighty Blade: Heroes in your Party cannot be destroyed until your next turn.', 'good');
       break;
-    case 'radiant-horn': {
-      const mods = s.discard.filter((c) => c.type === 'modifier');
-      if (mods.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Radiant Horn: choose a Modifier card from the discard pile to add to your hand.',
-          optional: false,
-          cards: mods,
-          source: 'discard',
-        });
-      }
+    case 'radiant-horn':
+      queueDiscardSearch(s, byPlayerId, 'modifier', 'Radiant Horn: choose a Modifier card from the discard pile to add to your hand.');
       break;
-    }
     case 'vibrant-glow':
       s.turnBuffs.rollBonus += 5;
       pushLog(s, byPlayerId, 'Vibrant Glow: +5 to all of your rolls until the end of your turn!', 'good');
@@ -1286,20 +1657,9 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
         { kind: 'step', playerId: byPlayerId, step: { type: 'draw', count: 1 } },
       );
       break;
-    case 'lookie-rookie': {
-      const items = s.discard.filter((c) => c.type === 'item' || c.type === 'cursedItem');
-      if (items.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Lookie Rookie: choose an Item card from the discard pile to add to your hand.',
-          optional: false,
-          cards: items,
-          source: 'discard',
-        });
-      }
+    case 'lookie-rookie':
+      queueDiscardSearch(s, byPlayerId, 'item', 'Lookie Rookie: choose an Item card from the discard pile to add to your hand.');
       break;
-    }
     case 'quick-draw': {
       const drawn = drawCards(s, byPlayerId, 2);
       if (drawn.length > 0) {
@@ -1438,20 +1798,9 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
         }
       }
       break;
-    case 'bun-bun': {
-      const magics = s.discard.filter((c) => c.type === 'magic');
-      if (magics.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Bun Bun: choose a Magic card from the discard pile to add to your hand.',
-          optional: false,
-          cards: magics,
-          source: 'discard',
-        });
-      }
+    case 'bun-bun':
+      queueDiscardSearch(s, byPlayerId, 'magic', 'Bun Bun: choose a Magic card from the discard pile to add to your hand.');
       break;
-    }
     case 'buttons':
       s.promptQueue.push({
         kind: 'choosePlayer',
@@ -1554,405 +1903,322 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
       break;
 
     // ========================================================================
-    // Warriors & Druids — Warrior Heroes (8)
+    // Warriors & Druids — Druid Heroes (roll that number or lower)
     // ========================================================================
-    case 'hardened-hunter':
+    case 'big-buckley':
+      // "ATTACK a Monster card immediately. (You must still meet its Party requirement.)"
+      s.promptQueue.push({
+        kind: 'chooseMonster',
+        playerId: byPlayerId,
+        reason: 'Big Buckley: ATTACK a Monster card immediately (no action points).',
+        mode: 'attack',
+      });
+      break;
+    case 'buck-omens':
+      s.promptQueue.push({
+        kind: 'choosePlayer',
+        playerId: byPlayerId,
+        reason: "Buck Omens: choose a player whose hand you'll look at — take a Hero card from it into your Party.",
+        optional: false,
+        effectTag: 'buckOmensLook',
+      });
+      break;
+    case 'doe-fallow':
+      s.promptQueue.push(
+        {
+          kind: 'chooseHeroTarget',
+          playerId: byPlayerId,
+          reason: 'Doe Fallow: SACRIFICE a Hero card (then DRAW until you have 7 cards).',
+          optional: false,
+          scope: 'own',
+          mode: 'sacrifice',
+        },
+        { kind: 'step', playerId: byPlayerId, step: { type: 'drawUntil', handSize: 7 } },
+      );
+      break;
+    case 'glowing-antler':
+      // "You may play up to 2 Magic cards immediately." One at a time: the
+      // first resolves (or is challenged away) before the second is chosen.
+      s.promptQueue.push(glowingAntlerPrompt(byPlayerId, 1));
+      break;
+    case 'maegisty':
+      if (!s.returnToHandShield) s.returnToHandShield = {};
+      s.returnToHandShield[byPlayerId] = true;
+      pushLog(s, byPlayerId, 'Maegisty: until your next turn, a Hero in your Party that would be sacrificed or destroyed returns to your hand instead.', 'good');
+      break;
+    case 'magus-moose':
+      queueDiscardSearch(s, byPlayerId, 'hero', 'Magus Moose: choose a Hero card from the discard pile — it goes to your hand, then you play it immediately.', { then: 'playImmediately' });
+      break;
+    case 'majestelk':
+      // "SACRIFICE a Hero card. +5 or -5 to each of your rolls until your next turn."
+      if (!s.majestelk) s.majestelk = {};
+      s.majestelk[byPlayerId] = true;
       s.promptQueue.push({
         kind: 'chooseHeroTarget',
         playerId: byPlayerId,
-        reason: 'Hardened Hunter: choose a Hero card to DESTROY.',
+        reason: 'Majestelk: SACRIFICE a Hero card.',
         optional: false,
-        scope: 'others',
-        mode: 'destroy',
+        scope: 'own',
+        mode: 'sacrifice',
+      });
+      pushLog(s, byPlayerId, 'Majestelk: +5 or -5 to each of your rolls until your next turn.', 'good');
+      break;
+    case 'stagguard':
+      s.turnBuffs.noOpponentModifiers = true;
+      pushLog(s, byPlayerId, 'Stagguard: no other player can play Modifier cards until the end of your turn!', 'good');
+      break;
+
+    // ========================================================================
+    // Warriors & Druids — Warrior Heroes
+    // ========================================================================
+    case 'agile-dagger':
+      s.promptQueue.push({
+        kind: 'chooseCardsFromHand',
+        playerId: byPlayerId,
+        reason: 'Agile Dagger: you may play up to 2 Item cards from your hand immediately.',
+        count: 2,
+        upTo: true,
+        optional: true,
+        filter: 'item',
+        effectTag: 'playFreeItemsUpTo2',
       });
       break;
     case 'blinding-blade':
       s.promptQueue.push({
         kind: 'choosePlayer',
         playerId: byPlayerId,
-        reason: "Blinding Blade: choose a player to return all equipped Items in their Party to your hand.",
+        reason: "Blinding Blade: choose any player — every Item equipped in that player's Party goes to your hand.",
         optional: false,
         effectTag: 'blindingBladeStealItems',
+        includeSelf: true,
       });
       break;
-    case 'tenacious-timber':
-      s.promptQueue.push({
-        kind: 'chooseHeroTarget',
-        playerId: byPlayerId,
-        reason: 'Tenacious Timber: choose a Hero with an equipped Item to STEAL that Item into your hand.',
-        optional: true,
-        scope: 'any',
-        mode: 'stealItem',
-      });
+    case 'critical-fang':
+      s.turnBuffs.attackBonus = (s.turnBuffs.attackBonus ?? 0) + 4;
+      pushLog(s, byPlayerId, 'Critical Fang: +4 to your rolls to ATTACK a Monster card until the end of your turn!', 'good');
       break;
-    case 'agile-dagger':
-      if (handOf(s, byPlayerId).some((c) => c.type === 'item' || c.type === 'cursedItem')) {
-        s.promptQueue.push({
-          kind: 'chooseCardsFromHand',
-          playerId: byPlayerId,
-          reason: 'Agile Dagger: you may play up to 2 Item cards from your hand immediately.',
-          count: 2,
-          upTo: true,
-          optional: true,
-          filter: 'item',
-          effectTag: 'playFreeItemsUpTo2',
-        });
-      }
+    case 'hardened-hunter': {
+      const count = s.seats.filter((st) => st.id !== byPlayerId).reduce((n, st) => n + trophiesOf(s, st.id).length, 0);
+      if (count > 0) drawCards(s, byPlayerId, count);
+      pushLog(s, byPlayerId, `Hardened Hunter: ${seatName(s, byPlayerId)} draws ${count} card${count === 1 ? '' : 's'} (one per Monster in the other Parties).`, 'good');
       break;
+    }
     case 'looting-lupo': {
-      const count = Math.max(1, countPartyEquippedItems(s, byPlayerId));
-      drawCards(s, byPlayerId, count);
-      pushLog(s, byPlayerId, `Looting Lupo: drew ${count} card(s) for equipped Items!`, 'good');
+      const count = countPartyEquippedItems(s, byPlayerId);
+      if (count > 0) drawCards(s, byPlayerId, count);
+      pushLog(s, byPlayerId, `Looting Lupo: ${seatName(s, byPlayerId)} draws ${count} card${count === 1 ? '' : 's'} (one per equipped Item).`, 'good');
       break;
     }
-    case 'mightyvis': {
-      drawCards(s, byPlayerId, 1);
-      const items = s.discard.filter((c) => c.type === 'item' || c.type === 'cursedItem');
-      if (items.length > 0) {
+    case 'silent-shield':
+      s.turnBuffs.silentShield = true;
+      pushLog(s, byPlayerId, 'Silent Shield: for the rest of your turn, each Hero you sacrifice or destroy lets you search the discard pile for a Hero.', 'good');
+      break;
+    case 'tenacious-timber': {
+      const n = trophiesOf(s, byPlayerId).length;
+      for (let i = 0; i < n; i++) {
         s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Mightyvis: choose an Item card from the discard pile to add to your hand.',
-          optional: false,
-          cards: items,
-          source: 'discard',
-        });
-      }
-      break;
-    }
-    case 'valiant-valor':
-      s.turnBuffs.rollBonus += 2;
-      drawCards(s, byPlayerId, 1);
-      pushLog(s, byPlayerId, 'Valiant Valor: +2 to all rolls this turn and drew 1 card!', 'good');
-      break;
-    case 'wild-buck':
-      s.promptQueue.push({
-        kind: 'choosePlayer',
-        playerId: byPlayerId,
-        reason: "Wild Buck: choose a player to pull a card from (pull a 2nd if it's an Item or Modifier).",
-        optional: false,
-        effectTag: 'wildBuckPull',
-      });
-      break;
-
-    // ========================================================================
-    // Warriors & Druids — Druid Heroes (8 — rollLow: true)
-    // ========================================================================
-    case 'big-buckley': {
-      const pool = s.discard.filter((c) => c.type === 'hero' || c.type === 'item' || c.type === 'cursedItem');
-      if (pool.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Big Buckley: choose a Hero or Item card from the discard pile to add to your hand.',
-          optional: false,
-          cards: pool,
-          source: 'discard',
-        });
-      }
-      break;
-    }
-    case 'buck-omens':
-      s.promptQueue.push({
-        kind: 'choosePlayer',
-        playerId: byPlayerId,
-        reason: "Buck Omens: choose another player to look at their hand and take a Hero (or any card).",
-        optional: false,
-        effectTag: 'buckOmensSteal',
-      });
-      break;
-    case 'dose-of-dette':
-      drawCards(s, byPlayerId, 2);
-      for (const seat of s.seats) {
-        if (seat.id !== byPlayerId) {
-          drawCards(s, seat.id, 1);
-        }
-      }
-      break;
-    case 'glowing-antler':
-      drawCards(s, byPlayerId, 2);
-      s.promptQueue.push({
-        kind: 'chooseHeroTarget',
-        playerId: byPlayerId,
-        reason: 'Glowing Antler: choose a Hero with an equipped Item to return that Item to its owner.',
-        optional: true,
-        scope: 'any',
-        mode: 'bounceItem',
-      });
-      break;
-    case 'magus-moose': {
-      const magics = s.discard.filter((c) => c.type === 'magic');
-      if (magics.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Magus Moose: choose a Magic card from the discard pile to play immediately.',
-          optional: false,
-          cards: magics,
-          source: 'discardPlayMagic',
-        });
-      } else {
-        drawCards(s, byPlayerId, 2);
-      }
-      break;
-    }
-    case 'maegisty':
-      s.promptQueue.push({
-        kind: 'chooseHeroTarget',
-        playerId: byPlayerId,
-        reason: 'Maegisty: choose a Hero card to STEAL.',
-        optional: false,
-        scope: 'others',
-        mode: 'steal',
-      });
-      break;
-    case 'stagguard':
-      s.turnBuffs.noOpponentModifiers = true;
-      drawCards(s, byPlayerId, 1);
-      pushLog(s, byPlayerId, 'Stagguard: no other player can play Modifier cards until the end of your turn!', 'good');
-      break;
-    case 'wishing-wing':
-      drawCards(s, byPlayerId, 2);
-      if (handOf(s, byPlayerId).some((c) => c.type === 'hero')) {
-        s.promptQueue.push({
-          kind: 'chooseCardsFromHand',
-          playerId: byPlayerId,
-          reason: 'Wishing Wing: you may play a Hero card from your hand immediately.',
-          count: 1,
-          optional: true,
-          filter: 'hero',
-          effectTag: 'playFreeHero',
-        });
-      }
-      break;
-
-    // ========================================================================
-    // Berserkers & Necromancers — Berserker Heroes (8)
-    // ========================================================================
-    case 'annihilator':
-      drawCards(s, byPlayerId, 1);
-      s.promptQueue.push({
-        kind: 'chooseHeroTarget',
-        playerId: byPlayerId,
-        reason: 'Annihilator: choose a Hero card to DESTROY.',
-        optional: false,
-        scope: 'others',
-        mode: 'destroy',
-      });
-      break;
-    case 'brawling-spirit':
-      s.promptQueue.push(
-        {
           kind: 'chooseHeroTarget',
           playerId: byPlayerId,
-          reason: 'Brawling Spirit (1 of 3): choose one of your Hero cards to SACRIFICE.',
+          reason: `Tenacious Timber (${i + 1} of ${n}): choose a Hero card to STEAL.`,
+          optional: false,
+          scope: 'others',
+          mode: 'steal',
+        });
+      }
+      if (n === 0) pushLog(s, byPlayerId, 'Tenacious Timber: no Monsters in your Party, so nothing to steal.', 'normal');
+      break;
+    }
+    case 'wolfgang-pack': {
+      const others = Math.max(0, partyOf(s, byPlayerId).length - 1);
+      s.turnBuffs.rollBonus += others;
+      pushLog(s, byPlayerId, `Wolfgang Pack: +${others} to all of your rolls until the end of your turn!`, 'good');
+      break;
+    }
+
+    // ========================================================================
+    // Berserkers & Necromancers — Necromancer Heroes. "You must pay the cost
+    // stated at the beginning of the card's effect in order to use the rest of
+    // that card's effect" (B&N rulesheet): the rest is queued only once the
+    // cost is paid, so an unpayable cost leaves the effect unused.
+    // ========================================================================
+    case 'bark-hexer':
+      s.promptQueue.push({
+        kind: 'chooseCardsFromHand',
+        playerId: byPlayerId,
+        reason: 'Bark Hexer: DISCARD a card (the cost) — then each other player must DISCARD 2 cards.',
+        count: 1,
+        optional: false,
+        filter: 'any',
+        effectTag: 'barkHexerDiscard',
+      });
+      break;
+    case 'beholden-retriever':
+      s.promptQueue.push({
+        kind: 'chooseHeroTarget',
+        playerId: byPlayerId,
+        reason: 'Beholden Retriever: SACRIFICE a Hero card (the cost) — then take a Hero or Item card from the discard pile and play it.',
+        optional: false,
+        scope: 'own',
+        mode: 'sacrifice',
+        effectTag: 'beholdenCost',
+      });
+      break;
+    case 'bone-collector':
+      s.promptQueue.push({
+        kind: 'choosePartyCard',
+        playerId: byPlayerId,
+        reason: 'Bone Collector: SACRIFICE an Item card in your Party (the cost) — then take a Hero card from the discard pile and play it.',
+        optional: false,
+        scope: 'own',
+        mode: 'sacrifice',
+        filter: 'item',
+        effectTag: 'boneCollectorCost',
+      });
+      break;
+    case 'boston-terror':
+      s.promptQueue.push({
+        kind: 'choosePlayer',
+        playerId: byPlayerId,
+        reason: 'Boston Terror: choose a player — they may give you a card; if not, you may take 2 cards from the discard pile.',
+        optional: false,
+        effectTag: 'bostonTerrorAsk',
+      });
+      break;
+    case 'grim-pupper':
+      // "Each player (including you) must SACRIFICE a card." — a Hero or an Item.
+      for (const id of seatsFrom(s, byPlayerId)) {
+        s.promptQueue.push({
+          kind: 'choosePartyCard',
+          playerId: id,
+          reason: `Grim Pupper: ${id === byPlayerId ? 'you' : 'every player'} must SACRIFICE a card (a Hero or an equipped Item).`,
           optional: false,
           scope: 'own',
           mode: 'sacrifice',
-        },
-        {
-          kind: 'chooseHeroTarget',
-          playerId: byPlayerId,
-          reason: 'Brawling Spirit (2 of 3): choose a Hero card to DESTROY.',
-          optional: true,
-          scope: 'others',
-          mode: 'destroy',
-        },
-        {
-          kind: 'chooseHeroTarget',
-          playerId: byPlayerId,
-          reason: 'Brawling Spirit (3 of 3): choose a second Hero card to DESTROY.',
-          optional: true,
-          scope: 'others',
-          mode: 'destroy',
-        },
-      );
-      break;
-    case 'gruesome-gladiator':
-      for (const seat of s.seats) {
-        if (seat.id !== byPlayerId && partyOf(s, seat.id).length > 0) {
-          s.promptQueue.push({
-            kind: 'chooseHeroTarget',
-            playerId: seat.id,
-            reason: 'Gruesome Gladiator: you must SACRIFICE a Hero card in your Party.',
-            optional: false,
-            scope: 'own',
-            mode: 'sacrifice',
-          });
-        }
+          filter: 'any',
+        });
       }
       break;
-    case 'meowntain':
-      s.turnBuffs.rollBonus += 4;
-      pushLog(s, byPlayerId, 'Meowntain: +4 to all of your rolls until the end of your turn!', 'good');
+    case 'hollow-husk':
+      s.promptQueue.push({
+        kind: 'choosePlayer',
+        playerId: byPlayerId,
+        reason: "Hollow Husk: choose a player whose hand you'll look at — take a Magic card from it (you may play it).",
+        optional: false,
+        effectTag: 'hollowHuskLook',
+      });
       break;
-    case 'rabid-beast':
-      if (handOf(s, byPlayerId).length <= 3) {
-        drawCards(s, byPlayerId, 2);
+    case 'perfect-vessel': {
+      // Cost: "SACRIFICE this card, then STEAL a Hero card."
+      const res = removeHeroFromParty(s, byPlayerId, heroCard.id, 'sacrifice', { byPlayerId, announce: `${seatName(s, byPlayerId)} sacrificed Perfect Vessel.` });
+      if (res !== 'missing') {
+        s.promptQueue.push({
+          kind: 'chooseHeroTarget',
+          playerId: byPlayerId,
+          reason: 'Perfect Vessel: STEAL a Hero card.',
+          optional: false,
+          scope: 'others',
+          mode: 'steal',
+        });
       }
+      break;
+    }
+    case 'shadow-saint':
       s.promptQueue.push({
-        kind: 'chooseHeroTarget',
+        kind: 'chooseCardsFromHand',
         playerId: byPlayerId,
-        reason: 'Rabid Beast: choose a Hero card to DESTROY.',
+        reason: 'Shadow Saint: DISCARD a Modifier card (the cost) — then no other player can play Modifier cards until the end of your turn.',
+        publicReason: 'Shadow Saint: discarding a Modifier card to shut out every other Modifier this turn.',
+        count: 1,
         optional: false,
-        scope: 'others',
-        mode: 'destroy',
+        filter: 'any',
+        effectTag: 'shadowSaintCost',
       });
-      break;
-    case 'roaryal-guard':
-      s.protectedFromDestroy[byPlayerId] = true;
-      s.protectedFromSteal[byPlayerId] = true;
-      pushLog(s, byPlayerId, 'Roaryal Guard: Heroes in your Party cannot be destroyed or stolen until your next turn!', 'good');
-      break;
-    case 'unbridled-fury':
-      s.actionPointsRemaining += 1;
-      pushLog(s, byPlayerId, 'Unbridled Fury: gained +1 Action Point this turn!', 'good');
-      s.promptQueue.push({
-        kind: 'chooseHeroTarget',
-        playerId: byPlayerId,
-        reason: 'Unbridled Fury: choose a Hero card to DESTROY.',
-        optional: false,
-        scope: 'others',
-        mode: 'destroy',
-      });
-      break;
-    case 'vicious-wildcat':
-      drawCards(s, byPlayerId, 1);
-      s.promptQueue.push(
-        {
-          kind: 'chooseHeroTarget',
-          playerId: byPlayerId,
-          reason: 'Vicious Wildcat (1 of 2): choose a Hero card to DESTROY.',
-          optional: true,
-          scope: 'others',
-          mode: 'destroy',
-        },
-        {
-          kind: 'chooseHeroTarget',
-          playerId: byPlayerId,
-          reason: 'Vicious Wildcat (2 of 2): choose a second Hero card to DESTROY.',
-          optional: true,
-          scope: 'others',
-          mode: 'destroy',
-        },
-      );
       break;
 
     // ========================================================================
-    // Berserkers & Necromancers — Necromancer Heroes (8)
+    // Berserkers & Necromancers — Berserker Heroes
     // ========================================================================
-    case 'bark-hexer':
-      if (handOf(s, byPlayerId).length > 0) {
+    case 'annihilator':
+      queueDiscardSearch(s, byPlayerId, 'challenge', 'Annihilator: choose a Challenge card from the discard pile to add to your hand.');
+      break;
+    case 'brawling-spirit': {
+      // "Each player (including you) with more than 3 cards in their Party must SACRIFICE a card."
+      const crowded = seatsFrom(s, byPlayerId).filter((id) => partyCardCount(s, id) > 3);
+      for (const id of crowded) {
         s.promptQueue.push({
-          kind: 'chooseCardsFromHand',
-          playerId: byPlayerId,
-          reason: 'Bark Hexer: DISCARD a card, then each other player must DISCARD 2 cards.',
-          count: 1,
+          kind: 'choosePartyCard',
+          playerId: id,
+          reason: 'Brawling Spirit: your Party has more than 3 cards — you must SACRIFICE one (a Hero or an equipped Item).',
           optional: false,
+          scope: 'own',
+          mode: 'sacrifice',
           filter: 'any',
-          effectTag: 'barkHexerDiscard',
         });
       }
-      break;
-    case 'beholden-retriever': {
-      const heroes = s.discard.filter((c) => c.type === 'hero');
-      if (heroes.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Beholden Retriever: choose a Hero card from the discard pile to add to your hand.',
-          optional: false,
-          cards: heroes,
-          source: 'discard',
-        });
-      }
+      if (crowded.length === 0) pushLog(s, byPlayerId, 'Brawling Spirit: no Party has more than 3 cards.', 'normal');
       break;
     }
-    case 'bone-collector': {
-      const heroes = s.discard.filter((c) => c.type === 'hero');
-      if (heroes.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Bone Collector: choose a Hero card from the discard pile to bring directly into your Party.',
-          optional: false,
-          cards: heroes,
-          source: 'discardReviveToParty',
-        });
+    case 'gruesome-gladiator':
+      // "Look at each other player's hand. Choose a card from each player's hand and add it to your hand."
+      for (const id of seatsFrom(s, byPlayerId)) {
+        if (id === byPlayerId || handOf(s, id).length === 0) continue;
+        s.promptQueue.push(lookAtHandPrompt(s, byPlayerId, id, 'any', `Gruesome Gladiator: choose a card from ${seatName(s, id)}'s hand to take.`));
       }
       break;
-    }
-    case 'boston-terror': {
-      drawCards(s, byPlayerId, 1);
-      const pool = s.discard.filter((c) => c.type === 'magic' || c.type === 'modifier');
-      if (pool.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Boston Terror: choose a Magic or Modifier card from the discard pile to add to your hand.',
-          optional: false,
-          cards: pool,
-          source: 'discard',
-        });
-      }
+    case 'meowntain':
+      s.turnBuffs.rollBonus += 5;
+      pushLog(s, byPlayerId, 'Meowntain: +5 to all of your rolls until the end of your turn!', 'good');
+      s.promptQueue.push({
+        kind: 'choosePartyCard',
+        playerId: byPlayerId,
+        reason: 'Meowntain: SACRIFICE a card (a Hero or an equipped Item).',
+        optional: false,
+        scope: 'own',
+        mode: 'sacrifice',
+        filter: 'any',
+      });
       break;
-    }
-    case 'grim-pupper': {
-      const heroes = s.discard.filter((c) => c.type === 'hero');
-      if (heroes.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Grim Pupper: choose a Hero card from the discard pile to add to your hand.',
-          optional: false,
-          cards: heroes,
-          source: 'discard',
-        });
-      }
+    case 'rabid-beast':
+      s.promptQueue.push({
+        kind: 'choosePartyCard',
+        playerId: byPlayerId,
+        reason: rabidBeastReason(0),
+        optional: true,
+        scope: 'own',
+        mode: 'sacrifice',
+        filter: 'any',
+        effectTag: 'rabidBeastSacrifice',
+        tally: 0,
+      });
       break;
-    }
-    case 'hollow-husk': {
-      if (s.discard.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Hollow Husk: choose any card from the discard pile to add to your hand.',
-          optional: false,
-          cards: [...s.discard],
-          source: 'discard',
-        });
-      }
+    case 'roaryal-guard':
+      s.promptQueue.push({
+        kind: 'chooseClass',
+        playerId: byPlayerId,
+        reason: "Roaryal Guard: choose a Class — every Hero of that Class returns to its player's hand.",
+        classes: classesInGame(s),
+        effectTag: 'roaryalGuard',
+      });
       break;
-    }
-    case 'perfect-vessel': {
-      const heroes = s.discard.filter((c) => c.type === 'hero');
-      if (heroes.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Perfect Vessel: choose a Hero card from the discard pile to revive into your Party and roll immediately.',
-          optional: false,
-          cards: heroes,
-          source: 'discardReviveAndRoll',
-        });
-      }
+    case 'unbridled-fury':
+      s.promptQueue.push({
+        kind: 'chooseHeroTarget',
+        playerId: byPlayerId,
+        reason: 'Unbridled Fury: DESTROY a Hero card (a Berserker gives you an extra action point).',
+        optional: false,
+        scope: 'others',
+        mode: 'destroy',
+        effectTag: 'unbridledFuryDestroy',
+      });
       break;
-    }
-    case 'shadow-saint': {
-      drawCards(s, byPlayerId, 1);
-      const pool = s.discard.filter((c) => c.type === 'item' || c.type === 'cursedItem' || c.type === 'magic');
-      if (pool.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Shadow Saint: choose an Item or Magic card from the discard pile to add to your hand.',
-          optional: false,
-          cards: pool,
-          source: 'discard',
-        });
-      }
+    case 'vicious-wildcat':
+      s.promptQueue.push({
+        kind: 'chooseMonster',
+        playerId: byPlayerId,
+        reason: 'Vicious Wildcat: SLAY any Monster card — then your turn ends.',
+        mode: 'slay',
+      });
       break;
-    }
 
     // ========================================================================
     // Here to Sleigh — Holiday Heroes (6)
@@ -2008,22 +2274,59 @@ function resolveHeroAbilityEffect(s: HtsState, byPlayerId: PlayerId, heroCard: H
   }
 }
 
+/** The rest of an effect once a 'choosePartyCard' choice is made. */
+function afterPartyCardChosen(s: HtsState, prompt: Extract<HtsPrompt, { kind: 'choosePartyCard' }>, at: number) {
+  const by = prompt.playerId;
+  switch (prompt.effectTag) {
+    case 'rabidBeastSacrifice':
+      // "SACRIFICE any number of cards, then DESTROY the same number of cards." Ask for another.
+      s.promptQueue.splice(at, 0, { ...prompt, tally: (prompt.tally ?? 0) + 1, reason: rabidBeastReason((prompt.tally ?? 0) + 1) });
+      break;
+    case 'boneCollectorCost':
+      queueDiscardSearch(s, by, 'hero', 'Bone Collector: choose a Hero card from the discard pile — it goes to your hand, then you play it immediately.', { then: 'playImmediately', at });
+      break;
+    default:
+      break;
+  }
+}
+
+function rabidBeastReason(tally: number): string {
+  return `Rabid Beast: SACRIFICE a card (${tally} so far) — or stop, then DESTROY that many cards.`;
+}
+
+function queueRabidBeastDestroys(s: HtsState, playerId: PlayerId, n: number) {
+  for (let i = n; i >= 1; i--) {
+    s.promptQueue.unshift({
+      kind: 'choosePartyCard',
+      playerId,
+      reason: `Rabid Beast (${i} of ${n}): DESTROY a card in another player's Party.`,
+      optional: false,
+      scope: 'others',
+      mode: 'destroy',
+      filter: 'any',
+    });
+  }
+}
+
+/** Glowing Antler: "You may play up to 2 Magic cards immediately." — one at a time. */
+function glowingAntlerPrompt(playerId: PlayerId, n: 1 | 2): HtsPrompt {
+  return {
+    kind: 'chooseCardsFromHand',
+    playerId,
+    reason: `Glowing Antler (${n} of 2): you may play a Magic card from your hand immediately.`,
+    count: 1,
+    optional: true,
+    filter: 'magic',
+    effectTag: 'playFreeMagicsUpTo2',
+    sequence: n,
+  };
+}
+
 function resolveMagicEffect(s: HtsState, byPlayerId: PlayerId, card: HtsCard) {
   switch (card.kind) {
-    case 'call-to-the-fallen': {
-      const heroes = s.discard.filter((c) => c.type === 'hero');
-      if (heroes.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Call to the Fallen: choose a Hero card from the discard pile to add to your hand.',
-          optional: false,
-          cards: heroes,
-          source: 'discard',
-        });
-      }
+    case 'call-to-the-fallen':
+      queueDiscardSearch(s, byPlayerId, 'hero', 'Call to the Fallen: choose a Hero card from the discard pile to add to your hand.');
       break;
-    }
     case 'critical-boost':
       drawCards(s, byPlayerId, 3);
       if (handOf(s, byPlayerId).length > 0) {
@@ -2104,44 +2407,50 @@ function resolveMagicEffect(s: HtsState, byPlayerId: PlayerId, card: HtsCard) {
         { kind: 'step', playerId: byPlayerId, step: { type: 'draw', count: 1 } },
       );
       break;
+    // Warriors & Druids
     case 'beast-call': {
-      drawCards(s, byPlayerId, 1);
-      const heroes = s.discard.filter((c) => c.type === 'hero');
-      if (heroes.length > 0) {
-        s.promptQueue.push({
-          kind: 'chooseFromPile',
-          playerId: byPlayerId,
-          reason: 'Beast Call: choose a Hero card from the discard pile to add to your hand.',
-          optional: false,
-          cards: heroes,
-          source: 'discard',
-        });
-      }
+      // "Move all face-up Monster cards to the bottom of the Monster deck and
+      // flip the top 3 cards from the Monster deck face up. You may spend an
+      // extra action point this turn." (The extra point is pure upside: taken.)
+      s.monsterDeck.push(...s.monsterRow);
+      s.monsterRow = s.monsterDeck.splice(0, 3);
+      if (byPlayerId === s.turnPlayerId) s.actionPointsRemaining += 1;
+      pushLog(s, byPlayerId, `Beast Call: new Monsters prowl in — ${s.monsterRow.map((m) => m.card.name).join(', ')}. +1 action point this turn.`, 'good');
       break;
     }
     case 'rapid-refresh': {
+      // "DISCARD every card in your hand (if you have any) and DRAW 4 cards."
+      const hand = handOf(s, byPlayerId);
+      s.discard.push(...hand);
+      s.hands[byPlayerId] = [];
+      drawCards(s, byPlayerId, 4);
+      pushLog(s, byPlayerId, 'Rapid Refresh: discarded their hand and drew 4 cards.', 'good');
+      break;
+    }
+
+    // Berserkers & Necromancers
+    case 'lightning-labrys':
+      // "DISCARD up to 3 cards. For each card discarded, choose a player. That player must SACRIFICE a Hero card."
+      s.promptQueue.push({
+        kind: 'chooseCardsFromHand',
+        playerId: byPlayerId,
+        reason: 'Lightning Labrys: DISCARD up to 3 cards — for each, choose a player who must SACRIFICE a Hero card.',
+        count: 3,
+        upTo: true,
+        optional: true,
+        filter: 'any',
+        effectTag: 'lightningLabrysDiscard',
+      });
+      break;
+    case 'mass-sacrifice': {
+      // "DISCARD your hand, then DRAW 5 cards."
       const hand = handOf(s, byPlayerId);
       s.discard.push(...hand);
       s.hands[byPlayerId] = [];
       drawCards(s, byPlayerId, 5);
-      pushLog(s, byPlayerId, 'Rapid Refresh: discarded hand and drew 5 new cards!', 'good');
+      pushLog(s, byPlayerId, 'Mass Sacrifice: discarded their hand and drew 5 cards.', 'good');
       break;
     }
-    case 'mass-sacrifice':
-      drawCards(s, byPlayerId, 2);
-      for (const seat of s.seats) {
-        if (seat.id !== byPlayerId && partyOf(s, seat.id).length > 0) {
-          s.promptQueue.push({
-            kind: 'chooseHeroTarget',
-            playerId: seat.id,
-            reason: 'Mass Sacrifice: you must SACRIFICE a Hero card in your Party.',
-            optional: false,
-            scope: 'own',
-            mode: 'sacrifice',
-          });
-        }
-      }
-      break;
     case 'holiday-cheer':
       claimNiceGift(s, byPlayerId);
       drawCards(s, byPlayerId, 2);
@@ -2231,11 +2540,14 @@ function handleUseHeroAbility(s: HtsState, a: Extract<HtsAction, { type: 'useHer
   requireTurnAction(s, a.playerId, 1);
   const hero = partyOf(s, a.playerId).find((h) => h.card.id === a.heroCardId);
   if (!hero) throw new Error('Hero not in your Party');
-  if (hero.usedThisTurn) throw new Error('Hero ability already used this turn');
   if (heroHasItemKind(hero, 'sealing-key')) throw new Error('Sealing Key prevents using this Hero ability');
+  if (!canRollHero(hero)) throw new Error('Hero ability already used this turn');
+  const cost = heroRollCost(hero);
+  requireTurnAction(s, a.playerId, cost);
 
-  s.actionPointsRemaining -= 1;
+  s.actionPointsRemaining -= cost;
   hero.usedThisTurn = true;
+  hero.rollsThisTurn = (hero.rollsThisTurn ?? 0) + 1;
 
   s.pendingRoll = {
     byPlayerId: a.playerId,
@@ -2327,16 +2639,51 @@ function handleGnawingDreadSearch(s: HtsState, a: Extract<HtsAction, { type: 'gn
 
   s.actionPointsRemaining -= 2;
   s.turnBuffs.gnawingDreadUsed = true;
-  s.promptQueue.push({
-    kind: 'chooseFromPile',
-    playerId: a.playerId,
-    reason: 'The Gnawing Dread: choose any card from the discard pile to add to your hand.',
-    optional: false,
-    cards: [...s.discard],
-    source: 'discard',
-  });
+  queueDiscardSearch(s, a.playerId, 'any', 'The Gnawing Dread: choose a card from the discard pile to add to your hand.');
   pushLog(s, a.playerId, `The Gnawing Dread: ${seatName(s, a.playerId)} spent 2 AP to search the discard pile!`, 'good');
   advanceFlow(s);
+}
+
+/** Muscipula Rex: "Once per turn on your turn, you may DRAW a card without spending an action point." */
+export function canMuscipulaDraw(s: HtsState, playerId: PlayerId): boolean {
+  return s.subPhase === 'awaitingAction' && playerId === s.turnPlayerId && hasTrophy(s, playerId, 'monster-muscipula-rex') && !s.turnBuffs.muscipulaUsed;
+}
+
+function handleMuscipulaDraw(s: HtsState, a: Extract<HtsAction, { type: 'muscipulaDraw' }>) {
+  if (!canMuscipulaDraw(s, a.playerId)) throw new Error('no free Muscipula Rex draw available');
+  s.turnBuffs.muscipulaUsed = true;
+  drawCards(s, a.playerId, 1);
+  pushLog(s, a.playerId, `Muscipula Rex: ${seatName(s, a.playerId)} draws a card for free.`, 'normal');
+  advanceFlow(s);
+}
+
+function handleBiggestRingDiscard(s: HtsState, a: Extract<HtsAction, { type: 'biggestRingDiscard' }>) {
+  if (s.subPhase !== 'awaitingModifiers' || !s.pendingRoll) throw new Error('Biggest Ring Ever works on your own Hero roll');
+  const r = s.pendingRoll;
+  if (!canUseBiggestRing(s, r, a.playerId)) throw new Error('Biggest Ring Ever cannot be used on this roll');
+  const ids = a.cardIds;
+  if (ids.length < 1 || ids.length > 3 || new Set(ids).size !== ids.length) throw new Error('discard 1 to 3 different cards');
+  const hand = handOf(s, a.playerId);
+  if (ids.some((id) => !hand.some((c) => c.id === id))) throw new Error('card not in hand');
+  s.discard.push(...hand.filter((c) => ids.includes(c.id)));
+  s.hands[a.playerId] = hand.filter((c) => !ids.includes(c.id));
+  const ring = heroEquippedItems(partyOf(s, a.playerId).find((h) => h.card.id === r.sourceCardId)!).find((i) => i.kind === 'biggest-ring-ever')!;
+  r.ringUsed = true;
+  r.modifiers.push({ playerId: a.playerId, card: ring, amount: 2 * ids.length, targetSide: 'actor' });
+  pushLog(s, a.playerId, `Biggest Ring Ever: ${seatName(s, a.playerId)} discards ${ids.length} card${ids.length === 1 ? '' : 's'} for +${2 * ids.length}.`, 'good');
+  openOrResolveRoll(s);
+}
+
+function handleMajestelkSign(s: HtsState, a: Extract<HtsAction, { type: 'majestelkSign' }>) {
+  if (s.subPhase !== 'awaitingModifiers' || !s.pendingRoll) throw new Error('Majestelk adjusts one of your rolls');
+  const r = s.pendingRoll;
+  const owed = majestelkSidesOwed(s, r, a.playerId);
+  const side = a.targetSide && owed.includes(a.targetSide) ? a.targetSide : owed[0];
+  if (!side) throw new Error('no Majestelk choice owed on this roll');
+  if (a.sign !== 1 && a.sign !== -1) throw new Error('Majestelk is +5 or -5');
+  r.modifiers.push({ playerId: a.playerId, card: MAJESTELK_SIGN, amount: 5 * a.sign, targetSide: side });
+  pushLog(s, a.playerId, `Majestelk: ${a.sign > 0 ? '+5' : '-5'} to ${seatName(s, a.playerId)}'s roll.`, a.sign > 0 ? 'good' : 'normal');
+  openOrResolveRoll(s);
 }
 
 function handleClaimHolidayGift(s: HtsState, a: Extract<HtsAction, { type: 'claimHolidayGift' }>) {
@@ -2373,6 +2720,7 @@ function handlePlayChallenge(s: HtsState, a: Extract<HtsAction, { type: 'playCha
   const hand = handOf(s, a.playerId);
   const idx = hand.findIndex((c) => c.id === a.cardId && c.type === 'challenge');
   if (idx < 0) throw new Error('Challenge card not in hand');
+  if (!canPlayChallengeCard(s, a.playerId, hand[idx]!)) throw new Error(`you need a ${hand[idx]!.challengeClass} in your Party to play that Challenge`);
   const [challengeCard] = hand.splice(idx, 1);
   if (challengeCard) s.discard.push(challengeCard);
 
@@ -2402,6 +2750,7 @@ function handlePlayChallenge(s: HtsState, a: Extract<HtsAction, { type: 'playCha
     modifiers: [],
     responderQueue: [],
   };
+  if (challengeCard?.challengeBonus) s.pendingRoll.challengerBonus = challengeCard.challengeBonus;
   openOrResolveRoll(s);
 }
 
@@ -2430,11 +2779,17 @@ function handlePlayModifier(s: HtsState, a: Extract<HtsAction, { type: 'playModi
   const idx = hand.findIndex((c) => c.id === a.cardId && c.type === 'modifier');
   if (idx < 0) throw new Error('Modifier card not in hand');
   const card = hand[idx]!;
-  if (!card.modifierChoices?.includes(a.chosenValue)) {
+  if (!modifierValuesFor(r, a.playerId, card).includes(a.chosenValue)) {
     throw new Error('invalid modifier value for this card');
   }
 
   hand.splice(idx, 1);
+  // B&N Modifier +7: "DISCARD your hand. +7 to that roll."
+  if (card.kind === 'mod-bn-plus-7' && hand.length > 0) {
+    s.discard.push(...hand);
+    s.hands[a.playerId] = [];
+    pushLog(s, a.playerId, `${seatName(s, a.playerId)} discards their hand for Modifier +7.`, 'danger');
+  }
 
   let amount = a.chosenValue;
   if (s.partyLeaders[a.playerId]?.kind === 'leader-protecting-horn') {
@@ -2463,6 +2818,10 @@ function handlePlayModifier(s: HtsState, a: Extract<HtsAction, { type: 'playModi
     amount >= 0 ? 'good' : 'danger',
   );
 
+  // W&D Modifiers that also draw: +1/-1 "DRAW 2 cards", +2/-1 "DRAW a card".
+  const extraDraw = card.kind === 'mod-wd-plus-1-minus-1' ? 2 : card.kind === 'mod-wd-plus-2-minus-1' ? 1 : 0;
+  if (extraDraw > 0) drawCards(s, a.playerId, extraDraw);
+
   openOrResolveRoll(s);
 }
 
@@ -2471,6 +2830,7 @@ function handleDeclineModifier(s: HtsState, a: Extract<HtsAction, { type: 'decli
   const r = s.pendingRoll;
   if (!r) throw new Error('no pendingRoll');
   if (r.responderQueue[0] !== a.playerId) throw new Error('not your turn to respond');
+  if (majestelkSidesOwed(s, r, a.playerId).length > 0) throw new Error('Majestelk: choose +5 or -5 for your roll first');
 
   r.responderQueue.shift();
   const next = r.responderQueue[0];
@@ -2499,6 +2859,7 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
       const hero = partyOf(s, prompt.playerId).find((h) => h.card.id === prompt.heroCard.id);
       if (hero && !hero.usedThisTurn && !heroHasItemKind(hero, 'sealing-key')) {
         hero.usedThisTurn = true;
+        hero.rollsThisTurn = (hero.rollsThisTurn ?? 0) + 1;
         s.pendingRoll = {
           byPlayerId: prompt.playerId,
           reason: 'heroAbility',
@@ -2545,23 +2906,17 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
           handOf(s, prompt.playerId).push(removed);
           pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} lifted ${removed.name} off ${target.hero.card.name}.`, 'good');
         }
-      } else if (prompt.mode === 'stealItem') {
-        const removed = removeItemFromHero(target.hero, () => true);
-        if (removed) {
-          handOf(s, prompt.playerId).push(removed);
-          pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} stole ${removed.name} from ${target.hero.card.name}!`, 'good');
-        }
       } else if (prompt.mode === 'swapGive' && prompt.specificPlayerId) {
         removeHeroFromParty(s, target.ownerId, target.hero.card.id, 'move', {
           toPlayerId: prompt.specificPlayerId,
+          announce: `${seatName(s, prompt.playerId)} moved ${target.hero.card.name} to ${seatName(s, prompt.specificPlayerId)}'s Party.`,
         });
-        pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} moved ${target.hero.card.name} to ${seatName(s, prompt.specificPlayerId)}'s Party.`, 'normal');
       } else if (prompt.mode === 'steal') {
         removeHeroFromParty(s, target.ownerId, target.hero.card.id, 'steal', {
           byPlayerId: prompt.playerId,
           toPlayerId: prompt.playerId,
+          announce: `${seatName(s, prompt.playerId)} stole ${target.hero.card.name} from ${seatName(s, target.ownerId)}!`,
         });
-        pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} stole ${target.hero.card.name} from ${seatName(s, target.ownerId)}!`, 'good');
         if (prompt.effectTag === 'wigglesStealAndRoll') {
           s.promptQueue.unshift({
             kind: 'rollEnteredHero',
@@ -2570,16 +2925,28 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
           });
         }
       } else if (prompt.mode === 'sacrifice') {
-        const res = removeHeroFromParty(s, target.ownerId, target.hero.card.id, 'sacrifice', {
+        const queued = s.promptQueue.length;
+        removeHeroFromParty(s, target.ownerId, target.hero.card.id, 'sacrifice', {
           byPlayerId: prompt.playerId,
+          announce: `${seatName(s, prompt.playerId)} sacrificed ${target.hero.card.name}.`,
         });
-        if (res === 'done') pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} sacrificed ${target.hero.card.name}.`, 'normal');
+        // Beholden Retriever's cost is paid: "Search the discard pile for a Hero
+        // or Item card and add it to your hand, then play it immediately."
+        if (prompt.effectTag === 'beholdenCost') {
+          queueDiscardSearch(s, prompt.playerId, 'heroOrItem', 'Beholden Retriever: choose a Hero or Item card from the discard pile — it goes to your hand, then you play it immediately.', { then: 'playImmediately', at: s.promptQueue.length - queued });
+        }
       } else if (prompt.mode === 'destroy') {
+        const berserker = heroEffectiveClass(target.hero) === 'berserker';
         const res = removeHeroFromParty(s, target.ownerId, target.hero.card.id, 'destroy', {
           byPlayerId: prompt.playerId,
           stealEquippedItemToHand: prompt.effectTag === 'shurikittyDestroy' ? prompt.playerId : undefined,
+          announce: `${seatName(s, prompt.playerId)} destroyed ${target.hero.card.name}!`,
         });
-        if (res === 'done') pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} destroyed ${target.hero.card.name}!`, 'danger');
+        // Unbridled Fury: "If that Hero card is a Berserker, you may spend an extra action point this turn."
+        if (prompt.effectTag === 'unbridledFuryDestroy' && berserker && res === 'done' && prompt.playerId === s.turnPlayerId) {
+          s.actionPointsRemaining += 1;
+          pushLog(s, prompt.playerId, 'Unbridled Fury: that was a Berserker — +1 action point this turn.', 'good');
+        }
       }
 
       advanceFlow(s);
@@ -2589,6 +2956,8 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
     case 'chooseCardsFromHand': {
       if (a.decline) {
         if (!prompt.optional) throw new Error('cannot decline mandatory hand choice');
+        // Boston Terror: "If they do not, you may choose 2 cards from the discard pile…"
+        if (prompt.effectTag === 'bostonTerrorGive' && prompt.toPlayerId) queueBostonTerrorPicks(s, prompt.toPlayerId);
         advanceFlow(s);
         return;
       }
@@ -2630,18 +2999,21 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
           beginPlay(s, prompt.playerId, heroCard);
           return;
         }
-      } else if (prompt.effectTag === 'playFreeMagic' || prompt.effectTag === 'snowballFreeMagic') {
+      } else if (prompt.effectTag === 'playFreeMagic' || prompt.effectTag === 'snowballFreeMagic' || prompt.effectTag === 'playFreeMagicsUpTo2') {
         const magic = chosen[0];
         if (magic) {
           if (prompt.effectTag === 'snowballFreeMagic') {
             s.promptQueue.unshift({ kind: 'step', playerId: prompt.playerId, step: { type: 'draw', count: 1 } });
           }
+          // Glowing Antler: the second Magic is offered once the first has resolved.
+          const next = prompt.effectTag === 'playFreeMagicsUpTo2' && (prompt.sequence ?? 1) < 2 ? [glowingAntlerPrompt(prompt.playerId, 2)] : undefined;
           pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} played Magic card ${magic.name}.`, 'normal');
-          beginPlay(s, prompt.playerId, magic);
+          beginPlay(s, prompt.playerId, magic, undefined, next);
           return;
         }
-      } else if (prompt.effectTag === 'greedyCheeksGive' && prompt.toPlayerId) {
+      } else if ((prompt.effectTag === 'greedyCheeksGive' || prompt.effectTag === 'bostonTerrorGive') && prompt.toPlayerId) {
         handOf(s, prompt.toPlayerId).push(...chosen);
+        if (prompt.effectTag === 'bostonTerrorGive') pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} gives ${seatName(s, prompt.toPlayerId)} a card.`, 'normal');
       } else if (prompt.effectTag === 'bearyWiseDiscard') {
         s.discard.push(...chosen);
         s.bearyWisePool.push(...chosen);
@@ -2684,6 +3056,19 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
               });
             }
           }
+        } else if (prompt.effectTag === 'shadowSaintCost') {
+          s.turnBuffs.noOpponentModifiers = true;
+          pushLog(s, prompt.playerId, 'Shadow Saint: no other player can play Modifier cards until the end of the turn!', 'good');
+        } else if (prompt.effectTag === 'lightningLabrysDiscard') {
+          for (let i = chosen.length; i >= 1; i--) {
+            s.promptQueue.unshift({
+              kind: 'choosePlayer',
+              playerId: prompt.playerId,
+              reason: `Lightning Labrys (${i} of ${chosen.length}): choose a player who must SACRIFICE a Hero card.`,
+              optional: false,
+              effectTag: 'lightningLabrysSacrifice',
+            });
+          }
         } else if (prompt.effectTag === 'destructiveSpellDiscard') {
           s.promptQueue.unshift({
             kind: 'chooseHeroTarget',
@@ -2711,7 +3096,7 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
 
     case 'choosePlayer': {
       const targetId = a.targetPlayerId;
-      if (!targetId || targetId === prompt.playerId || !s.seats.some((st) => st.id === targetId)) {
+      if (!targetId || (targetId === prompt.playerId && !prompt.includeSelf) || !s.seats.some((st) => st.id === targetId)) {
         throw new Error('invalid target player');
       }
       const oppHand = handOf(s, targetId);
@@ -2746,11 +3131,6 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
       } else if (prompt.effectTag === 'furyKnucklePull') {
         const first = pullOne();
         if (first?.type === 'challenge') pullOne();
-      } else if (prompt.effectTag === 'wildBuckPull') {
-        const first = pullOne();
-        if (first && (first.type === 'item' || first.type === 'cursedItem' || first.type === 'modifier')) {
-          pullOne();
-        }
       } else if (prompt.effectTag === 'luckyBuckyPull') {
         mayPlayPulled(pullOne(), 'hero', 'Lucky Bucky');
       } else if (prompt.effectTag === 'buttonsPull') {
@@ -2812,17 +3192,44 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
           targetPlayerId: targetId,
           cards: [...oppHand],
         });
-      } else if (prompt.effectTag === 'silentShadowSteal' || prompt.effectTag === 'buckOmensSteal') {
+      } else if (prompt.effectTag === 'silentShadowSteal') {
+        if (oppHand.length > 0) {
+          s.promptQueue.unshift(lookAtHandPrompt(s, prompt.playerId, targetId, 'any', `Silent Shadow: choose a card from ${seatName(s, targetId)}'s hand to take.`));
+        }
+      } else if (prompt.effectTag === 'bostonTerrorAsk') {
         if (oppHand.length > 0) {
           s.promptQueue.unshift({
-            kind: 'chooseFromPile',
-            playerId: prompt.playerId,
-            reason: `${prompt.effectTag === 'buckOmensSteal' ? 'Buck Omens' : 'Silent Shadow'}: choose a card from ${seatName(s, targetId)}'s hand to take.`,
-            optional: false,
-            cards: [...oppHand],
-            source: 'opponentHand',
-            opponentId: targetId,
+            kind: 'chooseCardsFromHand',
+            playerId: targetId,
+            reason: `Boston Terror: you may give ${seatName(s, prompt.playerId)} a card from your hand. If you don't, they may take 2 cards from the discard pile.`,
+            count: 1,
+            optional: true,
+            filter: 'any',
+            effectTag: 'bostonTerrorGive',
+            toPlayerId: prompt.playerId,
           });
+        } else {
+          queueBostonTerrorPicks(s, prompt.playerId);
+        }
+      } else if (prompt.effectTag === 'hollowHuskLook') {
+        if (oppHand.length > 0) {
+          s.promptQueue.unshift(lookAtHandPrompt(s, prompt.playerId, targetId, 'magic', `Hollow Husk: ${seatName(s, targetId)}'s hand — take a Magic card (you may play it immediately).`, 'mayPlay'));
+        }
+      } else if (prompt.effectTag === 'lightningLabrysSacrifice') {
+        s.promptQueue.unshift({
+          kind: 'chooseHeroTarget',
+          playerId: targetId,
+          reason: `Lightning Labrys: ${seatName(s, prompt.playerId)} chose you — you must SACRIFICE a Hero card.`,
+          optional: false,
+          scope: 'own',
+          mode: 'sacrifice',
+        });
+      } else if (prompt.effectTag === 'buckOmensLook') {
+        // "Look at another player's hand. Choose a Hero card from their hand (if
+        // they have one) and bring it into your Party." Not played: no
+        // Challenge, no free roll.
+        if (oppHand.length > 0) {
+          s.promptQueue.unshift(lookAtHandPrompt(s, prompt.playerId, targetId, 'hero', `Buck Omens: ${seatName(s, targetId)}'s hand — choose a Hero card to bring into your Party.`, 'bringToParty'));
         }
       } else if (prompt.effectTag === 'blindingBladeStealItems') {
         for (const h of partyOf(s, targetId)) {
@@ -2903,41 +3310,56 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
     }
 
     case 'chooseFromPile': {
-      const chosen = prompt.cards.find((c) => c.id === a.targetCardId);
+      const pickable = pickablePileCards(prompt);
+      if (a.decline) {
+        // Optional searches, and a look at a hand with nothing to take, end here.
+        if (!prompt.optional && pickable.length > 0) throw new Error('you must choose a card');
+        advanceFlow(s);
+        return;
+      }
+      const chosen = pickable.find((c) => c.id === a.targetCardId);
       if (!chosen) throw new Error('invalid card selection');
 
+      // Take it from where it lies.
       if (prompt.source === 'discard' || prompt.source === 'bearyWisePool') {
         const dIdx = s.discard.findIndex((c) => c.id === chosen.id);
-        if (dIdx >= 0) s.discard.splice(dIdx, 1);
-        handOf(s, prompt.playerId).push(chosen);
-      } else if (prompt.source === 'discardReviveToParty' || prompt.source === 'discardReviveAndRoll') {
-        const dIdx = s.discard.findIndex((c) => c.id === chosen.id);
-        if (dIdx >= 0) s.discard.splice(dIdx, 1);
-        partyOf(s, prompt.playerId).push({
-          card: chosen,
-          equippedItem: null,
-          usedThisTurn: false,
-        });
-        pushLog(s, prompt.playerId, `Revived ${chosen.name} from the discard pile directly into ${seatName(s, prompt.playerId)}'s Party!`, 'good');
-        if (
-          prompt.source === 'discardReviveAndRoll' ||
-          hasTrophy(s, prompt.playerId, 'monster-clawed-nightmare')
-        ) {
-          s.promptQueue.unshift({
-            kind: 'rollEnteredHero',
-            playerId: prompt.playerId,
-            heroCard: chosen,
-          });
-        }
-      } else if (prompt.source === 'discardPlayMagic') {
-        resolveMagicEffect(s, prompt.playerId, chosen);
+        if (dIdx < 0) throw new Error('that card is no longer in the discard pile');
+        s.discard.splice(dIdx, 1);
       } else if (prompt.source === 'opponentHand' && prompt.opponentId) {
         const oppHand = handOf(s, prompt.opponentId);
         const oIdx = oppHand.findIndex((c) => c.id === chosen.id);
-        if (oIdx >= 0) oppHand.splice(oIdx, 1);
-        handOf(s, prompt.playerId).push(chosen);
+        if (oIdx < 0) throw new Error('that card is no longer in their hand');
+        oppHand.splice(oIdx, 1);
       }
 
+      const then = prompt.then ?? 'hand';
+      if (then === 'bringToParty' && chosen.type === 'hero') {
+        partyOf(s, prompt.playerId).push({ card: chosen, equippedItem: null, usedThisTurn: false });
+        pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} brings ${chosen.name} into their Party.`, 'good');
+        advanceFlow(s);
+        return;
+      }
+      handOf(s, prompt.playerId).push(chosen);
+      if (then === 'playImmediately') {
+        // "…add it to your hand, then play it immediately" — played from the
+        // hand, so it can be Challenged (an Item asks which Hero wears it).
+        playFromHandNow(s, prompt.playerId, chosen);
+        return;
+      }
+      if (then === 'mayPlay') {
+        const filter = chosen.type === 'hero' ? 'hero' : chosen.type === 'magic' ? 'magic' : 'item';
+        s.promptQueue.unshift({
+          kind: 'chooseCardsFromHand',
+          playerId: prompt.playerId,
+          // No card name: the other players are told this prompt's reason.
+          reason: 'You may play the card you just took immediately.',
+          count: 1,
+          optional: true,
+          filter,
+          effectTag: filter === 'hero' ? 'playFreeHero' : filter === 'magic' ? 'playFreeMagic' : 'playFreeItem',
+          onlyCardIds: [chosen.id],
+        });
+      }
       advanceFlow(s);
       return;
     }
@@ -2963,19 +3385,118 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
 
     case 'corruptedSabretoothChoice': {
       if (a.decline) {
-        const res = removeHeroFromParty(s, prompt.ownerId, prompt.heroCardId, 'destroy', {
+        removeHeroFromParty(s, prompt.ownerId, prompt.heroCardId, 'destroy', {
           byPlayerId: prompt.playerId,
           skipSabretoothCheck: true,
           stealEquippedItemToHand: prompt.stealItemToHand ? prompt.playerId : undefined,
+          announce: `${seatName(s, prompt.playerId)} destroyed the Hero.`,
         });
-        if (res === 'done') pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} destroyed the Hero.`, 'danger');
       } else {
         removeHeroFromParty(s, prompt.ownerId, prompt.heroCardId, 'steal', {
           byPlayerId: prompt.playerId,
           toPlayerId: prompt.playerId,
+          announce: `Corrupted Sabretooth: ${seatName(s, prompt.playerId)} STOLE the Hero instead of destroying it!`,
         });
-        pushLog(s, prompt.playerId, `Corrupted Sabretooth: ${seatName(s, prompt.playerId)} STOLE the Hero instead of destroying it!`, 'good');
       }
+      advanceFlow(s);
+      return;
+    }
+
+    case 'choosePartyCard': {
+      if (a.decline) {
+        if (!prompt.optional) throw new Error('you must choose a card');
+        if (prompt.effectTag === 'rabidBeastSacrifice') queueRabidBeastDestroys(s, prompt.playerId, prompt.tally ?? 0);
+        advanceFlow(s);
+        return;
+      }
+      const target = validPartyCardTargets(s, prompt).find((t) => (t.item ? t.item.id : t.hero.card.id) === a.targetCardId);
+      if (!target) throw new Error('invalid card choice');
+      const { ownerId, hero, item } = target;
+      const queued = s.promptQueue.length;
+      if (prompt.mode === 'sacrifice') {
+        if (item) sacrificeItem(s, ownerId, hero, item.id);
+        else removeHeroFromParty(s, ownerId, hero.card.id, 'sacrifice', { byPlayerId: prompt.playerId, announce: `${seatName(s, prompt.playerId)} sacrificed ${hero.card.name}.` });
+      } else if (item) {
+        destroyItem(s, prompt.playerId, ownerId, hero, item.id);
+      } else {
+        removeHeroFromParty(s, ownerId, hero.card.id, 'destroy', { byPlayerId: prompt.playerId, announce: `${seatName(s, prompt.playerId)} destroyed ${hero.card.name}!` });
+      }
+      // What the sacrifice / destroy itself set off goes first.
+      afterPartyCardChosen(s, prompt, s.promptQueue.length - queued);
+      advanceFlow(s);
+      return;
+    }
+
+    case 'chooseClass': {
+      const cls = a.className;
+      if (!cls || !prompt.classes.includes(cls)) throw new Error('choose one of the classes');
+      // Roaryal Guard: "Return every Hero card of that Class to its respective player's hand."
+      let returned = 0;
+      for (const seat of s.seats) {
+        const party = partyOf(s, seat.id);
+        for (const h of party.filter((x) => heroEffectiveClass(x) === cls)) {
+          party.splice(party.indexOf(h), 1);
+          returnHeroToHand(s, seat.id, h);
+          returned++;
+        }
+      }
+      pushLog(s, prompt.playerId, `Roaryal Guard: ${seatName(s, prompt.playerId)} names ${CLASS_LABEL[cls]} — ${returned} Hero${returned === 1 ? '' : 'es'} return to their players' hands.`, 'danger');
+      advanceFlow(s);
+      return;
+    }
+
+    case 'rerollHero': {
+      if (a.decline) {
+        advanceFlow(s);
+        return;
+      }
+      if (!a.dice) throw new Error('roll the dice');
+      const hero = partyOf(s, prompt.playerId).find((h) => h.card.id === prompt.heroCardId);
+      if (!hero) throw new Error('that Hero is gone');
+      sacrificeItem(s, prompt.playerId, hero, prompt.itemCardId);
+      hero.rollsThisTurn = (hero.rollsThisTurn ?? 0) + 1;
+      s.pendingRoll = {
+        byPlayerId: prompt.playerId,
+        reason: 'heroAbility',
+        dice: a.dice,
+        challengerId: null,
+        challengerDice: null,
+        sourceCardId: hero.card.id,
+        threshold: hero.card.abilityThreshold ?? 7,
+        rollLow: hero.card.rollLow,
+        modifiers: [],
+        responderQueue: [],
+      };
+      openOrResolveRoll(s);
+      return;
+    }
+
+    case 'chooseMonster': {
+      const monster = validMonsterTargets(s, prompt).find((m) => m.card.id === a.targetCardId);
+      if (!monster) throw new Error('choose one of the face-up Monsters you can target');
+      if (prompt.mode === 'attack') {
+        // Big Buckley: an ATTACK like any other (bonuses, Modifiers, penalty), for no action points.
+        if (!a.dice) throw new Error('roll the dice to attack');
+        pushLog(s, prompt.playerId, `${seatName(s, prompt.playerId)} attacks ${monster.card.name}!`, 'normal');
+        s.pendingRoll = {
+          byPlayerId: prompt.playerId,
+          reason: 'monsterAttack',
+          dice: a.dice,
+          challengerId: null,
+          challengerDice: null,
+          sourceCardId: monster.card.id,
+          threshold: monster.slayThreshold,
+          rollLow: monster.slayOnLow,
+          modifiers: [],
+          responderQueue: [],
+        };
+        openOrResolveRoll(s);
+        return;
+      }
+      // Vicious Wildcat: "SLAY any Monster card, then end your turn."
+      slayMonster(s, prompt.playerId, monster);
+      pushLog(s, prompt.playerId, `⚔️ ${seatName(s, prompt.playerId)} SLEW ${monster.card.name} outright!`, 'good');
+      if (prompt.playerId === s.turnPlayerId) s.endTurnPending = true;
       advanceFlow(s);
       return;
     }
@@ -2987,6 +3508,11 @@ function handleResolvePrompt(s: HtsState, a: Extract<HtsAction, { type: 'resolve
       }
       advanceFlow(s);
       return;
+    }
+
+    default: {
+      const never: never = prompt;
+      throw new Error(`unknown prompt ${JSON.stringify(never)}`);
     }
   }
 }
@@ -3003,7 +3529,10 @@ function finishTurnAdvance(s: HtsState) {
 
   // "Once per turn" is per turn, whoever's Party the Hero is in by now.
   for (const seat of s.seats) {
-    for (const h of partyOf(s, seat.id)) h.usedThisTurn = false;
+    for (const h of partyOf(s, seat.id)) {
+      h.usedThisTurn = false;
+      if (h.rollsThisTurn) h.rollsThisTurn = 0;
+    }
   }
 
   const idx = s.seats.findIndex((st) => st.id === s.turnPlayerId);
@@ -3012,16 +3541,26 @@ function finishTurnAdvance(s: HtsState) {
   s.activePlayerId = next.id;
   s.subPhase = 'awaitingAction';
   s.actionPointsRemaining = hasTrophy(s, next.id, 'monster-mega-slime') ? 4 : 3;
-  s.turnBuffs = {
+  s.turnBuffs = freshTurnBuffs();
+  // "Until your next turn" effects end as that player's turn begins.
+  s.protectedFromSteal[next.id] = false;
+  s.protectedFromDestroy[next.id] = false;
+  if (s.returnToHandShield?.[next.id]) s.returnToHandShield[next.id] = false;
+  if (s.majestelk?.[next.id]) s.majestelk[next.id] = false;
+}
+
+function freshTurnBuffs(): HtsState['turnBuffs'] {
+  return {
     rollBonus: 0,
     unchallengeable: false,
     shadowClawUsed: false,
     nobleShamanUsed: false,
     gnawingDreadUsed: false,
     noOpponentModifiers: false,
+    attackBonus: 0,
+    silentShield: false,
+    muscipulaUsed: false,
   };
-  s.protectedFromSteal[next.id] = false;
-  s.protectedFromDestroy[next.id] = false;
 }
 
 // ============================================================================
@@ -3062,6 +3601,15 @@ export function applyAction(state: HtsState, action: HtsAction): HtsState {
       break;
     case 'gnawingDreadSearch':
       handleGnawingDreadSearch(s, action);
+      break;
+    case 'muscipulaDraw':
+      handleMuscipulaDraw(s, action);
+      break;
+    case 'biggestRingDiscard':
+      handleBiggestRingDiscard(s, action);
+      break;
+    case 'majestelkSign':
+      handleMajestelkSign(s, action);
       break;
     case 'claimHolidayGift':
       handleClaimHolidayGift(s, action);

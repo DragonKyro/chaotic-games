@@ -20,8 +20,9 @@ import {
   ApLanterns, ClassSlots, FaceDownCard, HtsCardView, MonsterCard, Pennant, TrophyRow, rollLabel,
 } from './Card';
 import {
-  canAttackMonster, canEquipItemToHero, canUseNobleShaman, computeRollTotals, getClassesToWin, handOf, heroEquippedItems, heroHasItemKind,
-  niceGiftsOf, partyClasses, partyOf, trophiesOf, validHandCardsForPrompt, validHeroTargets,
+  canAttackMonster, canEquipItemToHero, canMuscipulaDraw, canPlayChallengeCard, canRollHero, canUseBiggestRing, canUseNobleShaman, computeRollTotals,
+  getClassesToWin, handOf, heroEquippedItems, heroHasItemKind, heroRollCost, majestelkSidesOwed, modifierValuesFor, niceGiftsOf, partyClasses, partyOf,
+  pickablePileCards, trophiesOf, validHandCardsForPrompt, validHeroTargets, validMonsterTargets, validPartyCardTargets,
 } from './reducer';
 import { CLASS_META, WaxSeal } from './sigils';
 import type { HtsAction, HtsCard, HtsConfig, HtsExpansionId, HtsMonster, HtsPartyHero, HtsPendingRoll, HtsPrompt, HtsRollRecord, HtsState } from './types';
@@ -43,11 +44,12 @@ export function LobbyConfig({ config, onChange, readOnly }: {
   readOnly?: boolean;
 }) {
   const classesToWin = getClassesToWin(config);
+  // Toggling an expansion drops any chosen class count, so it follows the expansions again.
   const toggle = (id: string) => {
     const expId = id as HtsExpansionId;
     const next = config.expansions.includes(expId) ? config.expansions.filter((x) => x !== expId) : [...config.expansions, expId];
-    const classExp = next.includes('warriors-druids') || next.includes('berserkers-necromancers');
-    onChange({ ...config, expansions: next, classesToWin: classExp ? 7 : 6 });
+    const { classesToWin: _chosen, ...rest } = config;
+    onChange({ ...rest, expansions: next });
   };
   return (
     <div className="game-config">
@@ -96,6 +98,10 @@ const PROMPT_WAIT: Record<HtsPrompt['kind'], string> = {
   corruptedSabretoothChoice: 'is deciding to steal or destroy',
   confirm: 'is deciding',
   step: 'is resolving an effect',
+  choosePartyCard: 'is choosing a card in a party',
+  chooseMonster: 'is choosing a monster',
+  chooseClass: 'is choosing a class',
+  rerollHero: 'is deciding whether to roll again',
 };
 
 function maxAp(s: HtsState, id: PlayerId): number {
@@ -360,7 +366,8 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
     if (s.subPhase === 'awaitingChallenge' && s.pendingPlay) {
       const p = s.pendingPlay;
       if (mine) {
-        const challenge = myHand.find((c) => c.type === 'challenge');
+        // One button per kind of Challenge card you can play (class Challenges need that class in your Party).
+        const playable = myHand.filter((c) => canPlayChallengeCard(s, me!, c)).filter((c, i, all) => all.findIndex((x) => x.kind === c.kind) === i);
         return (
           <Dock
             tone="react"
@@ -368,12 +375,12 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
             title={`Challenge ${seatName(s, p.byPlayerId)}'s ${p.card.name}?`}
             actions={
               <>
-                {challenge && (
-                  <>
+                {playable.map((challenge) => (
+                  <span key={challenge.id} className="hts-inline-choice">
                     <HtsCardView card={challenge} size="xs" inspect={false} />
-                    <button onClick={() => throwDuel(challenge.id)}>Challenge!</button>
-                  </>
-                )}
+                    <button onClick={() => throwDuel(challenge.id)}>{challenge.challengeBonus ? `${challenge.name} (+${challenge.challengeBonus})` : 'Challenge!'}</button>
+                  </span>
+                ))}
                 <button className="secondary" onClick={() => send({ type: 'declineChallenge', playerId: me! })}>Let it be</button>
               </>
             }
@@ -422,6 +429,9 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
         )}
         {leader?.kind === 'leader-gnawing-dread' && !s.turnBuffs.gnawingDreadUsed && ap >= 2 && s.discard.length > 0 && (
           <button className="secondary tiny" onClick={() => send({ type: 'gnawingDreadSearch', playerId: me! })}>Gnawing Dread search · 2 AP</button>
+        )}
+        {me && canMuscipulaDraw(s, me) && (
+          <button className="secondary tiny" onClick={() => send({ type: 'muscipulaDraw', playerId: me })}>Muscipula Rex draw · free</button>
         )}
       </div>
     );
@@ -512,7 +522,7 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
         );
       }
       case 'chooseHeroTarget': {
-        const harsh = p.mode === 'destroy' || p.mode === 'sacrifice' || p.mode === 'steal' || p.mode === 'stealItem';
+        const harsh = p.mode === 'destroy' || p.mode === 'sacrifice' || p.mode === 'steal';
         const byOwner = s.seats.map((seat) => ({ seat, list: heroTargets.filter((t) => t.ownerId === seat.id) })).filter((g) => g.list.length);
         const item = p.mode === 'equipItem' ? myHand.find((c) => c.id === p.itemCardId) : undefined;
         return (
@@ -569,20 +579,114 @@ export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
       }
       case 'choosePlayer':
         return (
-          <Dock tone="turn" eyebrow="Choose a player" title={p.reason} actions={opponents.map((o) => (
-            <button key={o.id} className="secondary tiny" onClick={() => send({ type: 'resolvePrompt', playerId: me!, targetPlayerId: o.id })}>{o.name}</button>
-          ))}>
+          <Dock tone="turn" eyebrow="Choose a player" title={p.reason} actions={
+            <>
+              {opponents.map((o) => (
+                <button key={o.id} className="secondary tiny" onClick={() => send({ type: 'resolvePrompt', playerId: me!, targetPlayerId: o.id })}>{o.name}</button>
+              ))}
+              {p.includeSelf && <button className="secondary tiny" onClick={() => send({ type: 'resolvePrompt', playerId: me!, targetPlayerId: me! })}>Yourself</button>}
+            </>
+          }>
             Click a player above.
           </Dock>
         );
-      case 'chooseFromPile':
+      case 'chooseFromPile': {
+        const pickable = new Set(pickablePileCards(p).map((c) => c.id));
+        const nothing = pickable.size === 0;
+        const looking = p.source === 'opponentHand' && p.opponentId;
         return (
-          <Dock tone="turn" eyebrow="Choose a card" title={p.reason}>
+          <Dock
+            tone="turn"
+            eyebrow={looking ? `${seatName(s, p.opponentId!)}'s hand` : p.source === 'discard' ? 'Search the discard pile' : 'Choose a card'}
+            title={p.reason}
+            actions={(p.optional || nothing) && <button className="secondary" onClick={decline}>{nothing ? 'OK' : 'Skip'}</button>}
+          >
+            {nothing ? 'Nothing here can be taken.' : pickable.size < p.cards.length ? 'Click one of the highlighted cards.' : 'Click a card.'}
             <div className="hts-choices is-scroll">
-              {p.cards.map((c) => <HtsCardView key={c.id} card={c} size="sm" onClick={() => send({ type: 'resolvePrompt', playerId: me!, targetCardId: c.id })} />)}
+              {p.cards.map((c) => (
+                <HtsCardView
+                  key={c.id}
+                  card={c}
+                  size="sm"
+                  disabled={!pickable.has(c.id)}
+                  onClick={pickable.has(c.id) ? () => send({ type: 'resolvePrompt', playerId: me!, targetCardId: c.id }) : undefined}
+                />
+              ))}
             </div>
           </Dock>
         );
+      }
+      case 'choosePartyCard': {
+        const targets = validPartyCardTargets(s, p);
+        const owners = s.seats.map((seat) => ({ seat, list: targets.filter((t) => t.ownerId === seat.id) })).filter((g) => g.list.length);
+        return (
+          <Dock
+            tone="danger"
+            eyebrow={p.mode === 'sacrifice' ? 'Sacrifice a card' : 'Destroy a card'}
+            title={p.reason}
+            actions={p.optional && <button className="secondary" onClick={decline}>{p.effectTag === 'rabidBeastSacrifice' ? 'Stop' : 'Skip'}</button>}
+          >
+            {p.filter === 'item' ? 'Pick an equipped Item.' : 'Pick a Hero (its Items go with it) or a single equipped Item.'}
+            <div className="hts-choices is-scroll">
+              {owners.map(({ seat, list }) => (
+                <div key={seat.id} className="hts-owner-group">
+                  <span>{seat.id === me ? 'Your party' : `${seat.name}'s party`}</span>
+                  <div>
+                    {list.map((t) => {
+                      const card = t.item ?? t.hero.card;
+                      return <HtsCardView key={card.id} card={card} size="sm" footnote={t.item ? `on ${t.hero.card.name}` : undefined} onClick={() => send({ type: 'resolvePrompt', playerId: me!, targetCardId: card.id })} />;
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Dock>
+        );
+      }
+      case 'chooseMonster': {
+        const targets = validMonsterTargets(s, p);
+        const pick = (m: HtsMonster) => (p.mode === 'attack'
+          ? throwDice((dice) => ({ type: 'resolvePrompt', playerId: me!, targetCardId: m.card.id, dice }))
+          : send({ type: 'resolvePrompt', playerId: me!, targetCardId: m.card.id }));
+        return (
+          <Dock tone="turn" eyebrow={p.mode === 'attack' ? 'Attack a monster · free' : 'Slay a monster'} title={p.reason}>
+            {p.mode === 'attack' ? 'Pick the monster to attack — you roll as soon as you click.' : 'Pick the monster to slay. Your turn ends afterwards.'}
+            <div className="hts-choices is-scroll">
+              {targets.map((m) => <MonsterCard key={m.card.id} monster={m} size="sm" onClick={() => pick(m)} />)}
+            </div>
+          </Dock>
+        );
+      }
+      case 'chooseClass':
+        return (
+          <Dock tone="danger" eyebrow="Choose a class" title={p.reason}>
+            Every Hero of that class goes back to its owner's hand (Masks count).
+            <div className="hts-class-picks">
+              {p.classes.map((cls) => (
+                <button key={cls} className="secondary hts-class-pick" onClick={() => send({ type: 'resolvePrompt', playerId: me!, className: cls })}>
+                  <WaxSeal cls={cls} /> {CLASS_META[cls].label}
+                </button>
+              ))}
+            </div>
+          </Dock>
+        );
+      case 'rerollHero': {
+        const hero = partyOf(s, p.playerId).find((h) => h.card.id === p.heroCardId);
+        return (
+          <Dock
+            tone="turn"
+            eyebrow="Goblet of Caffeination"
+            title={p.reason}
+            actions={
+              <>
+                {hero && <HtsCardView card={hero.card} size="xs" inspect={false} />}
+                <button onClick={() => throwDice((dice) => ({ type: 'resolvePrompt', playerId: me!, dice }))}>Sacrifice it &amp; roll again</button>
+                <button className="secondary" onClick={decline}>Keep the Goblet</button>
+              </>
+            }
+          />
+        );
+      }
       case 'bullseyePeek':
         return <BullseyeDock key={p.cards.map((c) => c.id).join('-')} cards={p.cards} onConfirm={(pick, order) => send({ type: 'resolvePrompt', playerId: me!, bullseyePickId: pick, bullseyeTopOrder: order })} />;
       case 'peekHandAck':
@@ -736,9 +840,10 @@ function PartyHero({ hero: h, ap, canAct, targetable, onTarget, onRoll }: {
   onRoll: () => void;
 }) {
   const sealed = heroHasItemKind(h, 'sealing-key');
-  const can = canAct && ap >= 1 && !h.usedThisTurn && !sealed;
+  const cost = heroRollCost(h);
+  const can = canAct && ap >= cost && canRollHero(h);
   const items = heroEquippedItems(h);
-  const label = h.usedThisTurn ? 'Used' : sealed ? 'Sealed' : `Roll ${rollLabel(h.card.abilityThreshold ?? 7, h.card.rollLow)} · 1 AP`;
+  const label = sealed ? 'Sealed' : !canRollHero(h) ? 'Used' : `Roll ${rollLabel(h.card.abilityThreshold ?? 7, h.card.rollLow)}${h.usedThisTurn ? ' again' : ''} · ${cost} AP`;
   return (
     <div className="hts-party-hero">
       <HtsCardView card={h.card} size="sm" selected={targetable} onClick={targetable ? onTarget : undefined} footnote={h.usedThisTurn && !canAct ? 'used' : undefined} />
@@ -872,6 +977,12 @@ function ModifierDock({ state: s, me, onSend }: { state: HtsState; me: PlayerId;
   const shaman = canUseNobleShaman(s, me);
   const duel = r.reason === 'challengeDuel';
   const subject = rollSubject(s, r);
+  // Majestelk: +5 or -5 must be declared on each of your own rolls before you can pass.
+  const owedSign = majestelkSidesOwed(s, r, me)[0];
+  // Biggest Ring Ever: pick up to 3 cards from your hand to discard, +2 each.
+  const ring = canUseBiggestRing(s, r, me);
+  const [ringPick, setRingPick] = useState<number[]>([]);
+  const toggleRing = (id: number) => setRingPick((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : cur.length < 3 ? [...cur, id] : cur));
   return (
     <Dock
       tone="react"
@@ -879,12 +990,18 @@ function ModifierDock({ state: s, me, onSend }: { state: HtsState; me: PlayerId;
       title={duel ? `Tip the duel? ${actorTotal} vs ${challengerTotal}` : `Modify ${seatName(s, r.byPlayerId)}'s roll of ${actorTotal}?`}
       actions={
         <>
+          {owedSign && (
+            <>
+              <button className="hts-modbtn" onClick={() => onSend({ type: 'majestelkSign', playerId: me, sign: 1, targetSide: owedSign })}>+5<small>Majestelk</small></button>
+              <button className="hts-modbtn" onClick={() => onSend({ type: 'majestelkSign', playerId: me, sign: -1, targetSide: owedSign })}>−5<small>Majestelk</small></button>
+            </>
+          )}
           {shaman && (
             <button className="secondary tiny" title="The Noble Shaman: once per turn, -1 to any roll" onClick={() => onSend({ type: 'nobleShamanAdjust', playerId: me, delta: -1, targetSide: side })}>
               Noble Shaman −1
             </button>
           )}
-          {mods.flatMap((m) => (m.modifierChoices ?? []).map((val) => (
+          {mods.flatMap((m) => modifierValuesFor(r, me, m).map((val) => (
             <button
               key={`${m.id}-${val}`}
               className="hts-modbtn"
@@ -894,11 +1011,22 @@ function ModifierDock({ state: s, me, onSend }: { state: HtsState; me: PlayerId;
               <small>{m.name.replace('Modifier ', '')}</small>
             </button>
           )))}
-          <button className="secondary" onClick={() => onSend({ type: 'declineModifier', playerId: me })}>Pass</button>
+          <button className="secondary" disabled={!!owedSign} title={owedSign ? 'Choose +5 or −5 for Majestelk first' : undefined} onClick={() => onSend({ type: 'declineModifier', playerId: me })}>Pass</button>
         </>
       }
     >
       {duel ? `${seatName(s, r.byPlayerId)} defends ${subject} against ${seatName(s, r.challengerId)}.` : `For ${subject}: ${r.reason === 'monsterAttack' ? 'a monster attack' : `needs ${rollLabel(r.threshold, r.rollLow)}`}.`}
+      {ring && (
+        <div className="hts-ring-pick">
+          <span>Biggest Ring Ever — discard up to 3 for +2 each:</span>
+          {handOf(s, me).map((c) => (
+            <HtsCardView key={c.id} card={c} size="xs" selected={ringPick.includes(c.id)} onClick={() => toggleRing(c.id)} />
+          ))}
+          <button className="secondary tiny" disabled={ringPick.length === 0} onClick={() => onSend({ type: 'biggestRingDiscard', playerId: me, cardIds: ringPick })}>
+            Discard {ringPick.length} · +{2 * ringPick.length}
+          </button>
+        </div>
+      )}
       {(duel || isHorn) && (mods.length > 0 || shaman) && (
         <div className="hts-picker">
           {duel && (

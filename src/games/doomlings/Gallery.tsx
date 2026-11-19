@@ -1,7 +1,8 @@
 // Doomlings art sheet (?gallery=doomlings): a spread of trait specimens across
-// colours and types, ages and catastrophes, the back, and a species evolving.
+// colours and types, ages and catastrophes, the back, a species evolving, and
+// every card of each built expansion.
 
-import { classicAgeCards, classicTraitCards } from './cards';
+import { classicAgeCards, classicTraitCards, packAgeCards, packTraitCards } from './cards';
 import { GenePool, Species } from './art';
 import { AgeCard, MiniTrait, TraitBackCard, TraitCard } from './TraitCard';
 import type { DmTraitCard } from './types';
@@ -70,6 +71,97 @@ export function Gallery() {
         <AgeCard age={cats[0]!} wide />
         <AgeCard age={ages[2]!} wide />
       </div>
+      <CastleGlass />
+      <Overlush />
+      <ImaginaryEnds />
     </div>
+  );
+}
+
+function ImaginaryEnds() {
+  const traits = packTraitCards('imaginary-ends', 4000);
+  const { ages, catastrophes } = packAgeCards('imaginary-ends', 4200);
+  const host = { ...traits.find((t) => t.kind === 'untold')!, under: traits.slice(0, 2) };
+  return (
+    <>
+      <h3>Imaginary Ends</h3>
+      <div className="dm-gallery-row">
+        {traits.map((c) => <TraitCard key={c.id} card={c} size="md" inspect={false} />)}
+      </div>
+      <div className="dm-gallery-row">
+        {['awesome', 'stygian', 'popplebelly', 'scintillant'].map((k) => <TraitCard key={k} card={traits.find((t) => t.kind === k)!} size="lg" />)}
+        <TraitCard card={host} size="lg" />
+        <MiniTrait card={host} />
+      </div>
+      <div className="dm-gallery-row">
+        {[2, 5].map((n) => (
+          <div key={n} className="dm-gallery-species">
+            <Species traits={[{ ...host, under: traits.slice(0, n) }, ...traits.slice(10, 13)]} seedKey={`deep-${n}`} tint="#b56cff" size={130} />
+            <span>{n} suppressed</span>
+          </div>
+        ))}
+      </div>
+      <div className="dm-gallery-row">
+        {ages.map((a) => <AgeCard key={a.id} age={a} />)}
+        {catastrophes.map((a) => <AgeCard key={a.id} age={a} />)}
+      </div>
+    </>
+  );
+}
+
+function Overlush() {
+  const traits = packTraitCards('overlush', 3000);
+  const { ages, catastrophes } = packAgeCards('overlush', 3400);
+  const doms = traits.filter((t) => t.dominant);
+  const duals = traits.filter((t) => t.secondaryColor && !t.dominant);
+  const sample = [...traits.filter((t) => !t.dominant && !t.secondaryColor).slice(0, 20), ...duals.slice(0, 6), ...doms.slice(0, 10)];
+  return (
+    <>
+      <h3>Overlush</h3>
+      <div className="dm-gallery-row">
+        {sample.map((c) => <TraitCard key={c.id} card={c} size="md" inspect={false} />)}
+      </div>
+      <div className="dm-gallery-row">
+        {['opposable-thumbs', 'patches', 'epic', 'sparkles', 'pinchy'].map((k) => <TraitCard key={k} card={traits.find((t) => t.kind === k)!} size="lg" />)}
+      </div>
+      <div className="dm-gallery-row">
+        {ages.map((a) => <AgeCard key={a.id} age={a} />)}
+      </div>
+      <div className="dm-gallery-row">
+        {catastrophes.map((a) => <AgeCard key={a.id} age={a} />)}
+      </div>
+    </>
+  );
+}
+
+function CastleGlass() {
+  const traits = packTraitCards('castle-glass', 2000);
+  const { ages, catastrophes } = packAgeCards('castle-glass', 2100);
+  const by = (k: string) => traits.find((t) => t.kind === k)!;
+  return (
+    <>
+      <h3>Castle Glass</h3>
+      <div className="dm-gallery-row">
+        {traits.map((c) => <TraitCard key={c.kind} card={c} size="md" inspect={false} />)}
+      </div>
+      <div className="dm-gallery-row">
+        {['keystone', 'buttery-fins', 'spiral-dome', 'thermal-tolerance', 'pearl'].map((k) => <TraitCard key={k} card={by(k)} size="lg" />)}
+        {traits.slice(0, 8).map((c) => <MiniTrait key={c.kind} card={c} />)}
+      </div>
+      <div className="dm-gallery-row">
+        {[3, 6, 9].map((n, i) => (
+          <div key={n} className="dm-gallery-species">
+            <Species traits={traits.filter((t) => !t.dominant).slice(i * 4, i * 4 + n)} seedKey={`tide-${n}`} tint="#4fd8e8" size={130} />
+            <span>{n} Castle Glass traits</span>
+          </div>
+        ))}
+      </div>
+      <div className="dm-gallery-row">
+        {ages.map((a) => <AgeCard key={a.id} age={a} />)}
+        {catastrophes.map((a) => <AgeCard key={a.id} age={a} />)}
+        <AgeCard age={ages[0]!} wide />
+        <AgeCard age={catastrophes[0]!} wide />
+      </div>
+    </>
   );
 }

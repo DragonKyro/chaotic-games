@@ -13,30 +13,15 @@ import {
   HTS_SLEIGH_MONSTERS,
   HTS_WARRIORS_DRUIDS_DECK_DEFS,
   HTS_WARRIORS_DRUIDS_MONSTERS,
+  defToCard,
   type HtsCardDef,
 } from './cards';
 import { FaceDownCard, HtsCardView, MonsterCard } from './Card';
 import { CLASS_META } from './sigils';
-import type { HtsBaseClass, HtsCard, HtsCardType, HtsMonster } from './types';
+import type { HtsBaseClass, HtsCardType, HtsMonster } from './types';
 
 const DECKS = [...HTS_MAIN_DECK_DEFS, ...HTS_WARRIORS_DRUIDS_DECK_DEFS, ...HTS_BERSERKERS_NECROMANCERS_DECK_DEFS, ...HTS_SLEIGH_DECK_DEFS, ...HTS_SLEIGH_GIFTS];
 const MONSTER_DEFS = [...HTS_MONSTER_DEFS, ...HTS_WARRIORS_DRUIDS_MONSTERS, ...HTS_BERSERKERS_NECROMANCERS_MONSTERS, ...HTS_SLEIGH_MONSTERS];
-
-function toCard(d: HtsCardDef, id: number): HtsCard {
-  return {
-    id,
-    kind: d.kind,
-    name: d.name,
-    type: d.type,
-    class: d.class,
-    text: d.text,
-    abilityThreshold: d.abilityThreshold,
-    rollLow: d.rollLow,
-    maxItems: d.maxItems,
-    modifierChoices: d.modifierChoices,
-    expansion: d.expansion,
-  };
-}
 
 function unique(defs: readonly HtsCardDef[]): HtsCardDef[] {
   const seen = new Set<string>();
@@ -55,7 +40,7 @@ export function Gallery() {
   const row = (title: string, defs: readonly HtsCardDef[]) => (
     <section className="hts-gallery-row" key={title}>
       <h3>{title} <small>{defs.length}</small></h3>
-      <div>{defs.map((d) => <HtsCardView key={`${d.kind}${d.name}`} card={toCard(d, id++)} size="lg" />)}</div>
+      <div>{defs.map((d) => <HtsCardView key={`${d.kind}${d.name}`} card={defToCard(d, id++)} size="lg" />)}</div>
     </section>
   );
   const heroesByClass = (Object.keys(CLASS_META) as HtsBaseClass[])

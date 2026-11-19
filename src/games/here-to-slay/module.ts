@@ -1,4 +1,4 @@
-// Here to Slay — GameModule (Base Game + All 3 Expansions implemented).
+// Here to Slay — GameModule.
 
 import type { GameModule } from '@/core/module';
 import type { Seat } from '@/core/types';
@@ -17,10 +17,11 @@ export const hereToSlayModule: GameModule<HtsState, HtsAction, HtsConfig> = {
   maxPlayers: 6,
   accent: '#ffb02e',
 
+  // classesToWin is left unset: it follows the expansions (6, or 7 with a class
+  // expansion) unless the host picks a number in the lobby.
   defaultConfig: (_seats: Seat[]): HtsConfig => ({
     expansions: [],
     monstersToWin: 3,
-    classesToWin: 6,
   }),
 
   validateConfig: (config) => {

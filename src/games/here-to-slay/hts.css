@@ -93,6 +93,8 @@ button.hts-card { cursor: pointer; }
 .hts-t-monster .hts-card-ribbon, .hts-t-magic .hts-card-ribbon, .hts-t-item .hts-card-ribbon,
 .hts-t-cursedItem .hts-card-ribbon, .hts-t-modifier .hts-card-ribbon, .hts-t-challenge .hts-card-ribbon,
 .hts-t-gift .hts-card-ribbon { padding-left: calc(var(--w) * 0.07); text-align: center; }
+/* Long labels (Necromancer, "Needs a Berserker") fit without an ellipsis. */
+.hts-card-ribbon.is-long { letter-spacing: 0.02em; font-size: calc(var(--w) * 0.066); }
 
 .hts-card-seal {
   position: absolute;
@@ -125,6 +127,20 @@ button.hts-card { cursor: pointer; }
 .hts-t-partyLeader .hts-card-art { background: radial-gradient(circle at 50% 35%, #fff1c9, #d7a955 70%, #8a5a24); }
 
 .hts-card-roll { position: absolute; z-index: 3; top: calc(var(--w) * 0.14); right: calc(var(--w) * 0.06); }
+.hts-card-slots {
+  position: absolute;
+  right: calc(var(--w) * 0.02);
+  bottom: calc(var(--w) * 0.02);
+  width: calc(var(--w) * 0.2);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #f4e6c4;
+  border: 1.5px solid var(--hts-ink, #1d140d);
+  display: grid;
+  place-items: center;
+}
+.hts-card-slots svg { width: 82%; height: 82%; }
+.hts-card-xs .hts-card-slots { display: none; }
 .hts-card-xs .hts-card-roll, .hts-card-xs .hts-card-ribbon { display: none; }
 
 .hts-card-name {
@@ -159,6 +175,12 @@ button.hts-card { cursor: pointer; }
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.hts-card-lg.is-long .hts-card-text { font-size: calc(var(--w) * 0.057); line-height: 1.2; }
+.hts-card-lg.is-xlong .hts-card-art { flex-basis: 34%; }
+.hts-card-lg.hts-t-monster.is-long .hts-card-art { flex-basis: 31%; }
+.hts-card-lg.hts-t-monster.is-xlong .hts-card-art { flex-basis: 27%; }
+.hts-card-lg.hts-t-monster.is-xlong .hts-card-text { font-size: calc(var(--w) * 0.049); line-height: 1.15; }
+.hts-card-lg.is-xlong .hts-card-text { font-size: calc(var(--w) * 0.054); line-height: 1.17; -webkit-line-clamp: 10; }
 .hts-monster-stats, .hts-card-ribbon { flex-shrink: 0; }
 .hts-card-foot {
   position: absolute;
@@ -448,6 +470,13 @@ button.hts-pennant:hover { transform: translateY(-2px) scale(1.12); }
 .hts-modbtn small { font-size: 10px; font-weight: 700; opacity: 0.8; }
 .hts-leader-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
 .hts-leader-tools select { font-size: 13px; padding: 4px 8px; }
+.hts-inline-choice { display: inline-flex; align-items: center; gap: 6px; }
+.hts-class-picks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.hts-class-pick { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 4px; }
+.hts-class-pick .hts-seal { width: 26px; height: 26px; }
+.hts-choices .hts-card.is-disabled { opacity: 0.55; filter: saturate(0.6); }
+.hts-ring-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.hts-ring-pick > span { font-size: 13px; font-weight: 700; color: var(--cg-dim); }
 
 /* ==========================================================================
    Gallery

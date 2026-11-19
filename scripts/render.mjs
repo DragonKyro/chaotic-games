@@ -15,7 +15,7 @@
 // before calling it done — tests pass on art that looks like nothing.
 
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openBrowser, sleep } from './lib/chrome.mjs';
 
@@ -70,9 +70,10 @@ try {
 // --force: re-optimise deps every run. A cache left half-updated by an earlier
 // run (killed mid-reoptimise) otherwise leaves the page blank. One cache per
 // port, so parallel runs can't corrupt each other's.
+const cacheDir = `node_modules/.vite-render-${port}`;
 const vite = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--port', String(port), '--strictPort', '--force'], {
   stdio: ['ignore', 'pipe', 'pipe'],
-  env: { ...process.env, CG_VITE_CACHE: `node_modules/.vite-render-${port}` },
+  env: { ...process.env, CG_VITE_CACHE: cacheDir },
 });
 vite.stderr.on('data', (d) => process.stderr.write(d));
 let chrome = null;
@@ -84,7 +85,15 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
     process.exit(130);
   });
 }
-process.on('exit', () => vite.kill());
+// --force rebuilds the cache every run, so nothing is worth keeping: remove it on the way out.
+process.on('exit', () => {
+  vite.kill();
+  try {
+    rmSync(cacheDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+  } catch {
+    /* Vite may still hold a file for a moment; the next run overwrites it anyway */
+  }
+});
 try {
   for (let i = 0; ; i++) {
     try {

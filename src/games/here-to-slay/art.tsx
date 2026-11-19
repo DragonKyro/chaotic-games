@@ -313,9 +313,9 @@ const MONSTERS: Record<string, { form: MonsterForm; glow: string }> = {
   'monster-titan-wyvern': { form: { body: 'dragon' }, glow: GLOW.frost },
   'monster-warworn-owlbear': { form: { body: 'beast', feature: 'owl' }, glow: GLOW.gold },
   'monster-feral-dragon': { form: { body: 'dragon' }, glow: GLOW.toxic },
-  'monster-muscipula': { form: { body: 'plant' }, glow: GLOW.toxic },
-  'monster-clawed-nightmare': { form: { body: 'wraith' }, glow: GLOW.blood },
-  'monster-venomous-gemini': { form: { body: 'serpent', twin: true }, glow: GLOW.toxic },
+  'monster-muscipula-rex': { form: { body: 'plant' }, glow: GLOW.toxic },
+  'monster-doombringer': { form: { body: 'wraith' }, glow: GLOW.arcane },
+  'monster-reptilian-ripper': { form: { body: 'tyrant' }, glow: GLOW.blood },
   'monster-frostbite-krampus': { form: { body: 'giant', feature: 'horns' }, glow: GLOW.frost },
   'monster-abominable-snowbeast': { form: { body: 'giant', feature: 'fur' }, glow: GLOW.frost },
 };
@@ -602,13 +602,17 @@ export function ItemArt({ card }: { card: Pick<HtsCard, 'kind' | 'name' | 'type'
       </g>
     );
   } else if (n.includes('ring')) {
-    const big = n.includes('even');
+    // Really Big Ring < Even Bigger Ring < Biggest Ring Ever: the gem grows.
+    const size = n.includes('biggest') ? 2 : n.includes('even') ? 1 : 0;
+    const gem = ['50,22 61,33 50,44 39,33', '50,14 66,30 50,48 34,30', '50,6 72,28 50,52 28,28'][size]!;
+    const facets = ['M39 33 H61 M50 22 L46 33 L50 44 M50 22 L54 33 L50 44', 'M34 30 H66 M50 14 L44 30 L50 48 M50 14 L56 30 L50 48', 'M28 28 H72 M50 6 L42 28 L50 52 M50 6 L58 28 L50 52'][size]!;
     body = (
       <g {...s2}>
-        <ellipse cx={50} cy={60} rx={26} ry={22} fill="none" stroke={INK} strokeWidth={13} />
-        <ellipse cx={50} cy={60} rx={26} ry={22} fill="none" stroke={GOLD} strokeWidth={8} />
-        <polygon points={big ? '50,14 66,30 50,48 34,30' : '50,22 61,33 50,44 39,33'} fill="#3fd2c0" />
-        <path d={big ? 'M34 30 H66 M50 14 L44 30 L50 48 M50 14 L56 30 L50 48' : 'M39 33 H61 M50 22 L46 33 L50 44 M50 22 L54 33 L50 44'} fill="none" strokeWidth={1.2} />
+        <ellipse cx={50} cy={62} rx={26} ry={22} fill="none" stroke={INK} strokeWidth={13} />
+        <ellipse cx={50} cy={62} rx={26} ry={22} fill="none" stroke={GOLD} strokeWidth={8} />
+        <polygon points={gem} fill={size === 2 ? '#ff5fa2' : '#3fd2c0'} />
+        <path d={facets} fill="none" strokeWidth={1.2} />
+        {size === 2 && [[18, 22], [82, 20], [84, 48]].map(([x, y]) => <polygon key={x} points={star(x!, y!, 6, 2, 4)} fill="#fff6d0" strokeWidth={1} />)}
       </g>
     );
   } else if (n.includes('snake')) {
@@ -664,12 +668,47 @@ export function ItemArt({ card }: { card: Pick<HtsCard, 'kind' | 'name' | 'type'
         <path d="M74 22 Q90 30 82 44 Q78 36 70 38 Q80 30 74 22 Z" fill="#b5f4ff" fillOpacity={0.7} stroke="#b5f4ff" strokeWidth={1} />
       </g>
     );
-  } else if (n.includes('bloodstone')) {
+  } else if (n.includes('goblet')) {
+    // Goblet of Caffeination: a steaming cup of something far too strong.
     body = (
       <g {...s2}>
-        <polygon points="50,16 76,36 68,80 32,80 24,36" fill="#b3263b" />
-        <path d="M24 36 L50 46 L76 36 M50 46 L50 16 M50 46 L32 80 M50 46 L68 80" fill="none" strokeWidth={1.4} />
-        <polygon points="50,16 36,30 50,40" fill="#ff7a8e" stroke="none" opacity={0.6} />
+        <path d="M38 30 Q36 20 42 16 M50 28 Q46 18 52 12 M62 30 Q60 20 66 16" fill="none" stroke="#f4ecd8" strokeWidth={2.6} opacity={0.9} />
+        <path d="M26 36 H74 Q74 62 50 66 Q26 62 26 36 Z" fill={BRASS} />
+        <ellipse cx={50} cy={37} rx={23} ry={5} fill="#5a3218" />
+        <rect x={46} y={66} width={8} height={12} fill={BRASS} />
+        <ellipse cx={50} cy={82} rx={18} ry={5} fill={BRASS} />
+        <circle cx={50} cy={52} r={5} fill="#3fd2c0" />
+      </g>
+    );
+  } else if (n.includes('silver')) {
+    // Silver Lining: a storm cloud with a bright edge and a ray breaking through.
+    body = (
+      <g {...s2}>
+        <path d="M58 70 L66 90 M44 72 L40 88" stroke="#ffd23f" strokeWidth={4} />
+        <path d="M22 66 Q14 66 14 56 Q14 46 26 46 Q26 32 42 32 Q50 22 62 30 Q80 28 80 46 Q90 48 88 58 Q86 68 76 66 Z" fill="#5c6270" />
+        <path d="M26 46 Q26 32 42 32 Q50 22 62 30 Q80 28 80 46" fill="none" stroke="#e8eef4" strokeWidth={5} />
+      </g>
+    );
+  } else if (n.includes('bile')) {
+    // Dragon's Bile: a corked flask of something green and bubbling.
+    body = (
+      <g {...s2}>
+        <rect x={42} y={14} width={16} height={10} rx={2} fill="#9a6a3c" />
+        <path d="M44 24 H56 V36 Q76 44 74 64 Q72 86 50 86 Q28 86 26 64 Q24 44 44 36 Z" fill="#cfeef0" fillOpacity={0.6} />
+        <path d="M27 60 Q50 52 73 60 Q72 84 50 84 Q28 84 27 60 Z" fill="#7ee03a" stroke="none" />
+        {[[42, 70, 3], [56, 66, 2.4], [50, 76, 2]].map(([x, y, r]) => <circle key={x} cx={x} cy={y} r={r} fill="#d6ff9a" strokeWidth={1} />)}
+      </g>
+    );
+  } else if (n.includes('grimoire')) {
+    // Soulbound Grimoire: a chained book with an eye on its cover.
+    body = (
+      <g {...s2}>
+        <path d="M22 24 H70 Q78 24 78 32 V82 H30 Q22 82 22 74 Z" fill="#4a2a5e" />
+        <path d="M30 82 V30 H78" fill="none" strokeWidth={1.6} />
+        <ellipse cx={54} cy={52} rx={12} ry={8} fill="#f4ecd8" />
+        <circle cx={54} cy={52} r={4.5} fill="#b06bff" />
+        <path d="M18 44 L84 64 M18 64 L84 44" stroke="#9aa3ad" strokeWidth={4.5} />
+        <rect x={47} y={50} width={14} height={12} rx={2} fill={GOLD} />
       </g>
     );
   } else if (n.includes('cookie')) {
@@ -718,6 +757,7 @@ const MAGIC_GLYPHS: { match: string; glyph: ReactNode }[] = [
   { match: 'winds', glyph: <g fill="none" stroke="#cfe9ff" strokeWidth={3} strokeLinecap="round"><path d="M-18 -8 H6 Q14 -8 12 -15 Q9 -20 4 -16" /><path d="M-18 2 H12 Q20 2 18 9 Q15 14 10 10" /><path d="M-14 12 H0" /></g> },
   { match: 'beast', glyph: <g fill="#f4d7a8" stroke={INK} strokeWidth={1.8}><path d="M0 4 q-10 0 -10 7 q0 6 10 6 q10 0 10 -6 q0 -7 -10 -7 Z" /><ellipse cx={-11} cy={-4} rx={4} ry={5} /><ellipse cx={-4} cy={-11} rx={4} ry={5.4} /><ellipse cx={4} cy={-11} rx={4} ry={5.4} /><ellipse cx={11} cy={-4} rx={4} ry={5} /></g> },
   { match: 'refresh', glyph: <g fill="none" stroke="#a6ff3d" strokeWidth={3.6} strokeLinecap="round"><path d="M12 -10 A15 15 0 1 0 15 4" /><path d="M12 -10 L13 -19 M12 -10 L3 -10" /></g> },
+  { match: 'labrys', glyph: <g stroke={INK} strokeWidth={1.8} strokeLinejoin="round"><rect x={-2} y={-16} width={4} height={34} rx={1.5} fill="#7a4a24" /><path d="M-2 -12 Q-16 -16 -18 -4 Q-16 6 -2 2 Z M2 -12 Q16 -16 18 -4 Q16 6 2 2 Z" fill="#dfe6ee" /><path d="M8 4 L2 12 H7 L1 20" fill="none" stroke="#ffd23f" strokeWidth={2.4} /></g> },
   { match: 'sacrifice', glyph: <g stroke={INK} strokeWidth={1.8} strokeLinejoin="round"><path d="M0 -18 L4 4 H-4 Z" fill="#dfe6ee" /><rect x={-9} y={4} width={18} height={4} rx={1.5} fill={GOLD} /><rect x={-2.5} y={8} width={5} height={10} fill="#7a4a24" /></g> },
   { match: 'cheer', glyph: <g stroke={INK} strokeWidth={2} strokeLinejoin="round"><path d="M-12 8 Q-12 -14 0 -14 Q12 -14 12 8 L15 12 H-15 Z" fill={GOLD} /><circle cx={0} cy={15} r={3.4} fill={GOLD} /><path d="M-6 -18 Q0 -24 6 -18" fill="none" stroke="#c2263c" strokeWidth={3} /></g> },
 ];
@@ -772,15 +812,24 @@ export function ModifierArt({ choices }: { choices: number[] | null }) {
   );
 }
 
-export function ChallengeArt() {
+/** A Challenge: crossed swords on a red burst; a class Challenge carries that class's sigil and colour instead. */
+export function ChallengeArt({ cls = null }: { cls?: HtsBaseClass | null }) {
   const burst = star(50, 50, 40, 26, 12);
+  const meta = cls ? CLASS_META[cls] : null;
   return (
     <g>
-      <polygon points={burst} fill="#c2263c" stroke={INK} strokeWidth={2} strokeLinejoin="round" />
-      <polygon points={star(50, 50, 30, 20, 12, 0.2)} fill="#ff6a3d" opacity={0.6} />
-      <g transform="translate(18 18) scale(2.66)">
-        <SigilShape cls="fighter" fill="#f4ecd8" />
+      <polygon points={burst} fill={meta?.color ?? '#c2263c'} stroke={INK} strokeWidth={2} strokeLinejoin="round" />
+      <polygon points={star(50, 50, 30, 20, 12, 0.2)} fill={meta ? '#ffffff' : '#ff6a3d'} opacity={meta ? 0.22 : 0.6} />
+      {meta && <circle cx={50} cy={50} r={25} fill={meta.deep} stroke={INK} strokeWidth={2} />}
+      <g transform={meta ? 'translate(29 29) scale(1.75)' : 'translate(18 18) scale(2.66)'}>
+        <SigilShape cls={cls ?? 'fighter'} fill="#f4ecd8" />
       </g>
+      {meta && (
+        <g fontFamily="var(--font-ui)" fontWeight={800} textAnchor="middle">
+          <circle cx={78} cy={78} r={12} fill="#f2e3bf" stroke={INK} strokeWidth={1.8} />
+          <text x={78} y={83.5} fontSize={14} fill="#2f7a3d">+3</text>
+        </g>
+      )}
     </g>
   );
 }

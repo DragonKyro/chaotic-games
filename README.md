@@ -6,27 +6,59 @@ Infrastructure is lifted from the sibling [card-collecting](../card-collecting) 
 
 ## Status
 
-**All six base games are implemented, playable and audited against official sources** — hot-seat, online with friends, or against heuristic AIs, each with its own original art direction, lobby settings and an in-app rules book (433 tests passing). A rules audit (2026-11-19) checked every game's components, setup, turns, card effects, reactions and scoring, and made sure every decision the rules give a player is actually offered to them.
+**All six base games are implemented, playable and verified against official sources** — hot-seat, online with friends, or against heuristic AIs, each with its own original art direction, lobby settings and an in-app rules book (532 tests passing). A rules audit (2026-11-19) checked every game's components, setup, turns, card effects, reactions and scoring, and made sure every decision the rules give a player is actually offered to them. 13 expansions are built to the same standard so far.
 
-Expansions are a mixed picture: much of the original expansion content turned out to be approximated or invented. What could be rebuilt from sources was; the rest is labelled "unverified" in the lobby, or locked.
+## Expansions
 
-| Game | Base game | Expansions |
-|---|---|---|
-| Exploding Kittens | ✅ verified against the official rule-sheet PDFs | ✅ Imploding, Streaking, Barking, Zombie Kittens, Party Pack verified · ⚠ Recipes for Disaster: placeholder, recipes not modeled |
-| Unstable Unicorns | ✅ 2nd Edition verified; Original Base (Second Print) and Diamond Edition rebuilt to their inventories | ⚠ all 8 expansions and the Control / Chaos / Travel editions are approximations, flagged unverified (real card lists in `types.ts`) |
-| Here to Slay | ✅ verified against the official rulebook | ⚠ all 3 expansions are approximations, flagged unverified (their three Party Leaders are correct) |
-| Casting Shadows | ✅ rebuilt from the rulebook, hex reference sheet and card pages | ⚠ hexes and characters official, decks still the app's own, flagged unverified (official lists in `cards.ts`) |
-| Happy Little Dinosaurs | ✅ verified | ✅ 5–6 Player, Perils of Puberty, Dating Disasters verified · ⚠ Hazards Ahead partial (its tokens and Hazard cards are no-ops), unverified |
-| Doomlings | ✅ Classic (2nd edition) rebuilt from scratch and verified | ⛔ none implemented — the earlier seven were invented; the six published packs are listed but locked |
+**Checked** = built from the official rules and card lists, and verified. **Unchecked** = not built, or not complete. Unchecked expansions that are still playable are labelled "unverified" in the lobby; locked ones can't be selected.
 
-### To do
+### Exploding Kittens
+- [x] Base game
+- [x] Imploding Kittens
+- [x] Streaking Kittens
+- [x] Barking Kittens
+- [x] Zombie Kittens
+- [x] Party Pack
+- [ ] Recipes for Disaster — placeholder; its 13 recipes aren't modeled
 
-- [ ] Rebuild Here to Slay's Warriors & Druids and Berserkers & Necromancers from their card lists
-- [ ] Source and rebuild Casting Shadows' Ice Storm and Molten Rock decks
-- [ ] Port Doomlings' six published expansions
-- [ ] Rebuild Unstable Unicorns' 8 expansions and the Control / Chaos / Travel editions
-- [ ] Find the rulebooks for Here to Sleigh and Hazards Ahead; model Recipes for Disaster's recipes
-- [ ] Settle the rules each game lists as unconfirmed in its in-app rules book
+### Unstable Unicorns
+- [x] 2nd Edition base deck
+- [ ] Original Base deck (Second Print) — exact card list, but about 14 cards it shares with the 2nd Edition still use 2nd Edition wording
+- [ ] Diamond Edition — rebuilt, except Reaper (its text was never archived, so it has no effect)
+- [ ] Control, Chaos and Travel editions — approximations (unverified)
+- [ ] NSFW, Rainbow Apocalypse, Dragons, Unicorns of Legend, Adventures, Christmas, Nightmares — approximations (unverified); the real card lists are recorded in `types.ts`
+- [ ] Uncut Unicorns — not a real product; invented (unverified)
+
+### Here to Slay
+- [x] Base game
+- [x] Warriors & Druids
+- [x] Berserkers & Necromancers
+- [ ] Here to Sleigh — approximation (unverified); its rulesheet is only available as images
+
+### Casting Shadows
+- [x] Base game
+- [ ] The Ice Storm — hexes, characters and Freeze / Stun are official; the cards are reconstructed (unverified)
+- [ ] The Molten Rock — hexes and characters are official; the cards and the Burn / Fortify rules are reconstructed (unverified)
+
+### Happy Little Dinosaurs
+- [x] Base game
+- [x] 5–6 Player Expansion
+- [x] Perils of Puberty
+- [x] Dating Disasters
+- [ ] Hazards Ahead — official card pool, but the Hazard tokens and 12 Hazard cards do nothing (its rulebook isn't online)
+
+### Doomlings
+- [x] Classic base game
+- [x] Castle Glass
+- [x] Overlush
+- [x] Imaginary Ends (the four creature sets)
+- [ ] Imaginary Ends: Magical Merchants — locked; the 40 trinkets and merchant Ages aren't built
+- [ ] Legends of Enderas — locked; attachments, Mythling spells and hidden Treasures aren't built
+- [ ] Upgrade — locked
+- [ ] Mokoko Village, Shadow Puppets, Nightflower Island — locked; no rulesheet in the sources
+- [ ] Special Edition — locked
+
+## The games
 
 ### Exploding Kittens
 

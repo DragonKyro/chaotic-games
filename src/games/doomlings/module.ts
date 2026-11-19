@@ -1,10 +1,10 @@
-// Doomlings — GameModule (Classic 2nd-edition base game; expansions not yet implemented).
+// Doomlings — GameModule (Classic 2nd-edition base game plus the built expansions).
 
 import type { GameModule } from '@/core/module';
 import type { Seat } from '@/core/types';
 import { chooseAIAction } from './ai';
 import { applyAction, createInitialState } from './reducer';
-import { DM_EXPANSIONS } from './types';
+import { DM_EXPANSIONS, dmExpansionLockedReason } from './types';
 import type { DmAction, DmConfig, DmState } from './types';
 import { DmThumbnail } from './Thumbnail';
 
@@ -25,7 +25,8 @@ export const doomlingsModule: GameModule<DmState, DmAction, DmConfig> = {
     const errors: string[] = [];
     for (const id of config.expansions ?? []) {
       const name = KNOWN_EXPANSIONS.get(id);
-      errors.push(name ? `${name} isn’t implemented yet.` : `Unknown Doomlings expansion: ${id}`);
+      if (!name) errors.push(`Unknown Doomlings expansion: ${id}`);
+      else if (dmExpansionLockedReason(id)) errors.push(`${name} isn’t available: ${dmExpansionLockedReason(id)}`);
     }
     return errors;
   },

@@ -130,6 +130,30 @@ button.dm-card { cursor: pointer; }
 .dm-card-marks svg { display: block; }
 .dm-card-sm .dm-card-marks svg { width: 11px; height: 11px; }
 
+/* Castle Glass class badge, stuck on the lower-left of the well; the ring shows the tier. */
+.dm-card-class {
+  position: absolute;
+  z-index: 2;
+  left: calc(var(--w) * -0.03);
+  top: calc(var(--w) * 0.45);
+  display: grid;
+  place-items: center;
+  width: calc(var(--w) * 0.24);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #0b2e3a;
+  border: 2px solid #010705;
+  box-shadow: 1px 1px 0 #010705;
+}
+.dm-card-class svg { width: 72%; height: 72%; }
+.dm-card-class.is-curious { box-shadow: 1px 1px 0 #010705, 0 0 0 2px #9be7ff; }
+.dm-card-class.is-exotic { box-shadow: 1px 1px 0 #010705, 0 0 0 2px #ffd23f; background: #2e2408; }
+.dm-card-lg .dm-card-class { top: calc(var(--w) * 0.4); left: calc(var(--w) * 0.05); width: calc(var(--w) * 0.2); }
+.dm-card-xs .dm-card-class { display: none; }
+.dm-card-classname { color: #f2c38b; }
+.dm-card-sub { color: #c9a6ff; }
+.dm-mini-under { font-size: 10px; font-weight: 800; color: #c9a6ff; }
+
 .dm-card-name {
   margin-top: calc(var(--w) * 0.05);
   font-family: 'Gluten', var(--font-display);
@@ -264,6 +288,8 @@ button.dm-mini { cursor: pointer; padding-right: 7px; }
 .dm-age-art svg { display: block; width: 100%; height: 100%; }
 .dm-age-body { padding: 7px 9px 9px; }
 .dm-age-kind {
+  flex-wrap: wrap;
+  row-gap: 0;
   display: flex;
   justify-content: space-between;
   gap: 6px;

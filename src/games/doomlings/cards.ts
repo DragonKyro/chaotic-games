@@ -1,5 +1,6 @@
 // Doomlings — the Classic (2nd edition) card pool: 116 traits (107 distinct),
-// 25 Ages, 15 Catastrophes and The Birth of Life.
+// 25 Ages, 15 Catastrophes and The Birth of Life; and the deck builder that
+// mixes in the enabled expansion packs (their card lists live in packs/).
 //
 // Names, colours, face values, Dominant flags, Gene Pool modifiers and icons
 // are taken from the atlas card data (see types.ts for sources) and were
@@ -8,9 +9,13 @@
 
 import type { RngState } from '@/core/rng';
 import { shuffle } from '@/core/rng';
-import type { DmAgeCard, DmAgeRuleTag, DmCatastropheTag, DmTraitCard, DmTraitColor, DmTraitKind } from './types';
+import { CASTLE_GLASS_AGES, CASTLE_GLASS_CATASTROPHES, CASTLE_GLASS_TRAITS } from './packs/castle-glass';
+import { IMAGINARY_ENDS_AGES, IMAGINARY_ENDS_CATASTROPHES, IMAGINARY_ENDS_TRAITS } from './packs/imaginary-ends';
+import { OVERLUSH_AGES, OVERLUSH_CATASTROPHES, OVERLUSH_MYSTERY_DRAW, OVERLUSH_TRAITS } from './packs/overlush';
+import type { DmAgeCard, DmAgeRuleTag, DmCardSource, DmCatastropheTag, DmTraitCard, DmTraitColor, DmTraitKind } from './types';
+import { DM_BUILT_EXPANSIONS } from './types';
 
-type TraitSeed = Omit<DmTraitCard, 'id' | 'kind' | 'source' | 'genePoolDelta' | 'dominant'> & {
+export type TraitSeed = Omit<DmTraitCard, 'id' | 'kind' | 'source' | 'genePoolDelta' | 'dominant'> & {
   k: DmTraitKind;
   dominant?: boolean;
   genePoolDelta?: number;
@@ -127,7 +132,7 @@ export const CLASSIC_TRAITS: readonly TraitSeed[] = [
   { k: 'woody-stems', name: 'Woody Stems', color: 'green', points: 1, effectless: true, text: '' },
 ];
 
-type AgeSeed = { name: string; ruleTag: DmAgeRuleTag; text: string };
+export type AgeSeed = { name: string; ruleTag: DmAgeRuleTag; text: string };
 
 export const CLASSIC_AGES: readonly AgeSeed[] = [
   { name: 'Age of Dracula', ruleTag: 'dracula', text: 'Everyone discards 1 random card from their hand. Anyone with Vampirism in their pile then steals 1 random card from an opponent’s hand.' },
@@ -157,7 +162,7 @@ export const CLASSIC_AGES: readonly AgeSeed[] = [
   { name: 'Tropical Lands', ruleTag: 'noColorless', text: 'No one can play colorless traits.' },
 ];
 
-type CatastropheSeed = { name: string; tag: DmCatastropheTag; genePoolDelta: number; text: string; worldsEndText: string };
+export type CatastropheSeed = { name: string; tag: DmCatastropheTag; genePoolDelta: number; text: string; worldsEndText: string };
 
 export const CLASSIC_CATASTROPHES: readonly CatastropheSeed[] = [
   { name: 'AI Takeover', tag: 'aiTakeover', genePoolDelta: -1, text: 'Discard all but 1 card from your hand.', worldsEndText: 'Every non-Dominant colorless trait is worth 2, and its effects are ignored.' },
@@ -179,46 +184,126 @@ export const CLASSIC_CATASTROPHES: readonly CatastropheSeed[] = [
 
 const BIRTH_OF_LIFE_TEXT = 'Everyone’s Gene Pool starts at 5. Play 1 trait each turn, then stabilize to end it.';
 
-/** Every Classic trait card, ids from 1 (copies expanded). */
-export function classicTraitCards(firstId = 1): DmTraitCard[] {
+export interface DmPackCards {
+  traits: readonly TraitSeed[];
+  ages: readonly AgeSeed[];
+  catastrophes: readonly CatastropheSeed[];
+}
+
+/** Card lists by set: Classic plus every built expansion. */
+export const DM_PACK_CARDS: Partial<Record<DmCardSource, DmPackCards>> = {
+  classic: { traits: CLASSIC_TRAITS, ages: CLASSIC_AGES, catastrophes: CLASSIC_CATASTROPHES },
+  'castle-glass': { traits: CASTLE_GLASS_TRAITS, ages: CASTLE_GLASS_AGES, catastrophes: CASTLE_GLASS_CATASTROPHES },
+  overlush: { traits: OVERLUSH_TRAITS, ages: OVERLUSH_AGES, catastrophes: OVERLUSH_CATASTROPHES },
+  'imaginary-ends': { traits: IMAGINARY_ENDS_TRAITS, ages: IMAGINARY_ENDS_AGES, catastrophes: IMAGINARY_ENDS_CATASTROPHES },
+};
+
+function expandTraits(seeds: readonly TraitSeed[], source: DmCardSource, firstId: number): DmTraitCard[] {
   const out: DmTraitCard[] = [];
   let id = firstId;
-  for (const seed of CLASSIC_TRAITS) {
+  for (const seed of seeds) {
     const { k, copies = 1, dominant = false, genePoolDelta = 0, ...rest } = seed;
     for (let i = 0; i < copies; i++) {
-      out.push({ ...rest, id: id++, kind: k, dominant, genePoolDelta, source: 'classic' });
+      out.push({ ...rest, id: id++, kind: k, dominant, genePoolDelta, source });
     }
   }
   return out;
 }
 
-export function classicAgeCards(firstId: number): { ages: DmAgeCard[]; catastrophes: DmAgeCard[]; birthOfLife: DmAgeCard } {
+function expandAges(pack: DmPackCards, source: DmCardSource, firstId: number): { ages: DmAgeCard[]; catastrophes: DmAgeCard[] } {
   let id = firstId;
-  const birthOfLife: DmAgeCard = { id: id++, name: 'The Birth of Life', kind: 'birthOfLife', genePoolDelta: 0, ruleTag: 'none', source: 'classic', text: BIRTH_OF_LIFE_TEXT };
-  const ages = CLASSIC_AGES.map((a): DmAgeCard => ({ id: id++, name: a.name, kind: 'age', genePoolDelta: 0, ruleTag: a.ruleTag, source: 'classic', text: a.text }));
-  const catastrophes = CLASSIC_CATASTROPHES.map((c): DmAgeCard => ({
+  const ages = pack.ages.map((a): DmAgeCard => ({ id: id++, name: a.name, kind: 'age', genePoolDelta: 0, ruleTag: a.ruleTag, source, text: a.text }));
+  const catastrophes = pack.catastrophes.map((c): DmAgeCard => ({
     id: id++, name: c.name, kind: 'catastrophe', genePoolDelta: c.genePoolDelta, ruleTag: 'none', catastrophe: c.tag,
-    source: 'classic', text: c.text, worldsEndText: c.worldsEndText,
+    source, text: c.text, worldsEndText: c.worldsEndText,
   }));
-  return { ages, catastrophes, birthOfLife };
+  return { ages, catastrophes };
+}
+
+/** Every Classic trait card, ids from 1 (copies expanded). */
+export function classicTraitCards(firstId = 1): DmTraitCard[] {
+  return expandTraits(CLASSIC_TRAITS, 'classic', firstId);
+}
+
+/** Every trait card of one set (copies expanded). */
+export function packTraitCards(source: DmCardSource, firstId = 1): DmTraitCard[] {
+  const pack = DM_PACK_CARDS[source];
+  return pack ? expandTraits(pack.traits, source, firstId) : [];
+}
+
+/** One set's Ages and Catastrophes. */
+export function packAgeCards(source: DmCardSource, firstId: number): { ages: DmAgeCard[]; catastrophes: DmAgeCard[] } {
+  const pack = DM_PACK_CARDS[source];
+  return pack ? expandAges(pack, source, firstId) : { ages: [], catastrophes: [] };
+}
+
+export function classicAgeCards(firstId: number): { ages: DmAgeCard[]; catastrophes: DmAgeCard[]; birthOfLife: DmAgeCard } {
+  const birthOfLife: DmAgeCard = { id: firstId, name: 'The Birth of Life', kind: 'birthOfLife', genePoolDelta: 0, ruleTag: 'none', source: 'classic', text: BIRTH_OF_LIFE_TEXT };
+  return { ...expandAges(DM_PACK_CARDS.classic!, 'classic', firstId + 1), birthOfLife };
+}
+
+/** The sets in play: Classic, then each enabled built expansion (in a fixed order). */
+export function setsInPlay(expansions: readonly string[]): DmCardSource[] {
+  return ['classic', ...DM_BUILT_EXPANSIONS.filter((id) => expansions.includes(id))];
 }
 
 /**
- * Setup, per the rulesheet: shuffle the 25 ages and deal 3 piles of 3; shuffle
- * the 15 catastrophes and add 1 to each pile; shuffle each pile on its own;
+ * Setup, per the rulesheet: shuffle the ages and deal 3 piles of 3; shuffle
+ * the catastrophes and add 1 to each pile; shuffle each pile on its own;
  * stack them and put The Birth of Life on top. Shuffle the traits.
+ *
+ * Bolster packs (Castle Glass): their traits, Ages and Catastrophe are
+ * shuffled into the base decks before dealing. UNCONFIRMED: the rules card
+ * only says "the base game of Doomlings is required to play".
+ *
+ * Overlush, per its rulesheet ("the Mystery Expansion experience"): its basic
+ * traits, Dominants, Ages and Catastrophes are shuffled as four piles, and 40
+ * traits, 8 Dominants, 8 Ages and 4 Catastrophes are drawn and added to the
+ * game; the rest stay in the box.
  */
-export function buildDmDecks(rng: RngState): { traitDeck: DmTraitCard[]; ageDeck: DmAgeCard[]; birthOfLife: DmAgeCard } {
-  const traits = classicTraitCards(1);
-  const { ages, catastrophes, birthOfLife } = classicAgeCards(traits.length + 1);
+export function buildDmDecks(rng: RngState, expansions: readonly string[] = []): { traitDeck: DmTraitCard[]; ageDeck: DmAgeCard[]; birthOfLife: DmAgeCard } {
+  const sets = setsInPlay(expansions);
+  const traits: DmTraitCard[] = [];
+  // Ids are numbered over every card of every set in play, so they stay
+  // stable whatever the Overlush draw picks.
+  let firstId = 1;
+  for (const set of sets) {
+    const all = packTraitCards(set, firstId);
+    firstId += all.length;
+    if (set === 'overlush') {
+      const basic = shuffle(rng, all.filter((c) => !c.dominant)).slice(0, OVERLUSH_MYSTERY_DRAW.traits);
+      const doms = shuffle(rng, all.filter((c) => c.dominant)).slice(0, OVERLUSH_MYSTERY_DRAW.dominants);
+      traits.push(...basic, ...doms);
+    } else {
+      traits.push(...all);
+    }
+  }
+  let next = firstId;
+  const birthOfLife: DmAgeCard = { id: next++, name: 'The Birth of Life', kind: 'birthOfLife', genePoolDelta: 0, ruleTag: 'none', source: 'classic', text: BIRTH_OF_LIFE_TEXT };
+  const ages: DmAgeCard[] = [];
+  const catastrophes: DmAgeCard[] = [];
+  for (const set of sets) {
+    const pack = DM_PACK_CARDS[set]!;
+    const got = expandAges(pack, set, next);
+    next += got.ages.length + got.catastrophes.length;
+    if (set === 'overlush') {
+      ages.push(...shuffle(rng, got.ages).slice(0, OVERLUSH_MYSTERY_DRAW.ages));
+      catastrophes.push(...shuffle(rng, got.catastrophes).slice(0, OVERLUSH_MYSTERY_DRAW.catastrophes));
+    } else {
+      ages.push(...got.ages);
+      catastrophes.push(...got.catastrophes);
+    }
+  }
+  // Classic-only id order is unchanged: ages, then catastrophes, numbered per set.
   const allAges = shuffle(rng, ages);
   const allCats = shuffle(rng, catastrophes);
   const piles = [0, 1, 2].map((i) => shuffle(rng, [...allAges.slice(i * 3, i * 3 + 3), allCats[i]!]));
   return { traitDeck: shuffle(rng, traits), ageDeck: piles.flat(), birthOfLife };
 }
 
-/** A trait's colours (colorless traits have none). */
-export function printedColors(card: Pick<DmTraitCard, 'color' | 'secondaryColor'>): DmTraitColor[] {
+/** A trait's colours (colorless traits have none; Imaginary Ends' four-colour traits have all four). */
+export function printedColors(card: Pick<DmTraitCard, 'color' | 'secondaryColor' | 'isAllColors'>): DmTraitColor[] {
+  if (card.isAllColors) return ['red', 'blue', 'green', 'purple'];
   const out: DmTraitColor[] = [];
   if (card.color !== 'colorless') out.push(card.color);
   if (card.secondaryColor && card.secondaryColor !== 'colorless' && card.secondaryColor !== card.color) out.push(card.secondaryColor);

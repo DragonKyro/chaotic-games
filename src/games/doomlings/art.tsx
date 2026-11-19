@@ -7,7 +7,8 @@
 //                  it grows, sprouts spikes / fins / fronds / armour / an
 //                  aura as traits land, and gets a crown for Dominants.
 //   AgeArt         landscapes for Ages, apocalypses for Catastrophes.
-//   TraitBack, GenePool helix pips, marker glyphs.
+//   TraitBack, GenePool helix pips, marker glyphs, ClassIcon (Castle Glass's
+//   Shell / Coral / Fish — a class card's specimen grows that motif too).
 //
 // No SVG filters anywhere (they're costly per card); depth comes from
 // gradients with ids from useSvgIds, so a hand of the same card never
@@ -16,7 +17,7 @@
 import { hashString, seededRandom } from '@/core/rng';
 import type { ReactNode } from 'react';
 import { useSvgIds } from '@/ui/kit/hooks';
-import type { DmAgeCard, DmTraitCard, DmTraitColor } from './types';
+import type { DmAgeCard, DmClass, DmClassTier, DmSubspecies, DmTraitCard, DmTraitColor } from './types';
 import { HUE, blobPath, wavyPath } from './shapes';
 
 const INK = '#03100b';
@@ -27,7 +28,20 @@ export interface TraitLook {
   secondaryColor?: DmTraitColor;
   isAllColors?: boolean;
   dominant?: boolean;
+  cls?: DmClass;
+  tier?: DmClassTier;
+  sub?: DmSubspecies[];
 }
+
+/** Castle Glass class colours: sand shells, coral reefs, tropical fish. */
+export const CLASS_HUE: Record<DmClass, { fill: string; light: string }> = {
+  shell: { fill: '#f2c38b', light: '#fff1d6' },
+  coral: { fill: '#ff7a6b', light: '#ffd0c6' },
+  fish: { fill: '#4fd8e8', light: '#d4fbff' },
+};
+
+export const CLASS_WORD: Record<DmClass, string> = { shell: 'Shell', coral: 'Coral', fish: 'Fish' };
+export const TIER_WORD: Record<DmClassTier, string> = { basic: '', curious: 'Curious', exotic: 'Exotic' };
 
 const RAINBOW: DmTraitColor[] = ['red', 'blue', 'green', 'purple'];
 
@@ -205,8 +219,15 @@ export function OrganelleArt({ look, label }: { look: TraitLook; label?: string 
           </g>
         );
       })}
-      {tail && (
+      {tail && !look.cls && (
         <path d={wavyPath(ring(tailAngle, r * 0.92), ringY(tailAngle, r * 0.92), tailAngle, 16 + rand() * 10, 3.2, 2)} fill="none" stroke={h.glow} strokeWidth={1.9} strokeLinecap="round" />
+      )}
+      {look.cls && <ClassMotif cls={look.cls} cx={cx} cy={cy} r={r} side={rot > 90 ? 1 : -1} />}
+      {look.sub?.includes('deepling') && (
+        // Imaginary Ends Deeplings: ink tendrils reaching up from the dark below.
+        <g fill="none" stroke="#120a2a" strokeLinecap="round">
+          {[-1, 0, 1].map((k) => <path key={`dp${k}`} d={wavyPath(cx + k * r * 0.5, 100, -Math.PI / 2 + k * 0.25, 22, 3, 2)} strokeWidth={5} opacity={0.85} />)}
+        </g>
       )}
 
       {/* the cell */}
@@ -289,6 +310,114 @@ export function OrganelleArt({ look, label }: { look: TraitLook; label?: string 
       {/* rim light */}
       <path d={`M${f(cx - r * 0.6)} ${f(cy - r * 0.32)} Q${f(cx - r * 0.45)} ${f(cy - r * 0.74)} ${f(cx + r * 0.05)} ${f(cy - r * 0.76)}`} fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" opacity={0.42} />
       {look.dominant && <Crown x={50} y={11} s={1} />}
+      {look.tier === 'exotic' && <Sparkle x={84} y={18} s={1} />}
+      {look.sub?.includes('glitterling') && [[16, 20, 0.8], [86, 30, 0.6], [22, 84, 0.55]].map(([x, y, k], i) => (
+        <path key={`gl${i}`} transform={`translate(${x} ${y}) scale(${k})`} d="M0 -8 Q1.2 -1.2 8 0 Q1.2 1.2 0 8 Q-1.2 1.2 -8 0 Q-1.2 -1.2 0 -8 Z" fill="#ff9be1" stroke={INK} strokeWidth={1.2} />
+      ))}
+      {look.sub?.includes('moonling') && (
+        <path d="M80 6 a10 10 0 1 0 10 16 a7.5 7.5 0 1 1 -10 -16 Z" fill="#f4f1d6" stroke={INK} strokeWidth={1.2} />
+      )}
+      {look.tier === 'curious' && [0, 1, 2].map((i) => <circle key={`cb${i}`} cx={14 + i * 5} cy={24 - i * 7} r={1.6 + i * 0.7} fill="none" stroke={CLASS_HUE[look.cls ?? 'fish'].light} strokeWidth={0.9} opacity={0.8} />)}
+    </svg>
+  );
+}
+
+/**
+ * Castle Glass: the class grows on the specimen, drawn behind the cell — a
+ * coiled shell, a coral branch rising from the agar, or a fish's tail and fin.
+ */
+function ClassMotif({ cls, cx, cy, r, side }: { cls: DmClass; cx: number; cy: number; r: number; side: 1 | -1 }) {
+  const c = CLASS_HUE[cls];
+  if (cls === 'shell') {
+    // a conch coil tucked behind the lower side of the cell
+    const x = cx + side * r * 0.78;
+    const y = cy + r * 0.62;
+    let coil = `M${f(x)} ${f(y)}`;
+    for (let i = 1; i <= 18; i++) {
+      const a = i * 0.62;
+      const rr = 1 + i * 0.75;
+      coil += ` L${f(x + Math.cos(a) * rr * side)} ${f(y + Math.sin(a) * rr)}`;
+    }
+    return (
+      <g>
+        <circle cx={f(x)} cy={f(y)} r={15} fill={c.fill} stroke={INK} strokeWidth={1.4} />
+        <path d={coil} fill="none" stroke="#8a5a2b" strokeWidth={1.4} strokeLinecap="round" />
+        <circle cx={f(x - side * 5)} cy={f(y - 6)} r={2} fill={c.light} opacity={0.8} />
+      </g>
+    );
+  }
+  if (cls === 'coral') {
+    const bx = cx - side * r * 0.55;
+    const branch = (x: number, y: number, a: number, len: number, depth: number): string => {
+      const x2 = x + Math.cos(a) * len;
+      const y2 = y + Math.sin(a) * len;
+      let d = `M${f(x)} ${f(y)} L${f(x2)} ${f(y2)}`;
+      if (depth > 0) d += branch(x2, y2, a - 0.5, len * 0.66, depth - 1) + branch(x2, y2, a + 0.45, len * 0.62, depth - 1);
+      return d;
+    };
+    const d = branch(bx, 100, -Math.PI / 2 - side * 0.15, 20, 2);
+    return (
+      <g strokeLinecap="round" fill="none">
+        <path d={d} stroke={INK} strokeWidth={6.2} />
+        <path d={d} stroke={c.fill} strokeWidth={4} />
+        <path d={d} stroke={c.light} strokeWidth={1} opacity={0.6} />
+      </g>
+    );
+  }
+  // fish: a forked tail on one side, a dorsal fin on top
+  const tx = cx - side * r;
+  const ty = cy + 2;
+  return (
+    <g fill={c.fill} stroke={INK} strokeWidth={1.4} strokeLinejoin="round">
+      <path d={`M${f(tx + side * 4)} ${f(ty)} L${f(tx - side * 16)} ${f(ty - 13)} Q${f(tx - side * 9)} ${f(ty)} ${f(tx - side * 16)} ${f(ty + 13)} Z`} />
+      <path d={`M${f(cx - side * r * 0.45)} ${f(cy - r * 0.86)} Q${f(cx + side * 2)} ${f(cy - r - 16)} ${f(cx + side * r * 0.5)} ${f(cy - r * 0.84)} Z`} />
+    </g>
+  );
+}
+
+function Sparkle({ x, y, s }: { x: number; y: number; s: number }) {
+  return (
+    <path
+      transform={`translate(${x} ${y}) scale(${s})`}
+      d="M0 -8 Q1.2 -1.2 8 0 Q1.2 1.2 0 8 Q-1.2 1.2 -8 0 Q-1.2 -1.2 0 -8 Z"
+      fill="#ffd23f"
+      stroke={INK}
+      strokeWidth={1}
+    />
+  );
+}
+
+/** A Castle Glass class glyph (14×14): a scallop, a coral sprig or a fish. */
+export function ClassIcon({ cls, size = 14 }: { cls: DmClass; size?: number }) {
+  const c = CLASS_HUE[cls];
+  let body: ReactNode;
+  if (cls === 'shell') {
+    body = (
+      <g stroke={INK} strokeWidth={1} strokeLinejoin="round">
+        <path d="M7 12.5 L1.6 5.6 Q7 -0.6 12.4 5.6 Z" fill={c.fill} />
+        <path d="M7 12.5 L4.6 3 M7 12.5 L7 2 M7 12.5 L9.4 3" fill="none" strokeWidth={0.8} />
+        <rect x={5.2} y={11.4} width={3.6} height={2} rx={0.6} fill={c.fill} />
+      </g>
+    );
+  } else if (cls === 'coral') {
+    body = (
+      <g fill="none" strokeLinecap="round">
+        <path d="M7 13 V7 M7 9 L3.5 5.5 V2.5 M7 7.5 L10.5 4 V1.5 M3.5 5.5 L1.8 4 M10.5 5 L12.4 4.4" stroke={INK} strokeWidth={3} />
+        <path d="M7 13 V7 M7 9 L3.5 5.5 V2.5 M7 7.5 L10.5 4 V1.5 M3.5 5.5 L1.8 4 M10.5 5 L12.4 4.4" stroke={c.fill} strokeWidth={1.6} />
+      </g>
+    );
+  } else {
+    body = (
+      <g stroke={INK} strokeWidth={1} strokeLinejoin="round">
+        <path d="M9.6 7 L13.2 3.6 V10.4 Z" fill={c.fill} />
+        <ellipse cx={6.2} cy={7} rx={5} ry={3.6} fill={c.fill} />
+        <circle cx={3.8} cy={6.2} r={0.9} fill={INK} stroke="none" />
+      </g>
+    );
+  }
+  return (
+    <svg viewBox="0 0 14 14" width={size} height={size} aria-hidden="true">
+      {body}
     </svg>
   );
 }
@@ -361,6 +490,10 @@ function speciesCounts(traits: readonly DmTraitCard[]) {
     // Play-When traits (out-of-turn tricks) orbit the creature as little moons.
     attachments: traits.filter((t) => t.playWhen).length,
     swarm: traits.some((t) => t.isSwarm),
+    shells: traits.filter((t) => t.cls === 'shell').length,
+    hidden: traits.reduce((n, t) => n + (t.under?.length ?? 0), 0),
+    corals: traits.filter((t) => t.cls === 'coral').length,
+    fish: traits.filter((t) => t.cls === 'fish').length,
   };
 }
 
@@ -379,7 +512,7 @@ export function Species({ traits, seedKey, tint, size = 120, label }: {
   const id = useSvgIds();
   const rand = seededRandom(hashString(seedKey));
   const R = Array.from({ length: 48 }, rand);
-  const { counts, total, dominants, attachments, swarm } = speciesCounts(traits);
+  const { counts, total, dominants, attachments, swarm, shells, corals, fish, hidden } = speciesCounts(traits);
   const ranked = (['red', 'blue', 'green', 'purple', 'colorless'] as DmTraitColor[])
     .filter((c) => counts[c] > 0)
     .sort((a, b) => counts[b] - counts[a]);
@@ -447,6 +580,28 @@ export function Species({ traits, seedKey, tint, size = 120, label }: {
           </g>
         );
       })}
+      {/* Castle Glass fish: a forked tail */}
+      {fish > 0 && (
+        <path
+          d={`M${f(cx + r * 0.85)} ${f(cy + 4)} L${f(cx + r + 17)} ${f(cy - 10 - Math.min(fish, 3) * 2)} Q${f(cx + r + 9)} ${f(cy + 4)} ${f(cx + r + 17)} ${f(cy + 18 + Math.min(fish, 3) * 2)} Z`}
+          fill={CLASS_HUE.fish.fill}
+          stroke={INK}
+          strokeWidth={1.8}
+          strokeLinejoin="round"
+        />
+      )}
+      {/* Castle Glass coral: branching antlers */}
+      {corals > 0 && [-1, 1].slice(0, corals > 1 ? 2 : 1).map((side) => {
+        const bx = cx + side * r * 0.32;
+        const by = cy - r * 0.82;
+        const d = `M${f(bx)} ${f(by)} L${f(bx + side * 6)} ${f(by - 14)} M${f(bx + side * 3)} ${f(by - 7)} L${f(bx - side * 4)} ${f(by - 15)} M${f(bx + side * 6)} ${f(by - 14)} L${f(bx + side * 12)} ${f(by - 18)} M${f(bx + side * 6)} ${f(by - 14)} L${f(bx + side * 4)} ${f(by - 22)}`;
+        return (
+          <g key={`co${side}`} fill="none" strokeLinecap="round">
+            <path d={d} stroke={INK} strokeWidth={5} />
+            <path d={d} stroke={CLASS_HUE.coral.fill} strokeWidth={3} />
+          </g>
+        );
+      })}
       {/* swarm: two little clones tagging along */}
       {swarm && [-1, 1].map((side) => (
         <g key={`w${side}`}>
@@ -505,6 +660,30 @@ export function Species({ traits, seedKey, tint, size = 120, label }: {
         </g>
       ) : (
         <path d={`M${f(cx - 7)} ${f(cy + r * 0.06)} Q${cx} ${f(cy + r * 0.06 + 7)} ${f(cx + 7)} ${f(cy + r * 0.06)}`} fill="none" stroke={INK} strokeWidth={2.2} strokeLinecap="round" />
+      )}
+      {/* Imaginary Ends: suppressed cards lurk in a dark pool at its feet, eyes glinting */}
+      {hidden > 0 && (
+        <g>
+          <ellipse cx={cx} cy={f(cy + r * 0.92)} rx={f(r * 0.75 + Math.min(hidden, 6) * 2.5)} ry={f(5 + Math.min(hidden, 6) * 0.7)} fill="#2a1650" stroke="#8b5cf6" strokeWidth={1.4} opacity={0.92} />
+          {Array.from({ length: Math.min(hidden, 6) }, (_, i) => {
+            const n = Math.min(hidden, 6);
+            const x = cx + (n === 1 ? 0 : (i / (n - 1) - 0.5) * r * 1.3);
+            return <circle key={`he${i}`} cx={f(x)} cy={f(cy + r * 0.92 + (i % 2 ? 1.6 : -1.2))} r={1.8} fill="#e6ccff" />;
+          })}
+        </g>
+      )}
+      {/* Castle Glass shells: a coiled shell riding on its back */}
+      {shells > 0 && (
+        <g>
+          <circle cx={f(cx - r * 0.62)} cy={f(cy - r * 0.38)} r={f(8 + Math.min(shells, 4) * 1.6)} fill={CLASS_HUE.shell.fill} stroke={INK} strokeWidth={1.8} />
+          <path
+            d={`M${f(cx - r * 0.62)} ${f(cy - r * 0.38)} m-2 0 a2 2 0 1 1 4 0 a4 4 0 1 1 -8 0 a6 6 0 1 1 12 0`}
+            fill="none"
+            stroke="#8a5a2b"
+            strokeWidth={1.4}
+            strokeLinecap="round"
+          />
+        </g>
       )}
       {/* attachments: little moons in orbit */}
       {Array.from({ length: Math.min(attachments, 3) }, (_, i) => {
@@ -638,8 +817,8 @@ export function traitMarks(c: DmTraitCard, indestructible: boolean): Mark[] {
 
 type Scene =
   | 'birth' | 'eclipse' | 'dunes' | 'rift' | 'flare' | 'tropic' | 'calm' | 'glacier' | 'forest'
-  | 'stars' | 'sunrise' | 'wind' | 'comets' | 'fog' | 'crown' | 'drift'
-  | 'meteor' | 'ice' | 'flood' | 'plague' | 'eruption' | 'goo' | 'machine';
+  | 'stars' | 'sunrise' | 'wind' | 'comets' | 'fog' | 'crown' | 'drift' | 'sandcastle'
+  | 'meteor' | 'ice' | 'flood' | 'plague' | 'eruption' | 'goo' | 'machine' | 'stillwater';
 
 const CATASTROPHE_SCENES: Scene[] = ['meteor', 'ice', 'flood', 'plague', 'eruption', 'goo', 'machine'];
 
@@ -647,6 +826,18 @@ function ageScene(a: Pick<DmAgeCard, 'kind' | 'ruleTag' | 'name'>): Scene {
   if (a.kind === 'birthOfLife') return 'birth';
   if (a.kind === 'catastrophe') {
     const n = a.name.toLowerCase();
+    if (/still water/.test(n)) return 'stillwater';
+    // Imaginary Ends
+    if (/abyss/.test(n)) return 'flood';
+    if (/isolation/.test(n)) return 'ice';
+    if (/moonpocalypse/.test(n)) return 'meteor';
+    if (/pink/.test(n)) return 'goo';
+    // Overlush
+    if (/ash|volcan/.test(n)) return 'eruption';
+    if (/monsoon|deluge|superstorm|algal/.test(n)) return 'flood';
+    if (/vine|rot|invasive|deforest|corruption/.test(n)) return 'plague';
+    if (/strange matter|tragedy/.test(n)) return 'goo';
+    if (/collapse|sacrifice/.test(n)) return 'meteor';
     if (/volcan|erupt|magma|lava|solar|flare/.test(n)) return 'eruption';
     if (/ice|glaci|frost|winter|freeze|snow|melt/.test(n)) return 'ice';
     if (/virus|plague|pandemic|disease|retro|spore|mutat/.test(n)) return 'plague';
@@ -681,6 +872,44 @@ function ageScene(a: Pick<DmAgeCard, 'kind' | 'ruleTag' | 'name'>): Scene {
     case 'naturalHarmony': return 'forest';
     case 'highTides': return 'calm';
     case 'alienTerraform': return 'rift';
+    case 'castleGlass': return 'sandcastle';
+    case 'magicHour': return 'sunrise';
+    // Imaginary Ends
+    case 'quietMoment':
+    case 'moonlight': return 'calm';
+    case 'reverie': return 'stars';
+    case 'solitude':
+    case 'fadingAway': return 'fog';
+    case 'glitterstorm': return 'comets';
+    case 'teaParties': return 'sunrise';
+    case 'unusualFriends': return 'forest';
+    // Overlush
+    case 'certainty':
+    case 'livingLibrary':
+    case 'discardPurple': return 'stars';
+    case 'discovery':
+    case 'paintedValley':
+    case 'discardRed': return 'sunrise';
+    case 'envy':
+    case 'duelingMoons': return 'eclipse';
+    case 'noNegative':
+    case 'noMulticolor':
+    case 'stranger': return 'fog';
+    case 'backwoods':
+    case 'glimmeringGardens':
+    case 'noDominants':
+    case 'tangledCanopies':
+    case 'discardGreen': return 'forest';
+    case 'cleansingRains':
+    case 'swamplands':
+    case 'discardBlue': return 'calm';
+    case 'harlequinFalls':
+    case 'ramblinRiver': return 'tropic';
+    case 'kingOfTheJungle':
+    case 'mokokoLegend': return 'crown';
+    case 'crackletown': return 'flare';
+    case 'rustlingMeadows': return 'wind';
+    case 'starTails': return 'comets';
     default: return 'drift';
   }
 }
@@ -694,12 +923,13 @@ export function AgeArt({ age }: { age: Pick<DmAgeCard, 'kind' | 'ruleTag' | 'nam
   const rand = seededRandom(hashString(age.name));
   const doom = age.kind === 'catastrophe';
   const sky: [string, string] = doom
-    ? scene === 'ice' ? ['#9fd6ff', '#183a66'] : scene === 'flood' ? ['#1b4f7a', '#051226'] : scene === 'plague' ? ['#2f5a1c', '#0a1406'] : scene === 'machine' ? ['#1a2440', '#05070f'] : ['#ff8a3d', '#3a0716']
+    ? scene === 'ice' ? ['#9fd6ff', '#183a66'] : scene === 'flood' ? ['#1b4f7a', '#051226'] : scene === 'plague' ? ['#2f5a1c', '#0a1406'] : scene === 'machine' ? ['#1a2440', '#05070f'] : scene === 'stillwater' ? ['#a9b8c6', '#2b3a4c'] : ['#ff8a3d', '#3a0716']
     : scene === 'birth' ? ['#1f8c76', '#04261f']
     : scene === 'eclipse' || scene === 'stars' || scene === 'fog' ? ['#2a2160', '#070512']
     : scene === 'dunes' || scene === 'sunrise' || scene === 'flare' ? ['#ffb35c', '#7a2a3d']
     : scene === 'glacier' ? ['#bfe9ff', '#3a6c9c']
     : scene === 'calm' ? ['#4a86b8', '#0d2438']
+    : scene === 'sandcastle' ? ['#ffd59a', '#3a8fb0']
     : ['#5fc9a8', '#123d48'];
   const ground = doom ? '#140509' : scene === 'glacier' ? '#e6f6ff' : scene === 'dunes' ? '#d98c4a' : '#0d2a22';
   const banned = BANNED[age.ruleTag];
@@ -723,7 +953,7 @@ export function AgeArt({ age }: { age: Pick<DmAgeCard, 'kind' | 'ruleTag' | 'nam
         stars.map(([x, y, r], i) => <circle key={i} cx={f(x)} cy={f(y)} r={f(r)} fill="#fff" opacity={0.7} />)}
 
       {/* ---- the sky's event ---- */}
-      {(scene === 'sunrise' || scene === 'dunes' || scene === 'birth' || scene === 'drift' || scene === 'tropic' || scene === 'forest' || scene === 'wind') && (
+      {(scene === 'sunrise' || scene === 'dunes' || scene === 'birth' || scene === 'drift' || scene === 'tropic' || scene === 'forest' || scene === 'wind' || scene === 'sandcastle') && (
         <circle cx={scene === 'sunrise' || scene === 'birth' ? 80 : 118} cy={scene === 'sunrise' || scene === 'birth' ? 62 : 26} r={scene === 'sunrise' ? 34 : 22} fill={id.url('sun')} />
       )}
       {scene === 'sunrise' && Array.from({ length: 9 }, (_, i) => {
@@ -814,9 +1044,11 @@ export function AgeArt({ age }: { age: Pick<DmAgeCard, 'kind' | 'ruleTag' | 'nam
           </g>
         );
       })}
-      {scene === 'goo' && Array.from({ length: 9 }, (_, i) => (
-        <path key={i} d={blobPath(10 + rand() * 140, 40 + rand() * 40, 6 + rand() * 10, 7, 0.2, rand)} fill="#8a93a3" stroke="#d5dbe4" strokeWidth={1} opacity={0.85} />
-      ))}
+      {scene === 'goo' && Array.from({ length: 9 }, (_, i) => {
+        // Imaginary Ends' Too Much Pink gets pink goo.
+        const pink = /pink/i.test(age.name);
+        return <path key={i} d={blobPath(10 + rand() * 140, 40 + rand() * 40, 6 + rand() * 10, 7, 0.2, rand)} fill={pink ? '#ff7ad9' : '#8a93a3'} stroke={pink ? '#ffd0f1' : '#d5dbe4'} strokeWidth={1} opacity={0.85} />;
+      })}
       {scene === 'machine' && (
         <g>
           {Array.from({ length: 7 }, (_, i) => <path key={i} d={`M${i * 24} 90 V${60 + (i % 3) * 8} H${i * 24 + 12} V${44 + (i % 2) * 10}`} fill="none" stroke="#38a6ff" strokeWidth={1.4} opacity={0.7} />)}
@@ -826,8 +1058,22 @@ export function AgeArt({ age }: { age: Pick<DmAgeCard, 'kind' | 'ruleTag' | 'nam
         </g>
       )}
 
+      {scene === 'stillwater' && (
+        <g>
+          {/* a pale sun and its perfect reflection on a dead-flat sea */}
+          <circle cx={58} cy={30} r={11} fill="#eef3f7" opacity={0.85} />
+          <rect x={0} y={52} width={160} height={38} fill="#4f6378" />
+          <ellipse cx={58} cy={68} rx={10} ry={4} fill="#eef3f7" opacity={0.45} />
+          <path d="M0 52 H160" stroke="#d7e2ec" strokeWidth={1.2} opacity={0.8} />
+          {[0, 1, 2, 3].map((i) => <path key={i} d={`M${18 + i * 34} ${60 + (i % 2) * 14} h${16 - (i % 2) * 6}`} stroke="#c3d2df" strokeWidth={1} opacity={0.5} />)}
+          {/* the tip of a drowned sandcastle */}
+          <path d="M112 52 V44 H115 V46 H118 V44 H121 V52 Z" fill="#9c8a6c" stroke="#2b3a4c" strokeWidth={1} />
+          <path d="M112 52 V58 H121 V52" fill="#9c8a6c" opacity={0.3} />
+        </g>
+      )}
+
       {/* ---- ground ---- */}
-      {scene !== 'flood' && scene !== 'ice' && scene !== 'eruption' && (
+      {scene !== 'flood' && scene !== 'ice' && scene !== 'eruption' && scene !== 'stillwater' && scene !== 'sandcastle' && (
         <path d={`M0 ${70 + rand() * 6} Q40 ${58 + rand() * 8} 80 ${66 + rand() * 6} T160 ${62 + rand() * 8} L160 90 L0 90 Z`} fill={ground} />
       )}
       {scene === 'eruption' && <path d="M0 80 Q40 74 80 82 T160 78 L160 90 L0 90 Z" fill={ground} />}
@@ -846,6 +1092,27 @@ export function AgeArt({ age }: { age: Pick<DmAgeCard, 'kind' | 'ruleTag' | 'nam
       )}
       {scene === 'calm' && <path d="M0 70 Q40 66 80 70 T160 68 L160 90 L0 90 Z" fill="#163a58" />}
       {scene === 'drift' && <path d="M20 74 q14 -10 30 -4 q-6 8 -30 4 Z M96 70 q20 -8 40 2 q-14 8 -40 -2 Z" fill="#1f6a4a" />}
+      {scene === 'sandcastle' && (
+        <g>
+          <path d="M0 58 Q40 54 80 58 T160 56 L160 66 L0 66 Z" fill="#2f8fb8" />
+          <path d="M0 60 Q20 57 40 60 T80 60 T120 60 T160 59" fill="none" stroke="#e9fbff" strokeWidth={1.2} opacity={0.7} />
+          <path d="M0 68 Q40 62 80 66 T160 64 L160 90 L0 90 Z" fill="#e8c58a" />
+          {/* the castle: two towers and a keep, with glass windows catching the light */}
+          <g fill="#d9ae6c" stroke="#5a3d1c" strokeWidth={1.2} strokeLinejoin="round">
+            <path d="M52 76 V52 H56 V55 H60 V52 H64 V76 Z" />
+            <path d="M96 76 V52 H100 V55 H104 V52 H108 V76 Z" />
+            <path d="M62 76 V42 H67 V46 H72 V40 H78 V46 H83 V42 H88 V46 H93 V42 H98 V76 Z" />
+          </g>
+          <path d="M80 30 V40" stroke="#5a3d1c" strokeWidth={1.2} />
+          <path d="M80 30 L90 33 L80 36 Z" fill="#ff7a6b" stroke="#5a3d1c" strokeWidth={0.8} />
+          {[[58, 62], [102, 62], [76, 52], [84, 58]].map(([x, y], i) => (
+            <path key={i} d={`M${x} ${y! - 3} L${x! + 2.5} ${y} L${x} ${y! + 3} L${x! - 2.5} ${y} Z`} fill="#bff2ff" stroke="#3a8fb0" strokeWidth={0.6} />
+          ))}
+          <path d="M74 76 Q80 68 86 76 Z" fill="#5a3d1c" />
+          <circle cx={30} cy={80} r={2.6} fill="#ff7a6b" stroke="#5a3d1c" strokeWidth={0.8} />
+          <path d="M128 82 l3 -5 l3 5 Z" fill="#f2c38b" stroke="#5a3d1c" strokeWidth={0.8} />
+        </g>
+      )}
       {scene === 'birth' && (
         <g>
           <path d="M0 72 Q40 66 80 72 T160 70 L160 90 L0 90 Z" fill="#0b5a4a" />

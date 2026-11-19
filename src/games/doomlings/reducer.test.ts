@@ -1,19 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { makeSeats, playOut } from '@/core/playout';
-import { CLASSIC_AGES, CLASSIC_CATASTROPHES, CLASSIC_TRAITS, classicAgeCards, classicTraitCards } from './cards';
+import { CLASSIC_AGES, CLASSIC_CATASTROPHES, CLASSIC_TRAITS, classicAgeCards, classicTraitCards, packAgeCards, packTraitCards } from './cards';
 import { chooseAIAction } from './ai';
 import { doomlingsModule } from './module';
 import {
   applyAction,
   canPlayTrait,
+  classBonusOf,
   computePlayerScore,
   createInitialState,
   genePoolOf,
   handOf,
+  outOfTurnPlays,
   previewNextAge,
   tableauOf,
+  usableCards,
+  visibleDeckTop,
 } from './reducer';
-import { DM_EXPANSIONS } from './types';
+import { DM_BUILT_EXPANSIONS, DM_EXPANSIONS } from './types';
 import type { DmAction, DmAgeCard, DmCatastropheTag, DmState, DmTraitCard, DmTraitKind } from './types';
 
 const CFG = { expansions: [] };
@@ -95,10 +99,16 @@ describe('Doomlings — components & setup (Classic 2nd edition)', () => {
     }
   });
 
-  it('lists only the real expansions, all locked: Ancient Fates (invented) is gone', () => {
-    expect(DM_EXPANSIONS.map((e) => e.id)).toEqual(['overlush', 'imaginary-ends', 'legends-of-enderas', 'mokoko-village', 'shadow-puppets', 'castle-glass']);
+  it('lists the nine published sets in the sources; only built ones can be enabled; Ancient Fates (invented) is gone', () => {
+    expect(DM_EXPANSIONS.map((e) => e.id)).toEqual([
+      'castle-glass', 'overlush', 'imaginary-ends', 'magical-merchants', 'legends-of-enderas', 'mokoko-village', 'shadow-puppets', 'nightflower-island',
+      'upgrade', 'special-edition',
+    ]);
+    for (const e of DM_EXPANSIONS) expect(e.verified).toBe(DM_BUILT_EXPANSIONS.includes(e.id as never));
     expect(doomlingsModule.validateConfig({ expansions: [] })).toEqual([]);
-    expect(doomlingsModule.validateConfig({ expansions: ['overlush'] }).length).toBe(1);
+    expect(doomlingsModule.validateConfig({ expansions: ['castle-glass', 'overlush', 'imaginary-ends'] })).toEqual([]);
+    expect(doomlingsModule.validateConfig({ expansions: ['magical-merchants'] }).length).toBe(1);
+    expect(doomlingsModule.validateConfig({ expansions: ['legends-of-enderas'] }).length).toBe(1);
     expect(doomlingsModule.validateConfig({ expansions: ['ancient-fates'] }).length).toBe(1);
   });
 });
@@ -607,5 +617,1102 @@ describe('Doomlings — AI', () => {
       s = applyAction(s, chooseAIAction(s, me)!);
     }
     expect(checked).toBeGreaterThan(20);
+  });
+});
+
+// ============================================================================
+// Castle Glass
+// ============================================================================
+
+describe('Doomlings — Castle Glass', () => {
+  const CG_CARDS = packTraitCards('castle-glass', 3000);
+  const CG_AGES = packAgeCards('castle-glass', 3500);
+  const CGCFG = { expansions: ['castle-glass'] };
+
+  /** A fresh copy of a Castle Glass trait with a unique id. */
+  function C(kind: DmTraitKind): DmTraitCard {
+    const c = CG_CARDS.find((x) => x.kind === kind);
+    if (!c) throw new Error(`no Castle Glass trait ${kind}`);
+    return { ...c, id: nextId++ };
+  }
+
+  /** setup(), plus a deck of effectless fillers so stabilizing never draws a surprise. */
+  function cg(n = 2, seed = 7): DmState {
+    const s = setup(n, seed);
+    s.traitDeck = Array.from({ length: 40 }, (_, i) => T((['antlers', 'bark', 'gills', 'leaves'] as const)[i % 4]!));
+    return s;
+  }
+
+  const kinds = (cards: DmTraitCard[]) => cards.map((c) => c.kind);
+
+  it('has its 40 numbered cards: 30 traits, 7 Dominants, 2 Ages, 1 Catastrophe — Special Edition Luminous / Radiant left out', () => {
+    expect(CG_CARDS.length).toBe(37);
+    expect(CG_CARDS.filter((c) => c.dominant).length).toBe(7);
+    expect(CG_AGES.ages.map((a) => a.name)).toEqual(['Castle Glass', 'Magic Hour']);
+    expect(CG_AGES.catastrophes.map((a) => [a.name, a.genePoolDelta])).toEqual([['Still Water', -2]]);
+    expect(CG_CARDS.some((c) => c.name === 'Luminous' || c.name === 'Radiant')).toBe(false);
+    // Spot checks against the card data.
+    expect(C('keystone')).toMatchObject({ points: 5, color: 'purple', dominant: true, cls: 'coral', tier: 'exotic' });
+    expect(C('resplendent')).toMatchObject({ color: 'blue', secondaryColor: 'green', genePoolDelta: 1, cls: 'fish', tier: 'exotic' });
+    expect(C('glass-predator')).toMatchObject({ points: -3, action: true, cls: 'fish' });
+    expect(C('fish-collector').cls).toBeUndefined();
+    expect(C('sunny').cls).toBeUndefined();
+  });
+
+  it('is shuffled into the Classic decks', () => {
+    const s = createInitialState(CGCFG, 3, makeSeats(4));
+    const all = [...s.traitDeck, ...s.seats.flatMap((x) => handOf(s, x.id))];
+    expect(all.length).toBe(116 + 37);
+    expect(new Set(all.map((c) => c.id)).size).toBe(all.length);
+    let sawCgAge = false;
+    for (let seed = 1; seed <= 30 && !sawCgAge; seed++) {
+      const t = createInitialState(CGCFG, seed, makeSeats(3));
+      expect(t.ageDeck.length).toBe(12);
+      sawCgAge = t.ageDeck.some((a) => a.source === 'castle-glass');
+    }
+    expect(sawCgAge).toBe(true);
+    // Without the pack nothing changes.
+    expect(createInitialState(CFG, 3, makeSeats(4)).traitDeck.some((c) => c.source === 'castle-glass')).toBe(false);
+  });
+
+  it('class bonuses score like the rules card’s examples', () => {
+    const s = cg();
+    const bonus = (...cards: DmTraitCard[]) => {
+      s.tableaus.p1 = cards;
+      return classBonusOf(s, 'p1');
+    };
+    expect(bonus(C('glossy'), C('biochromatic'))).toBe(0); // Shell + Coral
+    expect(bonus(C('glossy'), C('striated'), C('brainy'))).toBe(2); // Shell + Shell + Coral
+    expect(bonus(C('glossy'), C('porous'), C('sandy'))).toBe(6); // Shell + Curious Shell + Exotic Shell
+    expect(bonus(C('biochromatic'), C('harboring'), C('glossy'), C('sandy'))).toBe(7); // Coral + Curious Coral, Shell + Exotic Shell
+    s.tableaus.p1 = [C('glossy'), C('porous'), C('sandy')];
+    expect(computePlayerScore(s, 'p1')).toMatchObject({ faceValue: 3, classBonus: 6, total: 9 });
+  });
+
+  it('Mucous Coating is +3 with a Coral in your pile', () => {
+    const s = cg();
+    s.tableaus.p1 = [C('mucous-coating')];
+    expect(computePlayerScore(s, 'p1').dropOfLifeBonus).toBe(0);
+    s.tableaus.p1.push(C('tabular'));
+    expect(computePlayerScore(s, 'p1').dropOfLifeBonus).toBe(3);
+  });
+
+  it('Brainy: opponents can’t play purple on their next turn, and only then', () => {
+    let s = cg();
+    const brainy = C('brainy');
+    s.hands.p1[0] = brainy;
+    s.hands.p2 = [T('adorable'), T('bark'), T('gills'), T('leaves'), T('fangs')];
+    s = play(s, 'p1', brainy);
+    expect(s.turnPlayerId).toBe('p2');
+    expect(canPlayTrait(s, 'p2', handOf(s, 'p2')[0]!)).toBe(false); // purple Adorable
+    expect(() => play(s, 'p2', handOf(s, 'p2')[0]!)).toThrow(/Brainy/);
+    s = play(s, 'p2', handOf(s, 'p2')[1]!);
+    expect(s.turnBans).toEqual([]);
+  });
+
+  it('Guanine Crystals: draw 2 instead of stabilizing; Harboring: stabilize to 6', () => {
+    let s = cg();
+    s.hands.p1[0] = C('guanine-crystals');
+    s.hands.p1.push(T('fangs'), T('fangs')); // 7 cards
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(s.turnPlayerId).toBe('p2');
+    expect(handOf(s, 'p1').length).toBe(8); // 6 left + 2, no discards
+
+    let t = cg();
+    t.hands.p1[0] = C('harboring');
+    t = play(t, 'p1', t.hands.p1[0]!);
+    expect(handOf(t, 'p1').length).toBe(6);
+    expect(genePoolOf(t, 'p1')).toBe(5);
+  });
+
+  it('Countershading can be played instead of stabilizing', () => {
+    let s = cg();
+    const cs = C('countershading');
+    s.hands.p1.push(cs, T('fangs')); // 7 cards
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(s.prompt?.kind).toBe('option');
+    if (s.prompt?.kind !== 'option') throw new Error();
+    expect(s.prompt.options.map((o) => o.id)).toEqual(['stabilize', 'countershading']);
+    s = answer(s, { optionId: 'countershading' });
+    expect(tableauOf(s, 'p1').map((c) => c.id)).toContain(cs.id);
+    expect(handOf(s, 'p1').length).toBe(5); // 7 − 2 played, never stabilized
+    expect(s.turnPlayerId).toBe('p2');
+  });
+
+  it('Spiny Fins discards the trait it plays; Spiral Motion returns it, and only once a turn', () => {
+    let s = cg();
+    s.hands.p1[0] = C('spiny-fins');
+    const bark = s.hands.p1[1]!;
+    s = play(s, 'p1', s.hands.p1[0]!);
+    s = answer(s, { cardIds: [bark.id] });
+    expect(kinds(tableauOf(s, 'p1'))).toEqual(['spiny-fins']);
+    expect(s.traitDiscard.map((c) => c.id)).toContain(bark.id);
+
+    let t = cg();
+    const [m1, m2] = [C('spiral-motion'), C('spiral-motion')];
+    t.hands.p1 = [m1, m2, T('bark'), T('fangs'), T('gills')];
+    t = play(t, 'p1', m1);
+    t = answer(t, { cardIds: [m2.id] }); // its own Spiral Motion effect is ignored this turn
+    expect(kinds(tableauOf(t, 'p1'))).toEqual(['spiral-motion']);
+    expect(handOf(t, 'p1').map((c) => c.id)).toContain(m2.id);
+    expect(t.turnPlayerId).toBe('p2');
+  });
+
+  it('Fish Collector steals face-value-1 traits from up to two different piles, and may stop', () => {
+    let s = cg(3);
+    const [leaves, fangs, gills] = [T('leaves'), T('fangs'), T('gills')];
+    s.tableaus.p2 = [leaves, fangs, T('bark')];
+    s.tableaus.p3 = [gills];
+    s.hands.p1[0] = C('fish-collector');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    if (s.prompt?.kind !== 'trait') throw new Error('expected a trait prompt');
+    expect(s.prompt.optional).toBe(true);
+    expect(s.prompt.targets.map((t) => t.cardId).sort()).toEqual([leaves.id, fangs.id, gills.id].sort());
+    s = answer(s, { targetCardId: leaves.id });
+    if (s.prompt?.kind !== 'trait') throw new Error('expected a second pick');
+    expect(s.prompt.targets.map((t) => t.cardId)).toEqual([gills.id]); // a different pile
+    s = answer(s, { decline: true });
+    expect(kinds(tableauOf(s, 'p1'))).toEqual(['fish-collector', 'leaves']);
+    expect(tableauOf(s, 'p3').length).toBe(1);
+  });
+
+  it('Pip plays every trait of the chosen face value (ignoring Actions); Pearl one trait per colour', () => {
+    let s = cg();
+    s.hands.p1 = [C('pip'), T('bark'), T('hot-temper'), T('leaves'), T('deep-roots')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    if (s.prompt?.kind !== 'option') throw new Error('expected the face-value choice');
+    expect(s.prompt.options.map((o) => o.id)).toEqual(['1', '2']);
+    s = answer(s, { optionId: '2' });
+    // Bark, Hot Temper (its discard Action ignored) and Deep Roots; Leaves stays.
+    expect(kinds(tableauOf(s, 'p1')).sort()).toEqual(['bark', 'deep-roots', 'hot-temper', 'pip']);
+    expect(s.turnPlayerId).toBe('p2');
+
+    let t = cg();
+    const [antlers, bark, fangs, gills] = [T('antlers'), T('bark'), T('fangs'), T('gills')];
+    t.hands.p1 = [C('pearl'), antlers, bark, fangs, gills];
+    t = play(t, 'p1', t.hands.p1[0]!);
+    t = answer(t, { cardIds: [antlers.id] });
+    if (t.prompt?.kind !== 'cards') throw new Error('expected another Pearl pick');
+    expect(t.prompt.cardIds.sort()).toEqual([bark.id, gills.id].sort()); // red is used up
+    t = answer(t, { decline: true });
+    expect(kinds(tableauOf(t, 'p1'))).toEqual(['pearl', 'antlers']);
+  });
+
+  it('Sandy sends the next age to the bottom; Natural Symmetry lets everyone preview it', () => {
+    let s = cg();
+    const next = s.ageDeck[0]!;
+    s.hands.p1[0] = C('sandy');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(s.ageDeck[s.ageDeck.length - 1]!.id).toBe(next.id);
+    expect(s.ageDeck[0]!.id).not.toBe(next.id);
+
+    let t = cg(3);
+    t.hands.p1[0] = C('natural-symmetry');
+    t = play(t, 'p1', t.hands.p1[0]!);
+    for (const p of ['p1', 'p2', 'p3']) expect(previewNextAge(t, p)?.id).toBe(t.ageDeck[0]!.id);
+  });
+
+  it('“Play at any time” traits are free plays that don’t use up the turn; Sunny stabilizes to 8', () => {
+    let s = cg();
+    const glass = C('sea-glass');
+    const sunny = C('sunny');
+    s.hands.p1 = [glass, sunny, T('bark'), T('fangs'), T('gills')];
+    expect(outOfTurnPlays(s, 'p1').map((c) => c.kind)).toEqual(['sea-glass', 'sunny']);
+    expect(() => applyAction(s, { type: 'playOutOfTurn', playerId: 'p1', cardId: glass.id, targetPlayerId: 'p2' })).toThrow(/own pile/);
+    s = applyAction(s, { type: 'playOutOfTurn', playerId: 'p1', cardId: glass.id, targetPlayerId: 'p1' });
+    expect(s.turnPlayerId).toBe('p1');
+    expect(s.subPhase).toBe('awaitingAction');
+    s = applyAction(s, { type: 'playOutOfTurn', playerId: 'p1', cardId: sunny.id, targetPlayerId: 'p1' });
+    expect(handOf(s, 'p1').length).toBe(8);
+    expect(kinds(tableauOf(s, 'p1'))).toEqual(['sea-glass', 'sunny']);
+    expect(s.turnPlayerId).toBe('p1');
+  });
+
+  it('Conchomancy and Sea Glass are offered again right after you stabilize', () => {
+    let s = cg();
+    const conch = C('conchomancy');
+    s.hands.p1.push(conch);
+    s = play(s, 'p1', s.hands.p1[0]!);
+    if (s.prompt?.kind !== 'option' || s.prompt.task.t !== 'late') throw new Error('expected the after-stabilize window');
+    s = answer(s, { optionId: `play:${conch.id}` });
+    expect(kinds(tableauOf(s, 'p1'))).toContain('conchomancy');
+    expect(previewNextAge(s, 'p1')).not.toBeNull();
+    expect(s.turnPlayerId).toBe('p2');
+  });
+
+  it('Still Water: everyone draws 3, nobody stabilizes that round; World’s End +8 at Gene Pool 1', () => {
+    let s = cg();
+    lastTurn(s, 'p2');
+    s.ageDeck.unshift(CG_AGES.catastrophes[0]!);
+    s = play(s, 'p2', s.hands.p2[0]!);
+    expect(s.currentAge.catastrophe).toBe('stillWater');
+    expect(genePoolOf(s, 'p1')).toBe(3);
+    expect(s.turnPlayerId).toBe('p2');
+    const before = handOf(s, 'p2').length;
+    s = play(s, 'p2', handOf(s, 'p2')[0]!);
+    expect(handOf(s, 'p2').length).toBe(before - 1);
+    expect(s.turnPlayerId).toBe('p1');
+
+    const t = cg();
+    t.genePool.p1 = 1;
+    t.worldsEnd = { effect: 'stillWater', resolved: [], chosenColor: {}, colorChange: { p1: null, p2: null }, deusDraws: {}, tiebreak: {}, chosenPlayer: {} };
+    expect(computePlayerScore(t, 'p1').worldsEndBonus).toBe(8);
+    expect(computePlayerScore(t, 'p2').worldsEndBonus).toBe(0);
+  });
+
+  it('the Castle Glass age can’t discard class cards; Magic Hour lets each player choose', () => {
+    let s = cg();
+    lastTurn(s, 'p2');
+    s.ageDeck.unshift(CG_AGES.ages[0]!, CG_AGES.ages[1]!);
+    const [glossy, striated] = [C('glossy'), C('striated')];
+    s.hands.p1 = [glossy, striated, T('bark'), T('fangs'), T('gills')];
+    s = play(s, 'p2', s.hands.p2[0]!);
+    expect(s.currentAge.ruleTag).toBe('castleGlass');
+    if (s.prompt?.kind !== 'cards' || s.prompt.playerId !== 'p1') throw new Error('expected p1 to discard');
+    expect(s.prompt.cardIds).not.toContain(glossy.id);
+    expect(s.prompt.cardIds).not.toContain(striated.id);
+    s = answer(s, { cardIds: s.prompt.cardIds.slice(0, 2) });
+    expect(handOf(s, 'p1').length).toBe(5);
+    expect(handOf(s, 'p1').map((c) => c.id)).toEqual(expect.arrayContaining([glossy.id, striated.id]));
+
+    let t = cg();
+    lastTurn(t, 'p2');
+    t.ageDeck.unshift(CG_AGES.ages[1]!);
+    t.genePool.p1 = 3;
+    t = play(t, 'p2', t.hands.p2[0]!);
+    expect(t.prompt?.task.t).toBe('magicHour');
+    t = answer(t, { optionId: 'gp5' });
+    expect(genePoolOf(t, 'p1')).toBe(5);
+    const h2 = handOf(t, 'p2').length;
+    t = answer(t, { optionId: 'draw' });
+    expect(handOf(t, 'p2').length).toBe(h2 + 2);
+  });
+
+  it('Thermal Tolerance counts the red traits of the opponent chosen at World’s End', () => {
+    let s = cg(3);
+    s.catastrophesSeen = 2;
+    lastTurn(s, 'p3');
+    s.ageDeck = [cat('greyGoo')];
+    s.tableaus.p1 = [C('thermal-tolerance')];
+    s.tableaus.p2 = [T('antlers')];
+    s.tableaus.p3 = [T('antlers'), T('fangs'), T('quick')];
+    s = play(s, 'p3', s.hands.p3[1]!); // Bark, not a red trait
+    // Grey Goo first makes everyone discard and stabilize; then p1 chooses whose pile counts.
+    while (s.prompt && s.prompt.task.t !== 'pickPlayer') s = applyAction(s, chooseAIAction(s, s.activePlayerId!)!);
+    if (s.prompt?.kind !== 'player') throw new Error('expected the opponent choice');
+    expect(s.prompt.playerIds.sort()).toEqual(['p2', 'p3']);
+    s = answer(s, { targetPlayerId: 'p3' });
+    expect(s.phase).toBe('gameOver');
+    expect(computePlayerScore(s, 'p1').dropOfLifeBonus).toBe(3);
+  });
+
+  it('Radial Symmetry: at the start of your turn you may discard every card of one colour', () => {
+    let s = cg();
+    s.tableaus.p2 = [C('radial-symmetry')];
+    s.hands.p2 = [T('antlers'), T('fangs'), T('bark'), T('gills'), T('leaves')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    if (s.prompt?.kind !== 'color' || s.prompt.playerId !== 'p2') throw new Error('expected the colour choice');
+    expect(s.prompt.optional).toBe(true);
+    s = answer(s, { chosenColor: 'red' });
+    expect(kinds(handOf(s, 'p2'))).toEqual(['bark', 'gills', 'leaves']);
+    expect(s.subPhase).toBe('awaitingAction');
+  });
+
+  it('Benthic trades a card for another play; Fragmentation stabilizes to 4 first; Glass Predator steals then plays', () => {
+    let s = cg();
+    s.hands.p1 = [C('benthic'), T('bark'), T('fangs'), T('gills'), T('leaves')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(s.prompt?.task.t).toBe('benthic');
+    s = answer(s, { cardIds: [handOf(s, 'p1')[1]!.id] }); // Fangs
+    s = answer(s, { cardIds: [handOf(s, 'p1')[0]!.id] }); // Bark
+    expect(kinds(tableauOf(s, 'p1'))).toEqual(['benthic', 'bark']);
+
+    let t = cg();
+    t.hands.p1 = [C('fragmentation'), T('bark'), T('fangs'), T('gills'), T('leaves'), T('spiny'), T('quick')];
+    t = play(t, 'p1', t.hands.p1[0]!);
+    if (t.prompt?.kind !== 'cards') throw new Error('expected the stabilize-to-4 discard');
+    expect(t.prompt.min).toBe(2);
+    t = answer(t, { cardIds: t.prompt.cardIds.slice(0, 2) });
+    expect(t.prompt?.task.t).toBe('playAnother');
+
+    let g = cg();
+    g.tableaus.p2 = [T('blubber')];
+    g.hands.p1[0] = C('glass-predator');
+    g = play(g, 'p1', g.hands.p1[0]!);
+    expect(kinds(tableauOf(g, 'p1'))).toEqual(['glass-predator', 'blubber']);
+    expect(g.prompt?.task.t).toBe('playAnother');
+  });
+
+  it('Biochromatic: opponents discard their colorless cards and stabilize; Crystal Skeleton: everyone sheds Dominants', () => {
+    let s = cg();
+    s.hands.p1[0] = C('biochromatic');
+    s.hands.p2 = [T('fear'), T('flatulence'), T('bark'), T('fangs'), T('gills')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(handOf(s, 'p2').length).toBe(5);
+    expect(handOf(s, 'p2').some((c) => c.kind === 'fear' || c.kind === 'flatulence')).toBe(false);
+
+    let t = cg();
+    t.hands.p1 = [C('crystal-skeleton'), T('tiny'), T('bark'), T('fangs'), T('gills')];
+    t.hands.p2 = [T('immunity'), T('heroic'), T('bark'), T('fangs'), T('gills')];
+    t = play(t, 'p1', t.hands.p1[0]!);
+    for (const p of ['p1', 'p2']) expect(handOf(t, p).some((c) => c.dominant)).toBe(false);
+    expect(handOf(t, 'p2').length).toBe(5);
+  });
+
+  it('Opulent and Resplendent play another trait when they enter, even in the Age of Peace', () => {
+    let s = cg();
+    s.currentAge = age('ignoreActions');
+    s.hands.p1 = [C('opulent'), T('bark'), T('fangs'), T('gills'), T('leaves')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(handOf(s, 'p1').length).toBe(5); // 4 + drew 1
+    expect(s.prompt?.task.t).toBe('playAnother');
+  });
+
+  it('the AI plays full Castle Glass games for 2–6 players', () => {
+    for (const n of [2, 3, 4, 5, 6]) {
+      const { state, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState(CGCFG, 900 + n, makeSeats(n)), 4000);
+      expect(stuck).toBe(false);
+      expect(state.phase).toBe('gameOver');
+      expect(state.catastrophesSeen).toBe(3);
+    }
+  });
+});
+
+// ============================================================================
+// Overlush
+// ============================================================================
+
+describe('Doomlings — Overlush', () => {
+  const OV_CARDS = packTraitCards('overlush', 6000);
+  const OV_AGES = packAgeCards('overlush', 6500);
+  const OVCFG = { expansions: ['overlush'] };
+
+  /** A fresh copy of an Overlush trait with a unique id. */
+  function O(kind: DmTraitKind): DmTraitCard {
+    const c = OV_CARDS.find((x) => x.kind === kind);
+    if (!c) throw new Error(`no Overlush trait ${kind}`);
+    return { ...c, id: nextId++ };
+  }
+  const ovAge = (tag: DmAgeCard['ruleTag']) => OV_AGES.ages.find((a) => a.ruleTag === tag)!;
+  const ovCat = (tag: DmCatastropheTag) => OV_AGES.catastrophes.find((a) => a.catastrophe === tag)!;
+
+  /** setup(), plus a deck of effectless fillers. */
+  function ov(n = 2, seed = 7): DmState {
+    const s = setup(n, seed);
+    s.traitDeck = Array.from({ length: 40 }, (_, i) => T((['antlers', 'bark', 'gills', 'leaves'] as const)[i % 4]!));
+    return s;
+  }
+  const kinds = (cards: DmTraitCard[]) => cards.map((c) => c.kind);
+
+  it('has the whole collection, and each game draws 40 traits, 8 Dominants, 8 Ages and 4 Catastrophes from it', () => {
+    expect(OV_CARDS.length).toBe(146);
+    expect(OV_CARDS.filter((c) => c.dominant).length).toBe(35);
+    expect(OV_CARDS.filter((c) => c.kind === 'kidney').map((c) => c.color)).toEqual(['green', 'green', 'green', 'green', 'green']);
+    expect(new Set(OV_CARDS.filter((c) => c.kind === 'swarm').map((c) => c.color)).size).toBe(5);
+    expect(OV_AGES.ages.length).toBe(28);
+    expect(OV_AGES.catastrophes.length).toBe(15);
+    expect(O('epic')).toMatchObject({ points: 10, color: 'red', dominant: true });
+    expect(O('indomitable')).toMatchObject({ points: 8, genePoolDelta: -2, dominant: true });
+    expect(ovCat('algalSuperbloom').genePoolDelta).toBe(0);
+    for (const seed of [1, 2]) {
+      const s = createInitialState(OVCFG, seed, makeSeats(3));
+      const all = [...s.traitDeck, ...s.seats.flatMap((x) => handOf(s, x.id))];
+      const mine = all.filter((c) => c.source === 'overlush');
+      expect(mine.length).toBe(48);
+      expect(mine.filter((c) => c.dominant).length).toBe(8);
+      expect(all.length).toBe(116 + 48);
+      expect(new Set(all.map((c) => c.id)).size).toBe(all.length);
+    }
+  });
+
+  it('Dart, Quills and Patches answer an opponent taking a trait from your pile', () => {
+    let s = ov();
+    const fangs = T('fangs');
+    const [dart, quills] = [O('dart'), O('quills')];
+    s.tableaus.p2 = [fangs];
+    s.hands.p2 = [dart, quills, T('bark'), T('gills'), T('leaves')];
+    s.hands.p1[0] = T('selfish');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    if (s.prompt?.kind !== 'option' || s.prompt.task.t !== 'removalWindow') throw new Error('expected the removal window');
+    expect(s.prompt.playerId).toBe('p2');
+    s = answer(s, { optionId: `quills:${quills.id}` });
+    expect(kinds(tableauOf(s, 'p1'))).toEqual(['selfish', 'fangs', 'quills']);
+    s = answer(s, { optionId: `play:${dart.id}` });
+    expect(kinds(tableauOf(s, 'p2'))).toEqual(['dart']);
+
+    let t = ov();
+    const patches = O('patches');
+    t.tableaus.p2 = [T('fangs')];
+    t.hands.p2 = [patches, T('bark'), T('gills'), T('leaves'), T('spiny')];
+    t.hands.p1[0] = T('selfish');
+    t = play(t, 'p1', t.hands.p1[0]!);
+    t = answer(t, { optionId: `patches:${patches.id}` });
+    expect(kinds(tableauOf(t, 'p2')).sort()).toEqual(['fangs', 'patches']);
+    expect(kinds(tableauOf(t, 'p1'))).toEqual(['selfish']);
+  });
+
+  it('Dart can’t be played on your own turn; Patches can’t undo a Dominant’s removal', () => {
+    const s = ov();
+    s.hands.p1 = [O('dart'), T('bark')];
+    expect(canPlayTrait(s, 'p1', s.hands.p1[0]!)).toBe(false);
+    let t = ov(2);
+    t.catastrophesSeen = 2;
+    lastTurn(t, 'p2');
+    t.ageDeck = [cat('greyGoo')];
+    t.tableaus.p2 = [O('chompers')];
+    t.tableaus.p1 = [T('bark')];
+    t = play(t, 'p2', t.hands.p2[0]!);
+    // Grey Goo makes everyone discard and stabilize, then Chompers eats p1's effectless Bark.
+    while (t.prompt) t = applyAction(t, chooseAIAction(t, t.activePlayerId!)!);
+    expect(t.phase).toBe('gameOver');
+    expect(tableauOf(t, 'p1').length).toBe(0);
+  });
+
+  it('Pinchy stops an opponent’s play: the trait goes to your hand, and they may play another', () => {
+    let s = ov();
+    const pinchy = O('pinchy');
+    const melons = T('tiny-little-melons');
+    s.hands.p2 = [pinchy, T('bark'), T('gills'), T('leaves'), T('spiny')];
+    s.tableaus.p2 = [T('leaves')];
+    s.hands.p1[0] = melons;
+    s = play(s, 'p1', melons);
+    expect(s.prompt?.task.t).toBe('parasiticWindow');
+    s = answer(s, { optionId: 'pinchy' });
+    expect(handOf(s, 'p2').map((c) => c.id)).toContain(melons.id);
+    expect(kinds(tableauOf(s, 'p2'))).toEqual(['leaves', 'pinchy']); // Melons' steal never happened
+    expect(s.prompt?.task.t).toBe('playAnother');
+    expect(s.prompt?.playerId).toBe('p1');
+  });
+
+  it('Snap-Trap steals one of the traits an opponent played once they play a 2nd', () => {
+    let s = ov();
+    const trap = O('snap-trap');
+    s.hands.p2 = [trap, T('bark'), T('gills'), T('leaves'), T('spiny')];
+    const [prop, blubber] = [T('propagation'), T('blubber')];
+    s.hands.p1 = [prop, blubber, T('fangs'), T('gills'), T('leaves')];
+    s = play(s, 'p1', prop);
+    s = answer(s, { cardIds: [blubber.id] });
+    expect(s.prompt?.task.t).toBe('snapTrap');
+    s = answer(s, { optionId: `play:${trap.id}` });
+    if (s.prompt?.kind !== 'trait') throw new Error('expected the steal');
+    expect(s.prompt.targets.map((t) => t.cardId).sort()).toEqual([prop.id, blubber.id].sort());
+    s = answer(s, { targetCardId: blubber.id });
+    expect(kinds(tableauOf(s, 'p2'))).toEqual(['snap-trap', 'blubber']);
+  });
+
+  it('Elusive can be played when it reaches your hand on an opponent’s turn; Muse when it is discarded', () => {
+    let s = ov();
+    const elusive = O('elusive');
+    s.hands.p1 = [T('doting'), elusive];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(s.prompt?.task.t).toBe('elusive');
+    expect(s.prompt?.playerId).toBe('p2');
+    s = answer(s, { optionId: 'play' });
+    expect(kinds(tableauOf(s, 'p2'))).toEqual(['elusive']);
+
+    let t = ov();
+    const muse = O('muse');
+    t.hands.p2 = [muse, T('bark')];
+    t.hands.p1[0] = T('bad');
+    t = play(t, 'p1', t.hands.p1[0]!);
+    expect(t.prompt?.task.t).toBe('muse');
+    t = answer(t, { optionId: 'play' });
+    expect(kinds(tableauOf(t, 'p2'))).toEqual(['muse']);
+  });
+
+  it('Procrastination takes another turn after the last turn of the round', () => {
+    let s = ov();
+    lastTurn(s, 'p2');
+    const proc = O('procrastination');
+    s.hands.p1.push(proc);
+    s = play(s, 'p2', s.hands.p2[0]!);
+    expect(s.prompt?.task.t).toBe('procrastination');
+    s = answer(s, { optionId: `play:${proc.id}` });
+    expect(s.turnPlayerId).toBe('p1');
+    expect(s.subPhase).toBe('awaitingAction');
+    const ageBefore = s.currentAge.id;
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(s.currentAge.id).not.toBe(ageBefore); // then the next age
+  });
+
+  it('Sleepy ignores a catastrophe’s Gene Pool effect', () => {
+    let s = ov();
+    lastTurn(s, 'p2');
+    s.ageDeck.unshift(cat('superVolcano'));
+    s.hands.p1.push(O('sleepy'));
+    s = play(s, 'p2', s.hands.p2[0]!);
+    expect(s.prompt?.task.t).toBe('sleepyWindow');
+    if (s.prompt?.kind !== 'option') throw new Error('expected the Sleepy choice');
+    s = answer(s, { optionId: s.prompt.options[0]!.id });
+    expect(genePoolOf(s, 'p1')).toBe(5);
+    expect(genePoolOf(s, 'p2')).toBe(4);
+  });
+
+  it('Age of Certainty flips the deck: its next card is face up and is the one drawn', () => {
+    let s = ov();
+    s.currentAge = ovAge('certainty');
+    const next = visibleDeckTop(s)!;
+    expect(next.id).toBe(s.traitDeck[s.traitDeck.length - 1]!.id);
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(handOf(s, 'p1').map((c) => c.id)).toContain(next.id);
+  });
+
+  it('Star Tails: draw 3, then no more drawing this round', () => {
+    let s = ov();
+    lastTurn(s, 'p2');
+    s.ageDeck.unshift(ovAge('starTails'));
+    s = play(s, 'p2', s.hands.p2[0]!);
+    expect(handOf(s, 'p1').length).toBe(8);
+    s.hands.p1 = [T('bark')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(handOf(s, 'p1').length).toBe(0);
+  });
+
+  it('Ramblin’ River Markets bans a colour for you and the player on your left', () => {
+    let s = ov(3);
+    lastTurn(s, 'p3');
+    s.ageDeck.unshift(ovAge('ramblinRiver'));
+    s = play(s, 'p3', s.hands.p3[0]!);
+    s = answer(s, { chosenColor: 'red' }); // p1
+    s = answer(s, { chosenColor: 'blue' }); // p2
+    s = answer(s, { chosenColor: 'green' }); // p3
+    expect(canPlayTrait(s, 'p1', T('fangs'))).toBe(false); // p1's own red
+    expect(canPlayTrait(s, 'p2', T('fangs'))).toBe(false); // left of p1
+    expect(canPlayTrait(s, 'p3', T('gills'))).toBe(false); // left of p2
+    expect(canPlayTrait(s, 'p1', T('bark'))).toBe(false); // left of p3
+    expect(canPlayTrait(s, 'p3', T('fangs'))).toBe(true);
+  });
+
+  it('King of the Jungle: only the single highest card keeps its hand', () => {
+    let s = ov();
+    lastTurn(s, 'p2');
+    s.ageDeck.unshift(ovAge('kingOfTheJungle'));
+    s.hands.p1 = [T('blubber'), T('bark'), T('gills'), T('leaves'), T('spiny')];
+    s = play(s, 'p2', s.hands.p2[0]!);
+    const kept = handOf(s, 'p1').map((c) => c.id);
+    s = answer(s, { cardIds: [s.hands.p1[0]!.id] }); // Blubber (4)
+    s = answer(s, { cardIds: [handOf(s, 'p2')[0]!.id] }); // Bark (2)
+    expect(handOf(s, 'p1').map((c) => c.id)).toEqual(kept);
+    expect(handOf(s, 'p2').length).toBe(3);
+  });
+
+  it('Psychedelic restarts the age with you as first player — once', () => {
+    let s = ov(3);
+    s.roundOrder = ['p1', 'p2', 'p3'];
+    s.turnIndex = 1;
+    s.turnPlayerId = 'p2';
+    s.activePlayerId = 'p2';
+    const [ps1, ps2] = [O('psychedelic'), O('psychedelic')];
+    s.hands.p2 = [ps1, ps2, T('bark'), T('gills'), T('leaves')];
+    s = play(s, 'p2', ps1);
+    expect(s.firstPlayerIndex).toBe(1);
+    expect(s.roundOrder).toEqual(['p2', 'p3', 'p1']);
+    expect(s.turnPlayerId).toBe('p2');
+    expect(s.subPhase).toBe('awaitingAction');
+    s = play(s, 'p2', ps2);
+    expect(s.turnPlayerId).toBe('p3'); // no second restart
+  });
+
+  it('a paid "to play" cost meets its requirement (Morality may give away your only positive trait)', () => {
+    let s = ov();
+    const blubber = T('blubber');
+    s.tableaus.p1 = [blubber, T('confusion')];
+    s.hands.p1[0] = T('morality');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(kinds(tableauOf(s, 'p1')).sort()).toEqual(['confusion', 'morality']);
+    expect(tableauOf(s, 'p2').map((c) => c.id)).toEqual([blubber.id]);
+  });
+
+  it('Epic takes both Dominant slots; Opposable Thumbs becomes a copy of your other Dominant', () => {
+    let s = ov();
+    s.hands.p1 = [O('epic'), T('tiny'), T('bark'), T('gills'), T('leaves')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(canPlayTrait(s, 'p1', T('tiny'))).toBe(false);
+    const t = ov();
+    t.tableaus.p1 = [T('tiny')];
+    expect(canPlayTrait(t, 'p1', O('epic'))).toBe(false);
+    let u = ov();
+    u.tableaus.p1 = [T('immunity')];
+    u.hands.p1[0] = O('opposable-thumbs');
+    u = play(u, 'p1', u.hands.p1[0]!);
+    const copy = tableauOf(u, 'p1')[1]!;
+    expect(copy).toMatchObject({ kind: 'immunity', points: 4, dominant: true, copyOf: 'Immunity' });
+  });
+
+  it('Ironwood and Meek keep your green / red traits from being removed', () => {
+    let s = ov();
+    s.tableaus.p2 = [O('ironwood'), T('leaves'), T('fangs')];
+    s.hands.p1[0] = T('tiny-little-melons');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(tableauOf(s, 'p2').length).toBe(3);
+    let t = ov();
+    t.tableaus.p2 = [O('meek'), T('fangs')];
+    t.hands.p1[0] = T('selfish');
+    t = play(t, 'p1', t.hands.p1[0]!);
+    expect(tableauOf(t, 'p2').length).toBe(2);
+  });
+
+  it('scores Sparkles, Prowler, Mutualism, Constrictor and the two-colour bonuses', () => {
+    let s = ov();
+    s.tableaus.p1 = [O('sparkles'), T('egg-clusters')];
+    s.hands.p1 = [T('gills'), T('spiny')];
+    expect(computePlayerScore(s, 'p1').dropOfLifeBonus).toBe(3);
+    expect(computePlayerScore(s, 'p1', 'p2')).toMatchObject({ dropOfLifeBonus: 1, hiddenBonus: true });
+    s.tableaus.p1 = [O('prowler')]; // purple
+    s.tableaus.p2 = [T('bark')];
+    expect(computePlayerScore(s, 'p2').dropOfLifeBonus).toBe(-2);
+    s.tableaus.p1 = [O('sweet'), T('bark'), T('leaves'), T('gills')]; // Sweet is blue/green: 3 green, 2 blue
+    expect(computePlayerScore(s, 'p1').dropOfLifeBonus).toBe(2);
+    s.hands.p1[0] = O('mutualism');
+    s.tableaus.p1 = [];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(genePoolOf(s, 'p2')).toBe(6);
+    expect(computePlayerScore(s, 'p1').dropOfLifeBonus).toBe(6);
+    let t = ov(3);
+    t.hands.p1[0] = O('constrictor');
+    t = play(t, 'p1', t.hands.p1[0]!);
+    expect(t.seats.map((x) => genePoolOf(t, x.id))).toEqual([5, 4, 4]);
+  });
+
+  it('Cheek Pouches skips stabilizing; Apricity offers to; Age of Envy stabilizes to the Gene Pool on your right', () => {
+    let s = ov();
+    s.hands.p1[0] = O('cheek-pouches');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(handOf(s, 'p1').length).toBe(6);
+    expect(s.turnPlayerId).toBe('p2');
+
+    let t = ov();
+    t.tableaus.p1 = [O('apricity')];
+    t.hands.p1.push(T('fangs'));
+    t = play(t, 'p1', t.hands.p1[0]!);
+    if (t.prompt?.kind !== 'option') throw new Error('expected the stabilize choice');
+    expect(t.prompt.options.map((o) => o.id)).toContain('skip');
+
+    let u = ov(3);
+    u.currentAge = ovAge('envy');
+    u.genePool.p3 = 3; // on p1's right
+    u = play(u, 'p1', u.hands.p1[0]!);
+    if (u.prompt?.kind !== 'cards') throw new Error('expected a discard to 3');
+    expect(u.prompt.min).toBe(1);
+  });
+
+  it('Scavenger may stabilize from the discard pile', () => {
+    let s = ov();
+    s.tableaus.p1 = [O('scavenger')];
+    const blubber = T('blubber');
+    s.traitDiscard = [blubber];
+    s.hands.p1 = [T('bark')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(s.prompt?.task.t).toBe('stabilize');
+    s = answer(s, { optionId: 'discard' });
+    expect(handOf(s, 'p1').map((c) => c.id)).toContain(blubber.id);
+    expect(handOf(s, 'p1').length).toBe(5);
+  });
+
+  it('Fabled costs 4 cards of the 4 colours; Metamorphosis 3 traits of face value 1 or more', () => {
+    let s = ov();
+    const four = [T('antlers'), T('gills'), T('bark'), T('adorable')];
+    s.hands.p1 = [O('fabled'), ...four, T('fangs')];
+    expect(canPlayTrait(s, 'p1', s.hands.p1[0]!)).toBe(true);
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(s.prompt?.task.t).toBe('fabledCost');
+    expect(() => answer(s, { cardIds: [four[0]!.id, four[1]!.id, four[2]!.id, s.hands.p1[5]!.id] })).toThrow(/each colour/);
+    s = answer(s, { cardIds: four.map((c) => c.id) });
+    expect(kinds(tableauOf(s, 'p1'))).toEqual(['fabled']);
+    expect(genePoolOf(s, 'p1')).toBe(6);
+
+    let t = ov();
+    t.tableaus.p1 = [T('antlers'), T('bark'), T('gills'), T('confusion')];
+    t.hands.p1[0] = O('metamorphosis');
+    t = play(t, 'p1', t.hands.p1[0]!);
+    for (let i = 0; i < 2; i++) {
+      if (t.prompt?.kind !== 'trait') throw new Error('expected a cost pick');
+      t = answer(t, { targetCardId: t.prompt.targets[0]!.cardId });
+    }
+    expect(kinds(tableauOf(t, 'p1')).sort()).toEqual(['confusion', 'metamorphosis']);
+  });
+
+  it('Seedwing and Nimble are discarded for their effect without using the turn', () => {
+    let s = ov();
+    const seedwing = O('seedwing');
+    s.tableaus.p1 = [seedwing];
+    expect(usableCards(s, 'p1').map((c) => c.id)).toEqual([seedwing.id]);
+    s = applyAction(s, { type: 'useCard', playerId: 'p1', cardId: seedwing.id });
+    s = answer(s, { cardIds: [s.hands.p1[1]!.id] });
+    expect(tableauOf(s, 'p1').length).toBe(1);
+    expect(s.turnPlayerId).toBe('p1');
+    expect(s.subPhase).toBe('awaitingAction');
+
+    let t = ov();
+    const nimble = O('nimble');
+    t.tableaus.p1 = [T('confusion')];
+    t.hands.p1[0] = nimble;
+    t = applyAction(t, { type: 'useCard', playerId: 'p1', cardId: nimble.id });
+    expect(tableauOf(t, 'p1').length).toBe(0);
+    expect(t.subPhase).toBe('awaitingAction');
+  });
+
+  it('The Legend of Mokoko Village: with Heroic, play 2 traits ignoring their Actions', () => {
+    let s = ov();
+    s.currentAge = ovAge('mokokoLegend');
+    s.tableaus.p1 = [T('heroic')];
+    const [temper, bark] = [T('hot-temper'), T('bark')];
+    s.hands.p1 = [temper, bark, T('gills'), T('leaves'), T('spiny')];
+    s = applyAction(s, { type: 'playTrait', playerId: 'p1', cardId: temper.id, twoIgnoringActions: true });
+    expect(s.prompt?.task.t).toBe('playAnother'); // not Hot Temper's discard
+    s = answer(s, { cardIds: [bark.id] });
+    expect(kinds(tableauOf(s, 'p1'))).toEqual(['heroic', 'hot-temper', 'bark']);
+  });
+
+  it('Choking Vines ignores blue and green Actions', () => {
+    let s = ov();
+    s.currentAge = ovCat('chokingVines');
+    s.hands.p1[0] = T('iridescent-scales');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(s.prompt).toBeNull();
+    expect(handOf(s, 'p1').length).toBe(5);
+  });
+
+  it('Booming Call swaps itself away and plays the Action it gets', () => {
+    let s = ov();
+    s.tableaus.p2 = [T('introspective')];
+    s.hands.p1[0] = O('booming-call');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(kinds(tableauOf(s, 'p1'))).toEqual(['introspective']);
+    expect(kinds(tableauOf(s, 'p2'))).toEqual(['booming-call']);
+    expect(handOf(s, 'p1').length).toBe(8); // 4 + Introspective's 4: too many, so a stabilize prompt waits
+    expect(s.prompt?.task.t).toBe('stabilize');
+  });
+
+  it('Vagabond: opponents each play a trait, then you steal one of them', () => {
+    let s = ov(3);
+    s.hands.p1[0] = O('vagabond');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    s = answer(s, { cardIds: [handOf(s, 'p2')[0]!.id] }); // Antlers
+    s = answer(s, { cardIds: [handOf(s, 'p3')[1]!.id] }); // Bark
+    expect(s.prompt?.task.t).toBe('vagabondChoice');
+    s = answer(s, { optionId: 'steal' });
+    if (s.prompt?.kind !== 'trait') throw new Error('expected the steal');
+    expect(s.prompt.targets.length).toBe(2);
+    s = answer(s, { targetCardId: s.prompt.targets[0]!.cardId });
+    expect(tableauOf(s, 'p1').length).toBe(2);
+  });
+
+  it('Caffeinated: everyone draws 3 and passes 1 to the right, all at once', () => {
+    let s = ov(3);
+    s.hands.p1[0] = O('caffeinated');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    const given: number[] = [];
+    while (s.prompt?.task.t === 'gift') {
+      const id = (s.prompt as Extract<DmState['prompt'], { kind: 'cards' }>).cardIds[0]!;
+      given.push(id);
+      s = answer(s, { cardIds: [id] });
+    }
+    expect(given.length).toBe(3);
+    expect(handOf(s, 'p3').map((c) => c.id)).toContain(given[0]!); // p1's right is p3
+  });
+
+  it("World's End: Lily Pad scores what it returns; Planetary Deforestation subtracts your Gene Pool; Invasive Species adds a card", () => {
+    let s = ov();
+    s.catastrophesSeen = 2;
+    lastTurn(s, 'p2');
+    s.ageDeck = [ovCat('planetaryDeforestation')];
+    s.tableaus.p1 = [O('lily-pad'), T('confusion'), T('bark')];
+    s = play(s, 'p2', s.hands.p2[1]!);
+    while (s.prompt && s.prompt.task.t !== 'lilyPad') s = applyAction(s, chooseAIAction(s, s.activePlayerId!)!);
+    s = answer(s, { targetCardId: tableauOf(s, 'p1')[1]!.id }); // Confusion back to hand: +1 and −(−2)
+    s = answer(s, { decline: true });
+    expect(s.phase).toBe('gameOver');
+    const sc = computePlayerScore(s, 'p1');
+    expect(sc.dropOfLifeBonus).toBe(1);
+    expect(sc.worldsEndBonus).toBe(-genePoolOf(s, 'p1'));
+
+    let t = ov();
+    t.catastrophesSeen = 2;
+    lastTurn(t, 'p2');
+    t.ageDeck = [ovCat('invasiveSpecies')];
+    t = play(t, 'p2', t.hands.p2[1]!);
+    while (t.prompt) t = applyAction(t, chooseAIAction(t, t.activePlayerId!)!);
+    expect(t.phase).toBe('gameOver');
+    expect(Object.keys(t.worldsEnd?.addFace ?? {}).length).toBe(2);
+  });
+
+  it('the AI plays full Overlush games (with and without Castle Glass) for 2–6 players', () => {
+    for (const exp of [['overlush'], ['overlush', 'castle-glass']]) {
+      for (const n of [2, 3, 4, 5, 6]) {
+        const { state, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState({ expansions: exp }, 1200 + n, makeSeats(n)), 5000);
+        expect(stuck).toBe(false);
+        expect(state.phase).toBe('gameOver');
+        expect(state.catastrophesSeen).toBe(3);
+      }
+    }
+  });
+});
+
+// ============================================================================
+// Imaginary Ends
+// ============================================================================
+
+describe('Doomlings — Imaginary Ends', () => {
+  const IE_CARDS = packTraitCards('imaginary-ends', 8000);
+  const IE_AGES = packAgeCards('imaginary-ends', 8500);
+  const IECFG = { expansions: ['imaginary-ends'] };
+
+  function I(kind: DmTraitKind): DmTraitCard {
+    const c = IE_CARDS.find((x) => x.kind === kind);
+    if (!c) throw new Error(`no Imaginary Ends trait ${kind}`);
+    return { ...c, id: nextId++ };
+  }
+  const ieAge = (tag: DmAgeCard['ruleTag']) => IE_AGES.ages.find((a) => a.ruleTag === tag)!;
+  const ieCat = (tag: DmCatastropheTag) => IE_AGES.catastrophes.find((a) => a.catastrophe === tag)!;
+  function ie(n = 2, seed = 7): DmState {
+    const s = setup(n, seed);
+    s.traitDeck = Array.from({ length: 40 }, (_, i) => T((['antlers', 'bark', 'gills', 'leaves'] as const)[i % 4]!));
+    return s;
+  }
+  const kinds = (cards: DmTraitCard[]) => cards.map((c) => c.kind);
+
+  it('has the four collections’ 64 traits (7 Dominants), 8 Ages and 4 Catastrophes', () => {
+    expect(IE_CARDS.length).toBe(64);
+    expect(IE_CARDS.filter((c) => c.dominant).length).toBe(7);
+    expect(IE_AGES.ages.length).toBe(8);
+    expect(IE_AGES.catastrophes.map((c) => c.genePoolDelta)).toEqual([-1, -1, -2, -1]);
+    expect(I('awesome').isAllColors).toBe(true);
+    expect(I('remarkable').sub).toEqual(['deepling', 'glitterling', 'moonling']);
+    expect(IE_CARDS.filter((c) => c.sub?.includes('deepling')).length).toBe(25);
+    const s = createInitialState(IECFG, 4, makeSeats(3));
+    expect([...s.traitDeck, ...s.seats.flatMap((x) => handOf(s, x.id))].length).toBe(116 + 64);
+  });
+
+  it('suppressing hides a card under a trait: +1 point, not a trait, never under a Dominant', () => {
+    let s = ie();
+    const [tiny, bark] = [T('tiny'), T('bark')];
+    s.tableaus.p1 = [tiny, bark];
+    const fangs = T('fangs');
+    s.hands.p1 = [I('translucent'), fangs, T('gills'), T('leaves'), T('spiny')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    if (s.prompt?.kind !== 'cards') throw new Error('expected the hand pick');
+    s = answer(s, { cardIds: [fangs.id] });
+    if (s.prompt?.kind !== 'trait') throw new Error('expected the host');
+    expect(s.prompt.targets.map((t) => t.cardId)).not.toContain(tiny.id);
+    s = answer(s, { targetCardId: bark.id });
+    expect(tableauOf(s, 'p1').length).toBe(3);
+    expect(tableauOf(s, 'p1').find((c) => c.id === bark.id)!.under!.map((c) => c.id)).toEqual([fangs.id]);
+    expect(computePlayerScore(s, 'p1').suppressed).toBe(1);
+  });
+
+  it('suppressed cards go to the bottom of the deck when their trait leaves the pile', () => {
+    let s = ie();
+    const gills = T('gills');
+    const host = { ...T('fangs'), under: [gills] };
+    s.tableaus.p2 = [host];
+    s.hands.p1[0] = T('selfish');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(tableauOf(s, 'p1').find((c) => c.id === host.id)?.under).toBeUndefined();
+    expect(s.traitDeck.some((c) => c.id === gills.id)).toBe(true);
+  });
+
+  it('Whip Tail suppresses a pile trait (its Gene Pool change is reversed); Untold scores the cards under it', () => {
+    let s = ie();
+    const fec = T('fecundity');
+    s.tableaus.p1 = [fec];
+    s.genePool.p1 = 6;
+    s.hands.p1[0] = I('whip-tail');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(genePoolOf(s, 'p1')).toBe(5);
+    expect(kinds(tableauOf(s, 'p1'))).toEqual(['whip-tail']);
+    expect(tableauOf(s, 'p1')[0]!.under?.length).toBe(1);
+
+    let t = ie();
+    t.tableaus.p1 = [T('bark'), T('leaves')];
+    const untold = I('untold');
+    t.hands.p1[0] = untold;
+    t = play(t, 'p1', untold);
+    for (let i = 0; i < 2; i++) {
+      if (t.prompt?.task.t === 'suppressPick' && t.prompt.kind === 'trait') t = answer(t, { targetCardId: t.prompt.targets.find((x) => x.cardId !== untold.id)!.cardId });
+      if (t.prompt?.task.t === 'suppressCards') t = answer(t, { targetCardId: untold.id });
+    }
+    expect(computePlayerScore(t, 'p1')).toMatchObject({ suppressed: 2, dropOfLifeBonus: 2 });
+  });
+
+  it('Hidden steals a trait and suppresses it; Lure lets the opponent on your right name the colour', () => {
+    let s = ie();
+    s.tableaus.p2 = [T('blubber')];
+    s.tableaus.p1 = [T('bark')];
+    s.hands.p1[0] = I('hidden');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    if (s.prompt?.task.t === 'suppressCards') s = answer(s, { targetCardId: (s.prompt as Extract<DmState['prompt'], { kind: 'trait' }>).targets[0]!.cardId });
+    expect(tableauOf(s, 'p2').length).toBe(0);
+    expect(computePlayerScore(s, 'p1').suppressed).toBe(1);
+
+    let t = ie();
+    t.tableaus.p1 = [T('bark')];
+    t.hands.p1 = [I('lure'), T('antlers'), T('fangs'), T('gills'), T('leaves')];
+    t = play(t, 'p1', t.hands.p1[0]!);
+    expect(t.prompt?.playerId).toBe('p2');
+    t = answer(t, { chosenColor: 'red' });
+    if (t.prompt?.task.t === 'suppressCards') t = answer(t, { targetCardId: (t.prompt as Extract<DmState['prompt'], { kind: 'trait' }>).targets[0]!.cardId });
+    expect(computePlayerScore(t, 'p1').suppressed).toBe(2); // Antlers and Fangs
+  });
+
+  it('Grobblebobble can’t be discarded from a hand', () => {
+    let s = ie();
+    const grob = I('grobblebobble');
+    s.hands.p1 = [T('bark'), grob, T('fangs'), T('gills'), T('leaves'), T('spiny'), T('quick')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    if (s.prompt?.kind !== 'cards') throw new Error('expected the stabilize discard');
+    expect(s.prompt.cardIds).not.toContain(grob.id);
+    let t = ie();
+    t.hands.p2 = [grob];
+    t.hands.p1[0] = T('bad');
+    t = play(t, 'p1', t.hands.p1[0]!);
+    expect(handOf(t, 'p2').map((c) => c.id)).toContain(grob.id);
+  });
+
+  it('Popplebelly fixes your Gene Pool at 1 and draws 2 at the start of each of your turns', () => {
+    let s = ie();
+    s.hands.p1[0] = I('popplebelly');
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(genePoolOf(s, 'p1')).toBe(1);
+    if (s.prompt?.kind !== 'cards') throw new Error('expected the stabilize-to-1 discard');
+    s = answer(s, { cardIds: s.prompt.cardIds.slice(0, 3) });
+    expect(handOf(s, 'p1').length).toBe(1);
+    s.hands.p1.push(T('warm-blood'));
+    s = play(s, 'p2', s.hands.p2[0]!);
+    expect(handOf(s, 'p1').length).toBe(4); // 2 + Popplebelly's 2
+    s = play(s, 'p1', handOf(s, 'p1').find((c) => c.kind === 'warm-blood')!);
+    expect(genePoolOf(s, 'p1')).toBe(1);
+  });
+
+  it('Ethereal: with 6 or fewer cards you may suppress 1 instead of stabilizing', () => {
+    let s = ie();
+    s.tableaus.p1 = [I('ethereal'), T('bark')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    if (s.prompt?.kind !== 'option') throw new Error('expected the stabilize choice');
+    s = answer(s, { optionId: 'ethereal' });
+    s = answer(s, { cardIds: [handOf(s, 'p1')[0]!.id] });
+    if (s.prompt?.task.t === 'suppressCards') s = answer(s, { targetCardId: (s.prompt as Extract<DmState['prompt'], { kind: 'trait' }>).targets[0]!.cardId });
+    expect(handOf(s, 'p1').length).toBe(3);
+    expect(computePlayerScore(s, 'p1').suppressed).toBe(1);
+    expect(s.turnPlayerId).toBe('p2');
+  });
+
+  it('Remarkable: hold 3 or fewer; opponents pass their hands right and stabilize; your hand is suppressed', () => {
+    let s = ie(3);
+    const rem = I('remarkable');
+    s.tableaus.p1 = [T('bark')];
+    s.hands.p1 = [rem, T('fangs'), T('gills'), T('leaves'), T('spiny')];
+    expect(canPlayTrait(s, 'p1', rem)).toBe(false);
+    s.hands.p1 = [rem, T('fangs'), T('gills')];
+    const p2hand = handOf(s, 'p2').map((c) => c.id);
+    s = play(s, 'p1', rem);
+    while (s.prompt?.task.t === 'suppressCards') s = answer(s, { targetCardId: (s.prompt as Extract<DmState['prompt'], { kind: 'trait' }>).targets[0]!.cardId });
+    expect(computePlayerScore(s, 'p1').suppressed).toBe(2);
+    expect(handOf(s, 'p3').map((c) => c.id)).toEqual(expect.arrayContaining(p2hand)); // p2's right is... p1; p3 passes to p2
+  });
+
+  it('Moonpocalypse can’t take a Gene Pool below 4; Abyss Stares Back suppresses your whole hand', () => {
+    let s = ie();
+    lastTurn(s, 'p2');
+    s.ageDeck.unshift(ieCat('moonpocalypse'));
+    s.genePool.p2 = 3;
+    s.hands.p2 = [T('bark'), T('gills'), T('leaves'), T('spiny')]; // stabilizes to 3 without a discard
+    s = play(s, 'p2', s.hands.p2[0]!);
+    expect(genePoolOf(s, 'p1')).toBe(4);
+    expect(genePoolOf(s, 'p2')).toBe(3);
+
+    let t = ie();
+    lastTurn(t, 'p2');
+    t.ageDeck.unshift(ieCat('abyssStaresBack'));
+    t.tableaus.p1 = [T('bark')];
+    t = play(t, 'p2', t.hands.p2[0]!);
+    expect(computePlayerScore(t, 'p1').suppressed).toBe(5);
+  });
+
+  it('Fading Away suppresses each non-Dominant trait once it has resolved', () => {
+    let s = ie();
+    s.currentAge = ieAge('fadingAway');
+    s.tableaus.p1 = [T('bark')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(tableauOf(s, 'p1').length).toBe(1);
+    expect(computePlayerScore(s, 'p1').suppressed).toBe(1);
+  });
+
+  it('Umbleboos is a free play into a pile with a Gene Pool of 6 or more', () => {
+    let s = ie();
+    const umb = I('umbleboos');
+    s.hands.p1[0] = umb;
+    expect(outOfTurnPlays(s, 'p1').some((c) => c.id === umb.id)).toBe(false);
+    s.genePool.p2 = 6;
+    expect(() => applyAction(s, { type: 'playOutOfTurn', playerId: 'p1', cardId: umb.id, targetPlayerId: 'p1' })).toThrow(/6 or more/);
+    s = applyAction(s, { type: 'playOutOfTurn', playerId: 'p1', cardId: umb.id, targetPlayerId: 'p2' });
+    expect(genePoolOf(s, 'p2')).toBe(4);
+    expect(s.turnPlayerId).toBe('p1');
+  });
+
+  it('scores Jibwib, Thwopplers, Enigma and Telescopic Eyes', () => {
+    const s = ie();
+    s.tableaus.p1 = [I('jibwib')];
+    s.genePool.p2 = 2;
+    expect(computePlayerScore(s, 'p2').dropOfLifeBonus).toBe(5);
+    expect(computePlayerScore(s, 'p1').dropOfLifeBonus).toBe(0);
+    s.tableaus.p1 = [I('thwopplers'), I('enigma')];
+    s.tableaus.p2 = [T('bark'), T('gills'), T('leaves')];
+    expect(computePlayerScore(s, 'p1').dropOfLifeBonus).toBe(-2 + 10);
+    s.tableaus.p1 = [I('telescopic-eyes')];
+    expect(computePlayerScore(s, 'p1').dropOfLifeBonus).toBe(2);
+  });
+
+  it('Gob Lopters costs 2 random cards to an opponent; Whimsy plays the card it reveals', () => {
+    let s = ie();
+    s.hands.p1 = [I('gob-lopters'), T('bark'), T('fangs'), T('gills'), T('leaves')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    expect(kinds(tableauOf(s, 'p1'))).toEqual(['gob-lopters']);
+    expect(handOf(s, 'p2').length).toBe(7);
+
+    let t = ie();
+    t.traitDeck.unshift(T('blubber'));
+    t.hands.p1[0] = I('whimsy');
+    t = play(t, 'p1', t.hands.p1[0]!);
+    expect(kinds(tableauOf(t, 'p1'))).toEqual(['whimsy', 'blubber']);
+  });
+
+  it('Glitterstorm: choose how many random cards to discard, then stabilize; Moonlight depends on your Gene Pool', () => {
+    let s = ie();
+    lastTurn(s, 'p2');
+    s.ageDeck.unshift(ieAge('glitterstorm'));
+    s = play(s, 'p2', s.hands.p2[0]!);
+    expect(s.prompt?.task.t).toBe('glitterstorm');
+    s = answer(s, { optionId: '3' });
+    expect(handOf(s, 'p1').length).toBe(5);
+
+    let t = ie();
+    lastTurn(t, 'p2');
+    t.ageDeck.unshift(ieAge('moonlight'));
+    t.genePool.p2 = 3;
+    t.hands.p2 = [T('bark'), T('gills'), T('leaves'), T('spiny')];
+    t = play(t, 'p2', t.hands.p2[0]!);
+    expect(t.prompt?.playerId).toBe('p1'); // Gene Pool 5: discard 1
+    t = answer(t, { cardIds: [handOf(t, 'p1')[0]!.id] });
+    expect(handOf(t, 'p2').length).toBe(5); // Gene Pool 3: draw 2
+  });
+
+  it('Rainbow Magic may return to your hand after you stabilize to play a random card', () => {
+    let s = ie();
+    s.tableaus.p1 = [I('rainbow-magic')];
+    s = play(s, 'p1', s.hands.p1[0]!);
+    if (s.prompt?.kind !== 'option') throw new Error('expected the after-stabilize window');
+    s = answer(s, { optionId: 'rainbow' });
+    expect(tableauOf(s, 'p1').length).toBe(2);
+  });
+
+  it('the AI plays full Imaginary Ends games (and with every built pack) for 2–6 players', () => {
+    for (const exp of [['imaginary-ends'], ['imaginary-ends', 'overlush', 'castle-glass']]) {
+      for (const n of [2, 3, 4, 5, 6]) {
+        const { state, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState({ expansions: exp }, 1500 + n, makeSeats(n)), 5000);
+        expect(stuck).toBe(false);
+        expect(state.phase).toBe('gameOver');
+      }
+    }
   });
 });

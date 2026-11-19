@@ -5,31 +5,59 @@
 //     unstablegameswiki.com uploads via the Wayback Machine) and the official
 //     wiki "Base Deck - Inventory List" (6 Party Leaders, 15 Monsters, 115-card
 //     main deck). cards.ts matches that inventory card for card.
-//   - Warriors & Druids: the official W&D rulesheet (7-class win, Druid low
-//     rolls, two-Item Warriors, one Mask per Hero).
+//   - Warriors & Druids (rebuilt 2026-11-19, `verified`): the official wiki
+//     "Here To Slay Dragon Warrior and Druid Expansion - Inventory List" and
+//     "- Expansion Instructions" pages, the W&D rulesheet PDF (archived wiki
+//     upload, mirrored in DavidManiaM/HereToSlay: 7-class win, Druids roll that
+//     number or lower, two-Item Warriors with at most one Mask), and the
+//     official per-card wiki pages (text, roll icons, Monster bands, "Two Item
+//     cards allowed" notes) for 25 of its 35 cards. The other ten (Critical
+//     Fang, Looting Lupo, Tenacious Timber, Even Bigger Ring, Cursed Glove,
+//     Soul Tether, Beast Call, Rapid Refresh, Modifier +1/-1, The Piercing
+//     Howl) come from the Here to Slay fandom wiki and ShadowzLmao2/
+//     HereToSlay-Online (src/cards.py), which agree wherever they overlap.
+//   - Berserkers & Necromancers (rebuilt 2026-11-19, `verified`): the official
+//     wiki "Here To Slay Dragon Berserkers and Necromancers Expansion -
+//     Inventory List" and "- Expansion Instructions" pages (7-class win,
+//     two-Item Berserkers with at most one Mask, Necromancers pay the cost at
+//     the start of their effect or get nothing), and the official per-card
+//     pages for 25 of its 33 different cards. The other eight (Brawling Spirit, Gruesome
+//     Gladiator, Rabid Beast, Unbridled Fury, Goblet of Caffeination,
+//     Soulbound Grimoire, The Gnawing Dread, The Raging Manticore) come from
+//     miurary/here_to_slay (wiggles/src/cards/*.json) and ShadowzLmao2, which
+//     agree on every B&N card, and the fandom wiki where it has a page.
 //
-// ⚠ EXPANSION CONTENT IS UNVERIFIED. The official wiki inventory lists for all
-// three expansions name cards that cards.ts does not have (W&D: Doe Fallow,
-// Majestelk, Critical Fang, Silent Shield, Wolfgang Pack, Muscipula Rex, Druid /
-// Warrior Challenge, Modifier +1/-1 and +2/-1; B&N: Doombringer, Reptilian
-// Ripper, Biggest Ring Ever, Goblet of Caffeination, Silver Lining, Dragon's
-// Bile, Soulbound Grimoire, Lightning Labrys, Modifier +7, class Challenges;
-// Here to Sleigh: Gift cards, a Stockpile, REGIFT / EXCHANGE, no new Party
-// Leaders or Monsters), and the effects of the cards that do share a name
-// mostly differ from secondary sources. HTS_EXPANSIONS marks all three
-// `verified: false` until they are rebuilt from the official card text.
-// Exception: The Piercing Howl, The Noble Shaman and The Raging Manticore use
-// their published text (the Here to Slay fandom wiki and two independent
-// open-source implementations agree on it).
+// ⚠ Here to Sleigh is still unverified: its card pool is an approximation
+// (the published set has Gift cards, a Stockpile and REGIFT / EXCHANGE), and
+// HTS_EXPANSIONS marks it `verified: false`.
+//
+// UNCONFIRMED (modeled as stated, listed in Rules.tsx):
+//   - The two-Item symbol on Blinding Blade, Looting Lupo, Tenacious Timber,
+//     Brawling Spirit, Gruesome Gladiator, Rabid Beast and Unbridled Fury (no
+//     source shows one; modeled as one Item).
+//   - "SACRIFICE / DESTROY a card" offers Heroes and equipped Items, not slain
+//     Monster cards; Brawling Spirit's "cards in their Party" counts Heroes and
+//     their Items (the rulebook's Party is "the area in front of you in which
+//     you play Hero cards and Item cards").
+//   - Majestelk's "+5 or -5 to each of your rolls": declared per roll, after
+//     the dice, like a two-option Modifier.
+//   - W&D Modifier +4 / -4 ("if the roll is modified above 12 / below 2"):
+//     checked against that side's final total.
+//   - A class Challenge's requirement met by a Party Leader of that class (as
+//     for a Monster's class symbol).
+//   - Classes needed to win with BOTH class expansions: each rulesheet says 7.
 //
 // Rules NOT modeled (deliberately):
 //   - "When modifying another player's roll you may wait until that player
 //     chooses their targets": the Modifier window closes before targets are
 //     picked.
 //   - The 2v2 team variant (Kickstarter insert).
-//   - Optional pure-upside draws ("you may DRAW a card": Arctic Aries, Dracos,
-//     Crowned Serpent) are taken automatically; Rex Major's "may reveal it"
-//     reveals automatically (logged publicly).
+//   - Optional pure-upside effects are taken automatically: "you may DRAW a
+//     card" (Arctic Aries, Dracos, Crowned Serpent), "you may spend an extra
+//     action point this turn" (Temporal Hourglass, Beast Call, Unbridled
+//     Fury); Rex Major's "may reveal it" reveals automatically (logged
+//     publicly). Soulbound Grimoire's 2 action points apply to the paid roll,
+//     not to a free "roll … immediately".
 
 import type { GameStateShape } from '@/core/module';
 import type { ExpansionConfig, ExpansionMeta, PlayerId } from '@/core/types';
@@ -73,10 +101,20 @@ export interface HtsCard {
   abilityThreshold: number | null;
   /** When true (Druid Heroes), the ability roll succeeds when total <= abilityThreshold. */
   rollLow?: boolean;
-  /** Maximum number of Item cards that can be equipped to this Hero (default 1; 2 for some Warriors/Berserkers). */
+  /**
+   * Item slots (default 1). 2 for the Warrior / Berserker Heroes printed with
+   * the two-Item symbol — at most one of them a Mask (W&D and B&N rulesheets).
+   */
   maxItems?: number;
   /** Allowed signed values for a Modifier card (e.g. [2, -2] or [4]). */
   modifierChoices: number[] | null;
+  /**
+   * Class Challenge cards (Warrior / Druid / Berserker / Necromancer
+   * Challenge): playable only with that class in your Party, +3 to your
+   * Challenge roll.
+   */
+  challengeClass?: HtsBaseClass;
+  challengeBonus?: number;
   /** Optional expansion identifier. */
   expansion?: HtsExpansionId;
 }
@@ -94,15 +132,29 @@ export interface HtsMonster {
   slayOnLow?: boolean;
   /** Roll <= failThreshold (or >= failThreshold for Dracos) triggers penalty. */
   failThreshold: number;
-  failPenalty: 'sacrificeHero' | 'discard2';
+  failPenalty: HtsFailPenalty;
 }
+
+/** What a Monster does to you when your attack roll lands in its fail range. */
+export type HtsFailPenalty =
+  | 'sacrificeHero'
+  | 'discard2'
+  /** Doombringer (B&N): DISCARD your hand. */
+  | 'discardHand'
+  /** Reptilian Ripper (B&N): SACRIFICE 2 Hero cards. */
+  | 'sacrificeTwoHeroes';
 
 export interface HtsPartyHero {
   card: HtsCard;
   equippedItem: HtsCard | null;
-  /** Additional equipped items when a Hero can hold 2+ items (Warriors/Berserkers/Bottomless Bag). */
+  /** The second Item on a two-Item Warrior / Berserker. */
   extraItems?: HtsCard[];
   usedThisTurn: boolean;
+  /**
+   * Rolls for this Hero's effect this turn. Normally 0 or 1; Bottomless Bag
+   * allows more (one action point each).
+   */
+  rollsThisTurn?: number;
 }
 
 // ============================================================================
@@ -116,7 +168,15 @@ export interface HtsPendingPlay {
   targetPlayerId: PlayerId | null;
   targetHeroCardId: number | null;
   responderQueue: PlayerId[];
+  /**
+   * Queued once this play has resolved (or been challenged away): the next
+   * step of an effect that plays cards one after another (Glowing Antler).
+   */
+  after?: HtsPrompt[];
 }
+
+/** Which cards a pile search (or a look at a hand) may take. */
+export type HtsPileFilter = 'any' | 'hero' | 'item' | 'magic' | 'modifier' | 'challenge' | 'heroOrItem';
 
 export interface HtsAppliedModifier {
   playerId: PlayerId;
@@ -135,11 +195,15 @@ export interface HtsPendingRoll {
   challengerDice: [number, number] | null;
   /** Hero card id (for heroAbility) or Monster card id (for monsterAttack). */
   sourceCardId: number;
+  /** challengeDuel: the Challenge card's own bonus to the challenger (class Challenges: +3). */
+  challengerBonus?: number;
   threshold: number;
   /** When true (Druid Hero ability or low-roll effect), roll succeeds on <= threshold. */
   rollLow?: boolean;
   modifiers: HtsAppliedModifier[];
   responderQueue: PlayerId[];
+  /** Biggest Ring Ever has been used on this roll (once per roll). */
+  ringUsed?: boolean;
 }
 
 export type HtsPrompt =
@@ -155,12 +219,61 @@ export type HtsPrompt =
       optional: boolean;
       scope: 'own' | 'others' | 'any' | 'specificPlayer';
       specificPlayerId?: PlayerId;
-      mode: 'destroy' | 'sacrifice' | 'steal' | 'swapGive' | 'bounceItem' | 'stealItem' | 'equipItem' | 'returnCursedItem';
+      mode: 'destroy' | 'sacrifice' | 'steal' | 'swapGive' | 'bounceItem' | 'equipItem' | 'returnCursedItem';
+      /**
+       * Follow-ups once the target is chosen: 'shurikittyDestroy',
+       * 'wigglesStealAndRoll', 'unbridledFuryDestroy' (+1 AP on a Berserker),
+       * 'majestelkCost' / 'beholdenCost' (a cost: the rest of the effect is
+       * queued only once it is paid).
+       */
       effectTag?: string;
       /** For mode 'equipItem': the Item card (still in the chooser's hand) being played. */
       itemCardId?: number;
       /** Tipsy Tootie: the Hero that moves to the target's Party once the steal is done. */
       sourceHeroId?: number;
+    }
+  | {
+      /**
+       * "SACRIFICE a card" / "DESTROY a card": any card in a Party — a Hero
+       * (with its Items) or a single equipped Item. Party Leaders never; slain
+       * Monster cards are not offered (UNCONFIRMED, see Rules).
+       */
+      kind: 'choosePartyCard';
+      playerId: PlayerId;
+      reason: string;
+      optional: boolean;
+      scope: 'own' | 'others';
+      mode: 'sacrifice' | 'destroy';
+      filter: 'any' | 'item';
+      effectTag?:
+        /** Rabid Beast: keep sacrificing (tally counts them), then destroy that many. */
+        | 'rabidBeastSacrifice'
+        /** Bone Collector's cost: the rest of its effect follows once an Item is sacrificed. */
+        | 'boneCollectorCost';
+      tally?: number;
+    }
+  | {
+      /** Big Buckley (attack, dice in the answer) / Vicious Wildcat (slay outright). */
+      kind: 'chooseMonster';
+      playerId: PlayerId;
+      reason: string;
+      mode: 'attack' | 'slay';
+    }
+  | {
+      /** Roaryal Guard: "Choose a Class." */
+      kind: 'chooseClass';
+      playerId: PlayerId;
+      reason: string;
+      classes: HtsBaseClass[];
+      effectTag: 'roaryalGuard';
+    }
+  | {
+      /** Goblet of Caffeination: after a failed roll, sacrifice the Goblet and roll again (dice in the answer). */
+      kind: 'rerollHero';
+      playerId: PlayerId;
+      heroCardId: number;
+      itemCardId: number;
+      reason: string;
     }
   | {
       kind: 'chooseCardsFromHand';
@@ -183,7 +296,11 @@ export type HtsPrompt =
         | 'playFreeItem'
         | 'playFreeItemsUpTo2'
         | 'playFreeMagic'
-        | 'snowballFreeMagic';
+        | 'playFreeMagicsUpTo2'
+        | 'snowballFreeMagic'
+        | 'shadowSaintCost'
+        | 'lightningLabrysDiscard'
+        | 'bostonTerrorGive';
       toPlayerId?: PlayerId;
       /** Only these cards (just drawn / pulled) may be chosen. */
       onlyCardIds?: number[];
@@ -196,6 +313,8 @@ export type HtsPrompt =
       keepIfEmpty?: boolean;
       /** Shown to the other players instead of `reason` when `reason` would leak a hidden card. */
       publicReason?: string;
+      /** Which play of a "play up to N" sequence this is (Glowing Antler: 1, then 2). */
+      sequence?: number;
     }
   | {
       kind: 'choosePlayer';
@@ -209,7 +328,6 @@ export type HtsPrompt =
         | 'buttonsPull'
         | 'luckyBuckyPull'
         | 'slyPickingsPull'
-        | 'wildBuckPull'
         | 'plunderingPumaPull'
         | 'slipperyPawsPull'
         | 'dodgyDealerTrade'
@@ -217,13 +335,18 @@ export type HtsPrompt =
         | 'hopperSacrifice'
         | 'sharpFoxLook'
         | 'silentShadowSteal'
-        | 'buckOmensSteal'
+        | 'buckOmensLook'
+        | 'hollowHuskLook'
+        | 'bostonTerrorAsk'
+        | 'lightningLabrysSacrifice'
         | 'blindingBladeStealItems'
         | 'tipsyTootieSwap'
         | 'meowzioSteal'
         | 'forcedExchangeTarget'
         | 'giftBagBanditSteal';
       sourceHeroId?: number;
+      /** "Choose any player" (Blinding Blade): you may pick yourself. */
+      includeSelf?: boolean;
     }
   | {
       kind: 'chooseFromPile';
@@ -231,8 +354,26 @@ export type HtsPrompt =
       reason: string;
       optional: boolean;
       cards: HtsCard[];
-      source: 'discard' | 'opponentHand' | 'bearyWisePool' | 'discardReviveToParty' | 'discardReviveAndRoll' | 'discardPlayMagic';
+      source: 'discard' | 'opponentHand' | 'bearyWisePool';
       opponentId?: PlayerId;
+      /**
+       * Which cards qualify. For 'discard' and 'opponentHand' the choices are
+       * re-read from the live pile / hand when the prompt comes up (a queued
+       * search sees what is there by then, never a stale copy).
+       */
+      filter?: HtsPileFilter;
+      /**
+       * Only these may be taken; the rest are just shown ("Look at another
+       * player's hand. Choose a Hero card from their hand (if they have one)").
+       */
+      onlyCardIds?: number[];
+      /**
+       * What happens to the chosen card: 'hand' (default), 'playImmediately'
+       * (add it to your hand, then play it — Challengeable), 'bringToParty'
+       * (straight into your Party: not played), 'mayPlay' (add it to your hand;
+       * you may play it immediately).
+       */
+      then?: 'hand' | 'playImmediately' | 'bringToParty' | 'mayPlay';
     }
   | {
       kind: 'bullseyePeek';
@@ -268,7 +409,11 @@ export type HtsPrompt =
        */
       kind: 'step';
       playerId: PlayerId;
-      step: { type: 'draw'; count: number } | { type: 'moveHero'; heroCardId: number; fromPlayerId: PlayerId; toPlayerId: PlayerId };
+      step:
+        | { type: 'draw'; count: number }
+        /** Doe Fallow: "…then DRAW cards until you have 7 cards in your hand." */
+        | { type: 'drawUntil'; handSize: number }
+        | { type: 'moveHero'; heroCardId: number; fromPlayerId: PlayerId; toPlayerId: PlayerId };
     };
 
 // ============================================================================
@@ -280,20 +425,18 @@ export type HtsExpansionId =
   | 'berserkers-necromancers'
   | 'here-to-sleigh';
 
-// The card pools behind these three ids do NOT match the published expansions
-// (see the header note) — hence `verified: false`.
 export const HTS_EXPANSIONS: readonly ExpansionMeta[] = [
   {
     id: 'warriors-druids',
     name: 'Warriors & Druids',
-    summary: 'Adds Warrior and Druid heroes and leaders. Card list is an approximation, not the published set.',
-    verified: false,
+    summary: '31 cards, 2 Party Leaders, 2 Monsters: Druids that need low rolls, Warriors that can carry two Items. Win with 7 classes.',
+    verified: true,
   },
   {
     id: 'berserkers-necromancers',
     name: 'Berserkers & Necromancers',
-    summary: 'Adds Berserker and Necromancer heroes and leaders. Card list is an approximation, not the published set.',
-    verified: false,
+    summary: '31 cards, 2 Party Leaders, 2 Monsters: Berserkers that can carry two Items, Necromancers that pay a cost first. Win with 7 classes.',
+    verified: true,
   },
   {
     id: 'here-to-sleigh',
@@ -323,6 +466,7 @@ export type HtsSubPhase =
   | 'awaitingPrompt'
   | 'gameOver';
 
+/** Effects that last "until the end of your turn" (reset when the turn passes). */
 export interface HtsTurnBuffs {
   rollBonus: number;
   unchallengeable: boolean;
@@ -330,6 +474,12 @@ export interface HtsTurnBuffs {
   nobleShamanUsed?: boolean;
   gnawingDreadUsed?: boolean;
   noOpponentModifiers?: boolean;
+  /** Critical Fang: "+4 to your rolls to ATTACK a Monster card until the end of your turn." */
+  attackBonus?: number;
+  /** Silent Shield: sacrificing / destroying a Hero lets you search the discard pile for a Hero. */
+  silentShield?: boolean;
+  /** Muscipula Rex's free draw has been taken this turn. */
+  muscipulaUsed?: boolean;
 }
 
 export interface HtsLeaderDraft {
@@ -375,6 +525,15 @@ export interface HtsState extends GameStateShape {
   /** Protection flags lasting until the start of that player's next turn. */
   protectedFromSteal: Record<PlayerId, boolean>;
   protectedFromDestroy: Record<PlayerId, boolean>;
+  /**
+   * Maegisty (W&D), until that player's next turn: a Hero in their Party that
+   * would be sacrificed or destroyed returns to their hand instead.
+   */
+  returnToHandShield?: Record<PlayerId, boolean>;
+  /** Majestelk (W&D), until that player's next turn: ±5 to each of their rolls. */
+  majestelk?: Record<PlayerId, boolean>;
+  /** Vicious Wildcat: "…then end your turn" — the turn ends once the current effects resolve. */
+  endTurnPending?: boolean;
 
   turnPlayerId: PlayerId;
   actionPointsRemaining: number;
@@ -427,6 +586,15 @@ export type HtsAction =
   /** The Noble Shaman's -1 (during a Modifier window). `delta` must be -1; the old ±1 is gone. */
   | { type: 'nobleShamanAdjust'; playerId: PlayerId; delta: 1 | -1; targetSide?: 'actor' | 'challenger' }
   | { type: 'gnawingDreadSearch'; playerId: PlayerId }
+  /** Muscipula Rex: once per turn on your turn, DRAW a card without spending an action point. */
+  | { type: 'muscipulaDraw'; playerId: PlayerId }
+  /** Biggest Ring Ever (during the Modifier window on your own Hero roll): DISCARD up to 3 cards, +2 each. */
+  | { type: 'biggestRingDiscard'; playerId: PlayerId; cardIds: number[] }
+  /**
+   * Majestelk (during the Modifier window): declare +5 or -5 on your own roll.
+   * Owed on each of your rolls until your next turn; you can't pass until you have.
+   */
+  | { type: 'majestelkSign'; playerId: PlayerId; sign: 1 | -1; targetSide?: 'actor' | 'challenger' }
   | { type: 'claimHolidayGift'; playerId: PlayerId }
   | { type: 'discardAndRedraw'; playerId: PlayerId }
   | {
@@ -456,5 +624,7 @@ export type HtsAction =
       targetCardId?: number;
       bullseyePickId?: number;
       bullseyeTopOrder?: number[];
+      /** chooseClass answer. */
+      className?: HtsBaseClass;
     }
   | { type: 'endTurn'; playerId: PlayerId };

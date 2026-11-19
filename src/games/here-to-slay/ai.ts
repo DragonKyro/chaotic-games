@@ -5,19 +5,65 @@ import type { PlayerId } from '@/core/types';
 import {
   canAttackMonster,
   canEquipItemToHero,
+  canUseBiggestRing,
+  canMuscipulaDraw,
+  canPlayChallengeCard,
+  canRollHero,
   canUseNobleShaman,
+  classesInGame,
   computeRollTotals,
   getClassesToWin,
   handOf,
+  heroEffectiveClass,
   heroEquippedItems,
-  heroHasItemKind,
+  heroRollCost,
+  majestelkSidesOwed,
+  modifierValuesFor,
   niceGiftsOf,
   partyClasses,
   partyOf,
+  pickablePileCards,
   validHandCardsForPrompt,
   validHeroTargets,
+  validMonsterTargets,
+  validPartyCardTargets,
 } from './reducer';
-import type { HtsAction, HtsState } from './types';
+import type { HtsAction, HtsCard, HtsPartyHero, HtsPendingRoll, HtsState } from './types';
+
+/**
+ * Heroes the AI never brings back into play from the discard pile: Beholden
+ * Retriever can sacrifice itself and fetch itself again, forever.
+ */
+const NO_RECALL = new Set(['beholden-retriever']);
+
+/**
+ * Heroes the AI won't roll for: Napping Nibbles does nothing, and a Beholden
+ * Retriever alone in its Party would have to sacrifice itself — and could then
+ * fetch itself back and do it again.
+ */
+function worthRolling(s: HtsState, playerId: PlayerId, kind: string): boolean {
+  if (kind === 'napping-nibbles') return false;
+  if (kind === 'beholden-retriever') return partyOf(s, playerId).length > 1;
+  return true;
+}
+
+/** How much a Hero is worth keeping: a lone class in the Party matters most; a curse on it, not at all. */
+function keepScore(party: HtsPartyHero[], h: HtsPartyHero): number {
+  if (heroEquippedItems(h).some((i) => i.type === 'cursedItem')) return -1;
+  const cls = heroEffectiveClass(h);
+  const sameClass = party.filter((x) => heroEffectiveClass(x) === cls).length;
+  return (sameClass === 1 ? 10 : 0) + heroEquippedItems(h).length;
+}
+
+/** Cards the AI parts with first (Biggest Ring Ever discards): Heroes and Modifiers last. */
+const SHED_ORDER: Record<HtsCard['type'], number> = { challenge: 0, cursedItem: 0, item: 1, magic: 2, gift: 2, modifier: 3, hero: 4, partyLeader: 9, monster: 9 };
+
+/** Which way the roller wants their own roll to go (+1 higher, -1 lower). */
+function wantedDirection(s: HtsState, r: HtsPendingRoll, side: 'actor' | 'challenger'): 1 | -1 {
+  if (side === 'challenger' || r.reason === 'challengeDuel') return 1;
+  if (r.reason === 'monsterAttack') return s.monsterRow.find((m) => m.card.id === r.sourceCardId)?.slayOnLow ? -1 : 1;
+  return r.rollLow ? -1 : 1;
+}
 
 /** Leader draft preference (no peeking at hands — there are none yet). */
 const LEADER_PREFERENCE = [
@@ -59,7 +105,8 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
       !oppClasses.has(p.card.class) &&
       oppClasses.size >= classesNeeded - 1;
     if (wouldCompleteParty) {
-      const ch = handOf(state, playerId).find((c) => c.type === 'challenge');
+      const playable = handOf(state, playerId).filter((c) => canPlayChallengeCard(state, playerId, c));
+      const ch = playable.sort((a, b) => (b.challengeBonus ?? 0) - (a.challengeBonus ?? 0))[0];
       if (ch) {
         return {
           type: 'playChallenge',
@@ -77,8 +124,16 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
     const r = state.pendingRoll;
     if (!r) return null;
     const { actorTotal } = computeRollTotals(state, r);
-    const mods = handOf(state, playerId).filter((c) => c.type === 'modifier');
+    const hand = handOf(state, playerId);
+    // Modifier +7 discards the rest of the hand: only worth it with little else in it.
+    const mods = (state.turnBuffs.noOpponentModifiers && playerId !== state.turnPlayerId ? [] : hand.filter((c) => c.type === 'modifier'))
+      .filter((c) => c.kind !== 'mod-bn-plus-7' || hand.length <= 2)
+      .sort((a, b) => Number(a.kind === 'mod-bn-plus-7') - Number(b.kind === 'mod-bn-plus-7'));
     const canNobleShaman = canUseNobleShaman(state, playerId);
+
+    // Majestelk: a sign is owed on each of our own rolls - always the helpful one.
+    const owed = majestelkSidesOwed(state, r, playerId)[0];
+    if (owed) return { type: 'majestelkSign', playerId, sign: wantedDirection(state, r, owed), targetSide: owed };
 
     // Help our own Monster or Hero roll if we are just short of threshold
     if (r.byPlayerId === playerId && r.reason !== 'challengeDuel') {
@@ -90,7 +145,7 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
         }
         if (excess > 0 && excess <= 4 && mods.length > 0) {
           for (const m of mods) {
-            const neg = (m.modifierChoices ?? []).find((v) => v <= -excess);
+            const neg = modifierValuesFor(r, playerId, m).find((v) => v <= -excess);
             if (neg !== undefined) {
               return {
                 type: 'playModifier',
@@ -104,9 +159,15 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
         }
       } else {
         const deficit = r.threshold - actorTotal;
+        // Biggest Ring Ever: shed the cheapest cards, +2 each, when that is enough.
+        const shed = Math.ceil(deficit / 2);
+        if (deficit > 0 && shed <= 3 && shed <= hand.length && canUseBiggestRing(state, r, playerId)) {
+          const cheapest = [...hand].sort((a, b) => SHED_ORDER[a.type] - SHED_ORDER[b.type]).slice(0, shed);
+          return { type: 'biggestRingDiscard', playerId, cardIds: cheapest.map((c) => c.id) };
+        }
         if (deficit > 0 && deficit <= 4 && mods.length > 0) {
           for (const m of mods) {
-            const pos = (m.modifierChoices ?? []).find((v) => v >= deficit);
+            const pos = modifierValuesFor(r, playerId, m).find((v) => v >= deficit);
             if (pos !== undefined) {
               return {
                 type: 'playModifier',
@@ -135,6 +196,7 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
 
     switch (prompt.kind) {
       case 'rollEnteredHero': {
+        if (!worthRolling(state, playerId, prompt.heroCard.kind)) return { type: 'resolvePrompt', playerId, decline: true };
         return {
           type: 'resolvePrompt',
           playerId,
@@ -147,7 +209,16 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
           return { type: 'resolvePrompt', playerId, decline: true };
         }
         let pick = valid[0]!;
-        if (prompt.mode === 'bounceItem' || prompt.mode === 'stealItem') {
+        if (prompt.mode === 'sacrifice') {
+          // Give up the Hero we'd miss least.
+          const party = partyOf(state, playerId);
+          pick = [...valid].sort((a, b) => keepScore(party, a.hero) - keepScore(party, b.hero))[0]!;
+        }
+        if (prompt.effectTag === 'unbridledFuryDestroy') {
+          // Destroying a Berserker earns an extra action point.
+          pick = valid.find((v) => heroEffectiveClass(v.hero) === 'berserker') ?? pick;
+        }
+        if (prompt.mode === 'bounceItem') {
           // Strip an opponent's good Item, or shed a curse of our own.
           const helps = (v: (typeof valid)[number]) => {
             const cursed = heroEquippedItems(v.hero).some((i) => i.type === 'cursedItem');
@@ -189,10 +260,50 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
         return { type: 'resolvePrompt', playerId, targetPlayerId: target };
       }
       case 'chooseFromPile': {
-        const first = prompt.cards[0];
+        const all = pickablePileCards(prompt);
+        const pickable = all.filter((c) => !(prompt.then === 'playImmediately' && NO_RECALL.has(c.kind)));
+        // A mandatory pick with only an unwanted card on offer still has to be made.
+        const first = pickable.find((c) => c.type === 'hero') ?? pickable[0] ?? (prompt.optional ? undefined : all[0]);
         if (!first) return { type: 'resolvePrompt', playerId, decline: true };
         return { type: 'resolvePrompt', playerId, targetCardId: first.id };
       }
+      case 'choosePartyCard': {
+        const valid = validPartyCardTargets(state, prompt);
+        const idOf = (t: (typeof valid)[number]) => (t.item ? t.item.id : t.hero.card.id);
+        if (prompt.mode === 'sacrifice') {
+          // A curse on our own Hero is the ideal sacrifice; Rabid Beast stops there.
+          const curse = valid.find((t) => t.item?.type === 'cursedItem');
+          if (curse) return { type: 'resolvePrompt', playerId, targetCardId: idOf(curse) };
+          if (prompt.optional) return { type: 'resolvePrompt', playerId, decline: true };
+          const party = partyOf(state, playerId);
+          const items = valid.filter((t) => t.item && t.item.class === null);
+          const heroes = valid.filter((t) => !t.item).sort((a, b) => keepScore(party, a.hero) - keepScore(party, b.hero));
+          const cheapest = items[0] ?? heroes[0] ?? valid[0];
+          return cheapest ? { type: 'resolvePrompt', playerId, targetCardId: idOf(cheapest) } : { type: 'resolvePrompt', playerId, decline: true };
+        }
+        // Destroy: a whole Hero beats a good Item; never a curse that hurts them.
+        const pick = valid.find((t) => !t.item) ?? valid.find((t) => t.item?.type !== 'cursedItem') ?? valid[0];
+        return pick ? { type: 'resolvePrompt', playerId, targetCardId: idOf(pick) } : { type: 'resolvePrompt', playerId, decline: true };
+      }
+      case 'chooseMonster': {
+        const targets = validMonsterTargets(state, prompt);
+        const best = [...targets].sort((a, b) => a.slayThreshold - b.slayThreshold)[0];
+        if (!best) return null;
+        return prompt.mode === 'attack'
+          ? { type: 'resolvePrompt', playerId, targetCardId: best.card.id, dice: roll2d6FromState(state, state.logSeq + 11) }
+          : { type: 'resolvePrompt', playerId, targetCardId: best.card.id };
+      }
+      case 'chooseClass': {
+        // The class that costs the other Parties the most Heroes and ours the fewest.
+        const score = (cls: string) => state.seats.reduce((n, st) => {
+          const count = partyOf(state, st.id).filter((h) => heroEffectiveClass(h) === cls).length;
+          return n + (st.id === playerId ? -2 * count : count);
+        }, 0);
+        const cls = [...prompt.classes].sort((a, b) => score(b) - score(a))[0] ?? classesInGame(state)[0]!;
+        return { type: 'resolvePrompt', playerId, className: cls };
+      }
+      case 'rerollHero':
+        return { type: 'resolvePrompt', playerId, dice: roll2d6FromState(state, state.logSeq + 13) };
       case 'bullseyePeek': {
         const first = prompt.cards[0]!;
         const rest = prompt.cards.slice(1).map((c) => c.id);
@@ -225,6 +336,9 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
 
     const hand = handOf(state, playerId);
     const myClasses = partyClasses(state, playerId);
+
+    // Muscipula Rex's free draw costs nothing.
+    if (canMuscipulaDraw(state, playerId)) return { type: 'muscipulaDraw', playerId };
 
     // 0. If Here to Sleigh is enabled and we have 2 Nice Gifts + 2 AP + 1 Hero, claim the 3rd Nice Gift to win!
     if (
@@ -284,9 +398,11 @@ export function chooseAIAction(state: HtsState, playerId: PlayerId): HtsAction |
       }
     }
 
-    // 5. Use an unexhausted Hero ability in our Party
+    // 5. Use an unexhausted Hero ability in our Party - at most twice a turn
+    // even with Bottomless Bag: with Temporal Hourglass a failed roll refunds
+    // itself, and an unreachable roll would otherwise loop forever.
     const usableHero = partyOf(state, playerId).find(
-      (h) => !h.usedThisTurn && !heroHasItemKind(h, 'sealing-key') && h.card.kind !== 'napping-nibbles',
+      (h) => canRollHero(h) && (h.rollsThisTurn ?? 0) < 2 && heroRollCost(h) <= state.actionPointsRemaining && worthRolling(state, playerId, h.card.kind),
     );
     if (usableHero) {
       return {

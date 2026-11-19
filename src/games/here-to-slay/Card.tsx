@@ -30,10 +30,15 @@ export function rollLabel(threshold: number | null, low?: boolean): string | nul
   return low ? `≤${threshold}` : `${threshold}+`;
 }
 
-function ribbonOf(card: Pick<HtsCard, 'type' | 'class'>) {
+function ribbonOf(card: Pick<HtsCard, 'type' | 'class' | 'challengeClass'>) {
   if ((card.type === 'hero' || card.type === 'partyLeader') && card.class) {
     const m = CLASS_META[card.class];
     return { label: card.type === 'hero' ? m.label : 'Leader', ribbon: m.color, deep: m.deep };
+  }
+  // A class Challenge names the class you need in your Party to play it.
+  if (card.type === 'challenge' && card.challengeClass) {
+    const m = CLASS_META[card.challengeClass];
+    return { label: `Needs a ${m.label}`, ribbon: m.color, deep: m.deep };
   }
   return TYPE_META[card.type];
 }
@@ -47,11 +52,24 @@ function CardArtFor({ card }: { card: HtsCard }) {
     case 'cursedItem': art = <ItemArt card={card} />; break;
     case 'magic': art = <MagicArt card={card} />; break;
     case 'modifier': art = <ModifierArt choices={card.modifierChoices} />; break;
-    case 'challenge': art = <ChallengeArt />; break;
+    case 'challenge': art = <ChallengeArt cls={card.challengeClass ?? null} />; break;
     case 'gift': art = <GiftArt kind={card.kind} />; break;
     case 'monster': art = <MonsterArt kind={card.kind} />; break;
   }
   return <svg viewBox="0 0 100 100" role="img" aria-label={card.name}>{art}</svg>;
+}
+
+/** The printed two-Item symbol (W&D Warriors, B&N Berserkers): two Item cards, fanned. */
+function TwoItemBadge() {
+  return (
+    <span className="hts-card-slots" title="Can carry two Items (at most one Mask)">
+      <svg viewBox="0 0 24 24" aria-label="Two Item slots">
+        <rect x={3} y={6} width={11} height={14} rx={2} transform="rotate(-14 8.5 13)" fill="#2f7d74" stroke={INK} strokeWidth={1.6} />
+        <rect x={10} y={4} width={11} height={14} rx={2} transform="rotate(12 15.5 11)" fill="#e8b84a" stroke={INK} strokeWidth={1.6} />
+        <circle cx={15.6} cy={11} r={2.4} fill="#3fd2c0" stroke={INK} strokeWidth={1} />
+      </svg>
+    </span>
+  );
 }
 
 /** A die-shaped badge: a roll target, a slay or fail number. */
@@ -64,11 +82,14 @@ function Face({ card, size, footnote }: { card: HtsCard; size: CardSize; footnot
   const roll = card.type === 'hero' ? rollLabel(card.abilityThreshold, card.rollLow) : null;
   return (
     <>
-      <span className="hts-card-ribbon">{rib.label}</span>
+      <span className={`hts-card-ribbon${rib.label.length > 9 ? ' is-long' : ''}`}>{rib.label}</span>
       {(card.type === 'hero' || card.type === 'partyLeader') && card.class && (
         <span className="hts-card-seal"><WaxSeal cls={card.class} /></span>
       )}
-      <span className="hts-card-art"><CardArtFor card={card} /></span>
+      <span className="hts-card-art">
+        <CardArtFor card={card} />
+        {card.type === 'hero' && (card.maxItems ?? 1) > 1 && <TwoItemBadge />}
+      </span>
       {roll && (
         <span className="hts-card-roll" title={card.rollLow ? `Roll ${card.abilityThreshold} or less` : `Roll ${card.abilityThreshold} or more`}>
           <DieBadge tone={card.rollLow ? 'good' : 'gold'}>{roll}</DieBadge>
@@ -81,11 +102,20 @@ function Face({ card, size, footnote }: { card: HtsCard; size: CardSize; footnot
   );
 }
 
-function frameClass(card: Pick<HtsCard, 'type'>, size: CardSize, extra: (string | false | undefined)[]) {
-  return ['hts-card', `hts-card-${size}`, `hts-t-${card.type}`, ...extra].filter(Boolean).join(' ');
+function frameClass(card: Pick<HtsCard, 'type' | 'text' | 'name'>, size: CardSize, extra: (string | false | undefined)[]) {
+  return ['hts-card', `hts-card-${size}`, `hts-t-${card.type}`, size === 'lg' && wordiness(card), ...extra].filter(Boolean).join(' ');
 }
 
-function frameStyle(card: Pick<HtsCard, 'type' | 'class'>): CSSProperties {
+/**
+ * Long card text gets a smaller type (and a smaller art window) on the large
+ * face so it isn't cut off. A name that wraps to two lines takes text room too.
+ */
+function wordiness(card: Pick<HtsCard, 'text' | 'name'>): string | false {
+  const load = card.text.length + (card.name.length > 14 ? 35 : 0);
+  return load > 140 ? 'is-xlong' : load > 100 ? 'is-long' : false;
+}
+
+function frameStyle(card: Pick<HtsCard, 'type' | 'class' | 'challengeClass'>): CSSProperties {
   const rib = ribbonOf(card);
   return { '--rib': rib.ribbon, '--rib-deep': rib.deep } as CSSProperties;
 }
@@ -122,10 +152,17 @@ export function HtsCardView({ card, size = 'md', selected, disabled, onClick, fo
   );
 }
 
+const PENALTY_TEXT: Record<HtsMonster['failPenalty'], string> = {
+  sacrificeHero: 'sacrifice a Hero',
+  sacrificeTwoHeroes: 'sacrifice 2 Heroes',
+  discard2: 'discard 2 cards',
+  discardHand: 'discard your hand',
+};
+
 function MonsterFace({ monster, size }: { monster: HtsMonster; size: CardSize }) {
   const slay = monster.slayOnLow ? `≤${monster.slayThreshold}` : `${monster.slayThreshold}+`;
   const fail = monster.slayOnLow ? `${monster.failThreshold}+` : `≤${monster.failThreshold}`;
-  const penalty = monster.failPenalty === 'sacrificeHero' ? 'sacrifice a Hero' : 'discard 2 cards';
+  const penalty = PENALTY_TEXT[monster.failPenalty];
   return (
     <>
       <span className="hts-card-ribbon">Monster</span>
@@ -157,7 +194,9 @@ export function MonsterCard({ monster, size = 'md', onClick, disabled, className
   inspect?: boolean;
 }) {
   const interactive = !!onClick && !disabled;
-  const cls = frameClass(monster.card, size, [interactive && 'is-interactive', disabled && 'is-disabled', className]);
+  // Sized by everything the large face prints, not just the reward text.
+  const face = { ...monster.card, text: `Needs ${monster.requirementText}. Fail (${monster.failThreshold}): ${PENALTY_TEXT[monster.failPenalty]}. Slain: ${monster.card.text}` };
+  const cls = frameClass(face, size, [interactive && 'is-interactive', disabled && 'is-disabled', className]);
   const style = frameStyle(monster.card);
   const zoom = inspect ?? size !== 'lg';
   return (
@@ -168,7 +207,7 @@ export function MonsterCard({ monster, size = 'md', onClick, disabled, className
       disabled={disabled}
       label={`Attack ${monster.card.name}`}
       title={monster.card.name}
-      preview={zoom ? <div className={frameClass(monster.card, 'lg', ['hts-card-preview'])} style={style}><MonsterFace monster={monster} size="lg" /></div> : undefined}
+      preview={zoom ? <div className={frameClass(face, 'lg', ['hts-card-preview'])} style={style}><MonsterFace monster={monster} size="lg" /></div> : undefined}
     >
       <MonsterFace monster={monster} size={size} />
     </CardShell>
