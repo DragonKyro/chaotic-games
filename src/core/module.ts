@@ -4,8 +4,8 @@
 // register it in src/games/registry.ts.
 //
 // Game-specific types are parameterized as <S, A, C>:
-//   S — full GameState for this game (must be JSON-serializable for netcode/save)
-//   A — Action union for this game (must be JSON-serializable for netcode)
+//   S — full GameState for this game (must be JSON-serializable)
+//   A — Action union for this game (must be JSON-serializable: online moves are logged as JSON)
 //   C — Config / setup options chosen in the lobby (seat list, expansions, etc.)
 //
 // Invariants every module must uphold:
@@ -14,9 +14,10 @@
 //     mulberry32 in src/core/rng.ts). Randomness chosen by the acting player
 //     (deal, draw) must be folded into the action payload so all peers reduce
 //     identically.
-//   - createInitialState must accept a seed so peers agree on opening state.
-//   - Player visibility (hidden hands) is a UI concern: the full GameState is
-//     replicated to every peer. We rely on friends-only honor, no anti-cheat.
+//   - createInitialState must be pure given (config, seed, seats): online, every
+//     device builds the opening state itself from the room's start record.
+//   - Player visibility (hidden hands) is a UI concern: every device holds the
+//     full GameState. We rely on friends-only honor, no anti-cheat.
 
 import type { PlayerId, Seat, GamePhase } from './types';
 export type { Seat };
@@ -48,12 +49,41 @@ export interface GameModule<
   /** Allowed player counts (inclusive). */
   readonly minPlayers: number;
   readonly maxPlayers: number;
+  /** The game's signature colour (hex). The shell paints the home tile, the
+   *  lobby banner and the in-game bar with it. Defaults to the shell's yellow. */
+  readonly accent?: string;
+  /** Set false for games whose action model can't survive the online action
+   *  log (real-time races need host-authoritative arbitration). The lobby then
+   *  hides "Host online" for this game and an online room can't switch to it.
+   *  Defaults to true. */
+  readonly onlineSupported?: boolean;
+  /** Set true to have the game-over "Play again" button return to the lobby
+   *  with the finished match's config and seats pre-filled (so options can be
+   *  changed before re-dealing) instead of re-dealing immediately. Defaults to
+   *  false. */
+  readonly replayInLobby?: boolean;
+  /** Set false for games with no hidden information (every card and coin is
+   *  public): hot-seat play then skips the "pass the device" screen between
+   *  human turns. Defaults to true. A function decides per match (it is
+   *  handed the match state), for games whose options add hidden
+   *  information. */
+  readonly hiddenInfo?: boolean | ((state: S) => boolean);
+
+  /** Strengths an AI seat can play at, easiest first. With two or more, the
+   *  lobby gives every AI seat its own picker and stores the choice in
+   *  `seat.aiLevel`, which the module's AI reads back off `state.seats`
+   *  (and `prepare` off `seats`). Absent = the AI has one strength. */
+  readonly aiLevels?: ReadonlyArray<{ id: string; label: string }>;
+  /** The level of an AI seat that names none. Defaults to the last listed. */
+  readonly defaultAiLevel?: string;
 
   /** Build the lobby config component's initial value. Pure. */
   defaultConfig(seats: Seat[]): C;
 
-  /** Validate a chosen config — return a list of human-readable errors, [] if OK. */
-  validateConfig(config: C): string[];
+  /** Validate a chosen config — return a list of human-readable errors, [] if OK.
+   *  `seats` are the ones the match would start with (omitted when unknown), so
+   *  a module can reject settings that depend on player count. */
+  validateConfig(config: C, seats?: Seat[]): string[];
 
   /** Build the opening GameState. Pure given (config, seed, seats). Seats are
    *  passed in so the module can size hands, set the first turn, etc. */
@@ -64,6 +94,17 @@ export interface GameModule<
 
   /** Optional AI hook — return next action for `playerId`, or null to pass/end. */
   chooseAIAction?(state: S, playerId: PlayerId): A | null;
+
+  /** Optional AI pacing: how long the AI driver waits before an AI move in a
+   *  match with at least one human seat (so the human can follow dice, coin
+   *  animations, etc.). Defaults to 380ms. All-AI matches always run fast. */
+  aiDelayMs?(state: S): number;
+
+  /** Optional async setup the shell awaits before starting a match on the
+   *  device that drives the AI (local play, or the online host) — e.g.
+   *  fetching trained policy files. Once it resolves, `chooseAIAction` must be
+   *  able to answer synchronously. Rejecting aborts the start with the error. */
+  prepare?(config: C, seats: Seat[]): Promise<void>;
 
   /** Optional thumbnail rendered on the game picker. Game-agnostic shell never imports
    *  game art directly — modules render their own SVG inline. */
@@ -79,6 +120,10 @@ export interface GameUiBundle<S, A, C> {
     config: C;
     seats: Seat[];
     onChange: (config: C) => void;
+    /** Set for an online guest, who sees the host's options but can't change
+     *  them (the shell also wraps the form in a disabled fieldset). Skip work
+     *  only the AI-driving device needs, like prefetching AI policies. */
+    readOnly?: boolean;
   }>;
   GameView: React.ComponentType<{
     state: S;
@@ -89,6 +134,9 @@ export interface GameUiBundle<S, A, C> {
    *  "Rules" button that opens this in a modal. Should cover gameplay summary
    *  and any reference tables (card frequencies, scoring tables, etc.). */
   Rules?: React.ComponentType;
+  /** Optional sheet of every card face (and back). Opened by the dev-only
+   *  `?gallery=<gameId>` route for art reviews; a Rules book may embed it. */
+  Gallery?: React.ComponentType;
 }
 
 export type AnyGameModule = GameModule<GameStateShape, unknown, unknown>;

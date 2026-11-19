@@ -74,6 +74,36 @@ export function RulesGrid({ cols = 2, children }: { cols?: 2 | 3 | 4; children: 
   return <div className={`rules-grid rules-grid-${cols}`}>{children}</div>;
 }
 
+export interface RulesTableRow {
+  key: string;
+  cells: ReactNode[];
+  /** `bad`: a row to flag (the kittens). `total`: a summary row. */
+  tone?: 'bad' | 'total';
+}
+
+/** A compact reference table (card lists, counts). `numeric` columns right-align. */
+export function RulesTable({ columns, rows, numeric = [] }: {
+  columns: ReactNode[];
+  rows: RulesTableRow[];
+  numeric?: number[];
+}) {
+  const cls = (i: number) => (numeric.includes(i) ? 'num' : undefined);
+  return (
+    <table className="rules-table">
+      <thead>
+        <tr>{columns.map((c, i) => <th key={i} className={cls(i)}>{c}</th>)}</tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.key} className={r.tone ? `is-${r.tone}` : undefined}>
+            {r.cells.map((c, i) => <td key={i} className={cls(i)}>{c}</td>)}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 /** A single card in a RulesGrid. `accent` paints a left edge or top swatch. */
 export function RulesTile({
   icon, label, hint, accent,

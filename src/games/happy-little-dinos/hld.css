@@ -1,0 +1,519 @@
+/* ==========================================================================
+   Happy Little Dinosaurs — "Saturday-morning disaster cartoon".
+   A sunny valley table (the only daytime table in the app: light surfaces,
+   dark ink), papercraft dinos, Luckiest Guy lettering, a winding Escape
+   Route away from the volcano. The kit lays out; this file themes and draws.
+   ========================================================================== */
+
+@import '@fontsource/luckiest-guy/latin-400.css';
+
+.hld-table {
+  --cg-felt:
+    radial-gradient(rgba(42, 29, 22, 0.08) 1.6px, transparent 2px) 0 0 / 14px 14px,
+    radial-gradient(130% 70% at 50% 0%, #b8ec7a 0%, #7cca4e 48%, #4f9e3a 100%);
+  --cg-surface: rgba(255, 249, 232, 0.95);
+  --cg-surface-2: #ffe7b8;
+  --cg-edge: #2a1d16;
+  --cg-ink: #2a1d16;
+  --cg-text: #2a1d16;
+  --cg-dim: #6b5444;
+  --cg-accent: #ff9f1c;
+  --cg-accent-ink: #2a1d16;
+  --cg-danger: #e8342e;
+  --cg-good: #2fa35c;
+  --cg-display: 'Luckiest Guy', var(--font-display);
+  --cg-card-w: 90px;
+  --hld-ink: #2a1d16;
+  --hld-cream: #fff8e7;
+}
+
+/* The kit assumes dark surfaces in a few places; this table is daytime. */
+.hld-table { --cg-chip-bg: rgba(255, 255, 255, 0.75); --cg-log-danger: #c62a24; --cg-log-good: #1f7f45; }
+.hld-table .cg-chip-good, .hld-table .cg-chip-danger { color: #fff; }
+.hld-table .cg-dock-title { font-size: 25px; letter-spacing: 0.02em; }
+.hld-table .cg-dock-react, .hld-table .cg-dock-danger {
+  background: linear-gradient(90deg, rgba(232, 52, 46, 0.16), transparent 70%), var(--cg-surface);
+}
+.hld-table .cg-gameover-title { text-shadow: 3px 3px 0 #ffd23f; }
+.hld-table .cg-gameover-eyebrow { color: #c4561d; }
+.hld-table .cg-gameover { background: linear-gradient(120deg, rgba(255, 159, 28, 0.25), transparent 65%), var(--cg-surface); }
+.hld-table .cg-log-title, .hld-table .cg-panel-head h4 { color: var(--cg-text); letter-spacing: 0.03em; font-size: 16px; }
+.hld-table.is-shaking { animation: cg-shake 520ms ease both; }
+.hld-table :where(select) { background: #fff; color: var(--hld-ink); border-color: var(--hld-ink); }
+
+/* ==========================================================================
+   Cards
+   ========================================================================== */
+
+.hld-card {
+  --w: 96px;
+  --stock: var(--hld-cream, #fff8e7);
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  width: var(--w);
+  aspect-ratio: 5 / 7;
+  padding: calc(var(--w) * 0.06);
+  border-radius: calc(var(--w) * 0.12);
+  border: 3px solid var(--hld-ink, #2a1d16);
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.7), transparent 45%), var(--stock);
+  color: var(--hld-ink, #2a1d16);
+  box-shadow: 3px 3px 0 var(--hld-ink, #2a1d16);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+  user-select: none;
+  transition: transform var(--dur-med) var(--ease-spring), box-shadow var(--dur-med) var(--ease-out), filter var(--dur-med);
+}
+button.hld-card { cursor: pointer; }
+.hld-card-xs { --w: 44px; border-width: 2px; box-shadow: 2px 2px 0 var(--hld-ink, #2a1d16); }
+.hld-card-sm { --w: 68px; border-width: 2.5px; }
+.hld-card-md { --w: 96px; }
+.hld-card-lg { --w: 152px; }
+
+.hld-card-art {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: calc(var(--w) * 0.08);
+  border: 2px solid var(--hld-ink, #2a1d16);
+  background:
+    radial-gradient(circle at 50% 30%, #fff 0%, transparent 60%),
+    var(--tint, #d7f7c2);
+}
+.hld-card-art svg { display: block; width: 92%; height: 92%; }
+.hld-card-lg .hld-card-art { flex: 0 0 56%; }
+
+.hld-card-name {
+  margin-top: calc(var(--w) * 0.05);
+  font-family: 'Luckiest Guy', var(--font-display);
+  font-weight: 400;
+  font-size: calc(var(--w) * 0.125);
+  line-height: 1.05;
+  letter-spacing: 0.02em;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.hld-card-xs .hld-card-name { font-size: 8px; -webkit-line-clamp: 1; margin-top: 2px; }
+.hld-card-text {
+  margin-top: 4px;
+  font-size: calc(var(--w) * 0.074);
+  line-height: 1.24;
+  font-weight: 600;
+  color: #5b4636;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* The number: a fat sticker in the corner. */
+.hld-card-badge {
+  position: absolute;
+  z-index: 2;
+  top: calc(var(--w) * -0.06);
+  left: calc(var(--w) * -0.06);
+  display: grid;
+  place-items: center;
+  width: calc(var(--w) * 0.34);
+  aspect-ratio: 1;
+  font-family: 'Luckiest Guy', var(--font-display);
+  font-size: calc(var(--w) * 0.24);
+  line-height: 1;
+  padding-top: calc(var(--w) * 0.03);
+  color: #fff;
+  -webkit-text-stroke: 1px var(--hld-ink, #2a1d16);
+  border-radius: 50%;
+  background: var(--badge, #ffd23f);
+  border: 2.5px solid var(--hld-ink, #2a1d16);
+  box-shadow: 2px 2px 0 var(--hld-ink, #2a1d16);
+  transform: rotate(-8deg);
+}
+.hld-card-badge.is-instant, .hld-card-badge.is-cat { background: var(--hld-cream, #fff8e7); padding: 0; }
+.hld-card-badge svg { width: 78%; height: 78%; }
+.hld-card-badge.is-cat svg { width: 92%; height: 92%; }
+.hld-card-xs .hld-card-badge { width: 20px; font-size: 13px; border-width: 1.5px; top: -5px; left: -5px; }
+
+.hld-card-fx {
+  position: absolute;
+  z-index: 2;
+  top: calc(var(--w) * 0.02);
+  right: calc(var(--w) * 0.04);
+  font-size: calc(var(--w) * 0.17);
+  color: #ff9f1c;
+  -webkit-text-stroke: 1px var(--hld-ink, #2a1d16);
+}
+.hld-card-xs .hld-card-fx { display: none; }
+
+.hld-card-ribbon {
+  position: absolute;
+  z-index: 3;
+  top: calc(var(--w) * 0.03);
+  right: calc(var(--w) * -0.05);
+  padding: 1px 6px;
+  font-family: 'Luckiest Guy', var(--font-display);
+  font-size: calc(var(--w) * 0.085);
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: var(--ribbon, #b35cff);
+  border: 2px solid var(--hld-ink, #2a1d16);
+  border-radius: 6px;
+  transform: rotate(8deg);
+}
+.hld-card-xs .hld-card-ribbon { display: none; }
+
+.hld-card-foot {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: calc(var(--w) * -0.08);
+  translate: -50% 0;
+  padding: 0 7px;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--hld-ink, #2a1d16);
+  background: #ffd23f;
+  border: 2px solid var(--hld-ink, #2a1d16);
+  border-radius: 999px;
+}
+
+/* Instants: electric-violet stock. */
+.hld-type-instant {
+  --stock: linear-gradient(160deg, #8a7bff, #b35cff 60%, #e05cff);
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.35), transparent 45%), linear-gradient(160deg, #8a7bff, #b35cff 60%, #e05cff);
+  color: #fff;
+  --ribbon: #ff9f1c;
+}
+.hld-type-instant .hld-card-name { color: #fff; -webkit-text-stroke: 0.6px var(--hld-ink, #2a1d16); }
+.hld-type-instant .hld-card-text { color: #fff7ff; }
+.hld-type-instant .hld-card-art { --tint: #f3ecff; }
+
+/* Disasters: their category's colour. */
+.hld-type-disaster {
+  --cat: #5cbf3e;
+  --ribbon: var(--hld-ink, #2a1d16);
+  background:
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.12) 0 6px, transparent 6px 12px),
+    var(--cat);
+  color: #fff;
+}
+.hld-type-disaster .hld-card-art { background: radial-gradient(circle at 50% 35%, #fff 0%, #fff8e7 70%); }
+.hld-type-disaster .hld-card-name { color: #fff; -webkit-text-stroke: 0.7px var(--hld-ink, #2a1d16); }
+.hld-type-disaster .hld-card-text { color: #fff; }
+
+/* Hazards: behind caution stripes. */
+.hld-type-hazard {
+  --ribbon: #e8342e;
+  background: repeating-linear-gradient(-45deg, #ffd23f 0 8px, #2a1d16 8px 16px);
+}
+.hld-type-hazard .hld-card-art { background: #fff8e7; }
+.hld-type-hazard .hld-card-name, .hld-type-hazard .hld-card-text {
+  color: var(--hld-ink, #2a1d16);
+  background: #ffd23f;
+  border-radius: 6px;
+  padding: 0 3px;
+}
+
+.hld-card.is-interactive:hover { transform: translateY(-5px) rotate(-1.5deg); box-shadow: 4px 7px 0 var(--hld-ink, #2a1d16); }
+.hld-card.is-selected { transform: translateY(-16px); box-shadow: 0 0 0 4px #ff9f1c, 4px 8px 0 var(--hld-ink, #2a1d16); }
+.hld-hand .hld-card.is-disabled { filter: saturate(0.45) brightness(0.9); }
+
+.hld-card.is-facedown { padding: 0; overflow: hidden; background: #ff9f1c; }
+.hld-card.is-facedown .hld-back-art { display: block; width: 100%; height: 100%; }
+.hld-card-back-label {
+  position: absolute;
+  left: 50%;
+  bottom: 7%;
+  translate: -50% 0;
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+  color: var(--hld-ink, #2a1d16);
+  background: #fff8e7;
+  border: 2px solid var(--hld-ink, #2a1d16);
+  border-radius: 999px;
+}
+
+.hld-card-preview { --w: 300px; padding: 18px; border-width: 4px; }
+.hld-card-preview .hld-card-name { font-size: 34px; }
+.hld-card-preview .hld-card-text { font-size: 18px; }
+.hld-card-preview .hld-card-badge { width: 92px; font-size: 64px; top: -16px; left: -16px; }
+.hld-card-preview .hld-card-ribbon { font-size: 22px; }
+
+/* ==========================================================================
+   Dinos
+   ========================================================================== */
+
+.hld-dino-card {
+  --dino: #ff8a4c;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 150px;
+  padding: 8px 8px 10px;
+  border-radius: 16px;
+  border: 3px solid var(--hld-ink, #2a1d16);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--dino) 30%, #fff8e7), #fff8e7);
+  color: var(--hld-ink, #2a1d16);
+  box-shadow: 3px 3px 0 var(--hld-ink, #2a1d16);
+  font: inherit;
+  font-weight: 700;
+  transition: transform var(--dur-med) var(--ease-spring), box-shadow var(--dur-med);
+}
+button.hld-dino-card { cursor: pointer; }
+button.hld-dino-card:hover { transform: translateY(-4px) rotate(-1deg); }
+.hld-dino-card.is-selected { box-shadow: 0 0 0 4px #ff9f1c, 4px 6px 0 var(--hld-ink, #2a1d16); transform: translateY(-3px); }
+.hld-dino-card.is-compact { width: 100px; padding: 4px 4px 6px; }
+.hld-dino-art svg { display: block; width: 130px; height: auto; }
+.hld-dino-card.is-compact .hld-dino-art svg { width: 86px; }
+.hld-dino-name { font-family: 'Luckiest Guy', var(--font-display); font-weight: 400; font-size: 16px; line-height: 1; }
+.hld-dino-card.is-compact .hld-dino-name { font-size: 12px; }
+.hld-dino-traits { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.hld-trait {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px 0 2px;
+  font-size: 12px;
+  font-weight: 800;
+  border-radius: 999px;
+  background: #fff;
+  border: 2px solid var(--hld-ink, #2a1d16);
+}
+.hld-trait.is-plus { background: #d8f7d8; }
+.hld-trait.is-minus { background: #ffd9d6; }
+.hld-badge { display: block; }
+
+/* ==========================================================================
+   The scene: sky, volcano, the Escape Route
+   ========================================================================== */
+
+.hld-scene {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--cg-radius);
+  border: 3px solid var(--hld-ink, #2a1d16);
+  box-shadow: 4px 4px 0 var(--hld-ink, #2a1d16);
+  background: linear-gradient(180deg, #7fd0ff 0%, #c3eeff 55%, #e8f9d9 100%);
+}
+.hld-scene-art { position: absolute; inset: 0; width: 100%; height: 100%; }
+.hld-smoke { animation: hld-smoke 4.5s ease-in-out infinite; transform-origin: 70px 80px; transform-box: view-box; }
+@keyframes hld-smoke {
+  0% { transform: translateY(6px) scale(0.92); opacity: 0.85; }
+  50% { transform: translateY(-4px) scale(1.05); opacity: 1; }
+  100% { transform: translateY(6px) scale(0.92); opacity: 0.85; }
+}
+
+.hld-track { position: relative; display: block; width: 100%; height: auto; }
+.hld-token { transition: transform 900ms var(--ease-spring); }
+.hld-token-label { font-family: 'Luckiest Guy', var(--font-display); font-size: 15px; }
+
+.hld-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: end;
+  padding: 0 16px 10px;
+  margin-top: -6px;
+}
+.hld-disaster-slot .hld-card { --w: 84px; }
+.hld-picks .hld-card-sm { --w: 62px; }
+.hld-picks .hld-pick-empty { width: 62px; }
+.hld-disaster-slot { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.hld-disaster-slot > .cg-inspect, .hld-disaster-slot > .hld-card { animation: hld-flip 520ms var(--ease-out) both; }
+.hld-slot-label {
+  font-family: 'Luckiest Guy', var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--hld-ink, #2a1d16);
+}
+@keyframes hld-flip {
+  0% { transform: perspective(600px) rotateY(90deg) translateY(-20px); }
+  100% { transform: perspective(600px) rotateY(0); }
+}
+
+.hld-picks { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; align-items: flex-end; }
+.hld-pick { position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 76px; padding-top: 14px; }
+.hld-pick-who {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 96px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hld-pick-dot { width: 10px; height: 10px; flex-shrink: 0; border-radius: 50%; border: 2px solid var(--hld-ink, #2a1d16); }
+.hld-pick-empty {
+  display: grid;
+  place-items: center;
+  width: 68px;
+  aspect-ratio: 5 / 7;
+  border-radius: 9px;
+  border: 3px dashed rgba(42, 29, 22, 0.35);
+  color: rgba(42, 29, 22, 0.55);
+  font-size: 20px;
+}
+.hld-pick-empty span { animation: cg-bob 1.2s ease-in-out infinite; }
+.hld-pick .is-landed { animation: hld-land 420ms var(--ease-spring) both; }
+@keyframes hld-land {
+  0% { transform: translateY(70px) rotate(14deg) scale(0.8); opacity: 0; }
+  100% { transform: none; opacity: 1; }
+}
+.hld-pick .is-flipped { animation: hld-flip 520ms var(--ease-out) both; animation-delay: calc(var(--i, 0) * 90ms); }
+/* The round score rides above the card, apart from its printed value. */
+.hld-score {
+  position: absolute;
+  z-index: 4;
+  top: -16px;
+  left: 50%;
+  translate: -50% 0;
+  display: grid;
+  place-items: center;
+  min-width: 34px;
+  height: 34px;
+  padding: 2px 6px 0;
+  font-family: 'Luckiest Guy', var(--font-display);
+  font-size: 19px;
+  border-radius: 999px;
+  color: var(--hld-ink, #2a1d16);
+  background: #fff;
+  border: 3px solid var(--hld-ink, #2a1d16);
+  box-shadow: 2px 2px 0 var(--hld-ink, #2a1d16);
+}
+.hld-score.is-top { background: #ffd23f; }
+.hld-score.is-low { background: #e8342e; color: #fff; }
+.hld-pick-tag { font-size: 11px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+.hld-pick-tag.is-top { color: #1f7f45; }
+.hld-pick-tag.is-low { color: #c62a24; }
+
+/* ==========================================================================
+   Plates: the 3-slot danger meter, hazards
+   ========================================================================== */
+
+.hld-plate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 5px; }
+.hld-meter { display: inline-flex; gap: 3px; padding: 2px; border-radius: 999px; background: rgba(42, 29, 22, 0.1); }
+.hld-meter-slot {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px dashed rgba(42, 29, 22, 0.35);
+}
+.hld-meter-slot.is-full { border: 0; animation: cg-pop 360ms var(--ease-spring) both; }
+.hld-meter-slot.is-deadly { border-color: #e8342e; border-style: solid; animation: hld-warn 1.1s ease-in-out infinite; }
+@keyframes hld-warn { 50% { background: rgba(232, 52, 46, 0.25); } }
+.hld-meter-slot.is-deadly svg { opacity: 0.55; }
+.hld-mini-hand { display: inline-flex; }
+.hld-mini-back {
+  width: 13px;
+  height: 18px;
+  border-radius: 3px;
+  border: 2px solid var(--hld-ink, #2a1d16);
+  background: linear-gradient(180deg, #ff9f1c 0 50%, #ff7a1a 50%);
+}
+.hld-mini-back + .hld-mini-back { margin-left: -6px; }
+.hld-plate-dino { position: relative; }
+.hld-plate-dino .hld-badge { width: 46px; height: 46px; }
+
+/* ==========================================================================
+   Your area
+   ========================================================================== */
+
+.hld-hand-area {
+  padding: 8px 14px 4px;
+  border-radius: var(--cg-radius);
+  background: rgba(255, 249, 232, 0.6);
+  border: 3px solid var(--hld-ink, #2a1d16);
+  box-shadow: 4px 4px 0 var(--hld-ink, #2a1d16);
+}
+.hld-hand-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
+.hld-me { display: flex; align-items: center; gap: 10px; }
+.hld-me h4 { margin: 0; font-family: 'Luckiest Guy', var(--font-display); font-weight: 400; font-size: 21px; letter-spacing: 0.02em; }
+.hld-me-sub { font-size: 13px; color: var(--cg-dim); font-weight: 700; }
+.hld-hand { min-height: 150px; }
+.hld-hand .cg-fan { padding-top: 18px; padding-bottom: 2px; }
+.hld-hand .hld-card-md { --w: 90px; }
+.hld-hand-empty { padding: 26px; text-align: center; color: var(--cg-dim); font-style: italic; }
+.hld-swap-dino { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.hld-swap-dino > span { font-size: 12px; font-weight: 800; color: var(--cg-dim); }
+.hld-swap-dino .hld-dino-card { width: 64px; padding: 2px; border-width: 2px; }
+.hld-swap-dino .hld-dino-art svg { width: 56px; }
+.hld-swap-dino .hld-dino-name { display: none; }
+
+.hld-choices { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; align-items: flex-end; }
+.hld-choices.is-scroll { flex-wrap: nowrap; overflow-x: auto; padding: 12px 4px 8px; }
+.hld-targets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.hld-targets > span { font-size: 13px; font-weight: 800; color: var(--cg-dim); }
+.hld-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 4px;
+  font-size: 13px;
+}
+.hld-target.is-on { background: #ff9f1c; box-shadow: 0 0 0 3px #ffd23f, 3px 3px 0 var(--hld-ink, #2a1d16); }
+.hld-target .hld-pick-dot { width: 14px; height: 14px; }
+.hld-target small { font-weight: 600; opacity: 0.75; }
+/* A Disaster offered as a choice (Ice Cream!, One Week Anniversary). */
+.hld-pick-btn { background: none; border: 3px solid transparent; border-radius: 14px; padding: 2px; cursor: pointer; }
+.hld-pick-btn:hover, .hld-pick-btn.is-on { border-color: #ff9f1c; box-shadow: 0 0 0 3px #ffd23f; }
+
+/* ==========================================================================
+   FX: the meteor streak
+   ========================================================================== */
+
+.hld-meteor {
+  position: absolute;
+  z-index: 42;
+  top: -60px;
+  right: -60px;
+  width: 140px;
+  height: 140px;
+  pointer-events: none;
+  animation: hld-meteor 1100ms cubic-bezier(0.5, 0, 0.75, 0.4) both;
+}
+@keyframes hld-meteor {
+  0% { transform: translate(0, 0) rotate(0); opacity: 0; }
+  10% { opacity: 1; }
+  100% { transform: translate(-70vw, 60vh) rotate(-40deg); opacity: 0.9; }
+}
+
+/* ==========================================================================
+   Lobby, rules, gallery
+   ========================================================================== */
+
+.hld-lobby-dinos { display: flex; flex-direction: column; gap: 8px; }
+.hld-lobby-seat { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hld-lobby-seat > strong { min-width: 90px; }
+.hld-lobby-seat .hld-dino-card { width: 70px; padding: 2px 2px 4px; border-width: 2px; box-shadow: 2px 2px 0 var(--hld-ink, #2a1d16); }
+.hld-lobby-seat .hld-dino-art svg { width: 60px; }
+.hld-lobby-seat .hld-dino-name { font-size: 10px; }
+
+.hld-gallery { padding: 20px; border-radius: 20px; background: linear-gradient(180deg, #c3eeff, #9fdc75); color: #2a1d16; }
+.hld-gallery h3 { margin: 18px 0 10px; font-family: 'Luckiest Guy', var(--font-display); font-weight: 400; font-size: 24px; }
+.hld-gallery h3:first-child { margin-top: 0; }
+.hld-gallery-row { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+
+@media (max-width: 700px) {
+  .hld-stage { grid-template-columns: 1fr; justify-items: center; padding: 0 8px 10px; }
+  .hld-table { --cg-card-w: 80px; }
+  .hld-hand .hld-card-md { --w: 80px; }
+  .hld-picks { gap: 8px; }
+}

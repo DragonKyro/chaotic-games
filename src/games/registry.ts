@@ -3,9 +3,7 @@
 //   2. Add it below
 // No code outside the new folder needs to change.
 //
-// Every game here is currently an OUTLINE — types and design notes only, with
-// a reducer that throws. See src/games/_scaffold/ and each game's types.ts.
-// Exploding Kittens is first in line for a real implementation.
+// All six base games are implemented and playable.
 
 import type { AnyGameModule } from '@/core/module';
 import { explodingKittensModule } from './exploding-kittens/module';

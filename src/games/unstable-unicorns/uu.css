@@ -1,0 +1,402 @@
+/* ==========================================================================
+   Unstable Unicorns — "glitter-goth sleepover".
+   Plum-black velvet scattered with star glitter, holographic-foil card
+   frames, Shrikhand lettering, pastel unicorns with menace in their eyes.
+   The kit (src/ui/kit) lays the table out; this file themes it and draws the
+   cards, stables, piles and the Neigh stage.
+   ========================================================================== */
+
+@import '@fontsource/shrikhand/latin-400.css';
+
+.uu-table {
+  --cg-felt:
+    radial-gradient(rgba(255, 255, 255, 0.16) 0.8px, transparent 1.3px) 0 0 / 23px 23px,
+    radial-gradient(rgba(255, 170, 235, 0.12) 1px, transparent 1.5px) 11px 7px / 37px 37px,
+    radial-gradient(rgba(160, 230, 255, 0.1) 0.9px, transparent 1.4px) 5px 19px / 53px 53px,
+    radial-gradient(115% 80% at 50% 25%, #3e1553 0%, #220b30 52%, #12061a 100%);
+  --cg-surface: rgba(32, 11, 42, 0.88);
+  --cg-surface-2: #4a1d5e;
+  --cg-edge: #12061a;
+  --cg-ink: #12061a;
+  --cg-text: #fff0fb;
+  --cg-dim: #dcb6ea;
+  --cg-accent: #ff5fd2;
+  --cg-accent-ink: #1b0820;
+  --cg-danger: #ff4d6d;
+  --cg-good: #6cf2c2;
+  --cg-display: 'Shrikhand', 'Georgia', var(--font-display);
+  --cg-card-w: 100px;
+  --uu-ink: #1b0f24;
+}
+.uu-table .cg-dock-title { font-size: 21px; letter-spacing: 0.01em; }
+.uu-table .cg-log-title, .uu-table .cg-panel-head h4 { font-size: 14px; letter-spacing: 0.02em; }
+
+/* ==========================================================================
+   Cards
+   ========================================================================== */
+
+.uu-card {
+  --w: 100px;
+  --uu-frame: #ff5fd2;
+  --uu-frame2: #ffd0f4;
+  --uu-window: #3a1d5c;
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  width: var(--w);
+  aspect-ratio: 5 / 7;
+  padding: calc(var(--w) * 0.055);
+  padding-bottom: calc(var(--w) * 0.045);
+  border-radius: calc(var(--w) * 0.1);
+  border: 3px solid var(--uu-ink, #1b0f24);
+  background:
+    linear-gradient(140deg, var(--uu-frame) 0%, var(--uu-frame2) 20%, var(--uu-frame) 42%, color-mix(in srgb, var(--uu-frame) 55%, #fff) 68%, var(--uu-frame) 100%);
+  color: var(--uu-ink, #1b0f24);
+  box-shadow: 3px 3px 0 var(--uu-ink, #1b0f24);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+  overflow: hidden;
+  user-select: none;
+  transition: transform var(--dur-med) var(--ease-spring), box-shadow var(--dur-med) var(--ease-out), filter var(--dur-med);
+}
+button.uu-card { cursor: pointer; }
+/* Holographic sheen: parked off-card, sweeps across on hover. */
+.uu-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  /* Plain alpha, no blend mode: a blend mode per card forces a compositing pass per card. */
+  background: linear-gradient(115deg, transparent 36%, rgba(255, 255, 255, 0.34) 46%, rgba(255, 150, 240, 0.22) 51%, rgba(130, 255, 240, 0.22) 56%, transparent 66%);
+  background-size: 280% 100%;
+  background-position: 130% 0;
+  transition: background-position 800ms var(--ease-out);
+}
+.uu-card:hover::after, .uu-card.is-selected::after { background-position: -40% 0; }
+
+.uu-card-xs { --w: 30px; padding: 2px; border-width: 2px; box-shadow: 1.5px 1.5px 0 var(--uu-ink, #1b0f24); border-radius: 6px; }
+.uu-card-sm { --w: 72px; border-width: 2.5px; }
+.uu-card-md { --w: 100px; }
+.uu-card-lg { --w: 156px; }
+
+.uu-card-art {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: calc(var(--w) * 0.075);
+  border: 2px solid var(--uu-ink, #1b0f24);
+  background:
+    radial-gradient(rgba(255, 255, 255, 0.28) 0.7px, transparent 1.1px) 0 0 / 9px 9px,
+    radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--uu-window) 45%, #d9a0ff) 0%, var(--uu-window) 66%, color-mix(in srgb, var(--uu-window) 65%, #000) 100%);
+}
+.uu-card-xs .uu-card-art { border-width: 1.5px; border-radius: 4px; }
+.uu-card-art svg { display: block; width: 100%; height: 100%; }
+
+.uu-card-glyph {
+  position: absolute;
+  z-index: 2;
+  top: calc(var(--w) * 0.02);
+  left: calc(var(--w) * 0.02);
+  display: grid;
+  place-items: center;
+  width: calc(var(--w) * 0.24);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--uu-frame2);
+  border: 2px solid var(--uu-ink, #1b0f24);
+  box-shadow: 1px 1px 0 var(--uu-ink, #1b0f24);
+}
+.uu-card-glyph svg { width: 74%; height: 74%; }
+.uu-card-xs .uu-card-glyph, .uu-card-xs .uu-card-name { display: none; }
+
+.uu-card-name {
+  margin-top: calc(var(--w) * 0.04);
+  font-family: 'Shrikhand', Georgia, serif;
+  font-weight: 400;
+  font-size: calc(var(--w) * 0.112);
+  line-height: 1.02;
+  min-height: 1em;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.uu-card-lg .uu-card-art { flex: 0 0 50%; }
+.uu-card-type {
+  margin-top: 2px;
+  font-size: calc(var(--w) * 0.06);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+.uu-card-text {
+  margin-top: 3px;
+  font-size: calc(var(--w) * 0.066);
+  line-height: 1.24;
+  font-weight: 600;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.uu-card-foot {
+  position: absolute;
+  z-index: 3;
+  right: -4px;
+  top: calc(var(--w) * 0.3);
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--uu-ink, #1b0f24);
+  background: #ffe27a;
+  border: 2px solid var(--uu-ink, #1b0f24);
+  border-radius: 6px;
+  transform: rotate(6deg);
+}
+
+/* Downgrades are printed on grubby stock. */
+.uu-t-downgrade { background: repeating-linear-gradient(-45deg, var(--uu-frame) 0 6px, color-mix(in srgb, var(--uu-frame) 78%, #3f6b2a) 6px 12px); }
+.uu-t-instant .uu-card-name { color: #3a0612; }
+
+.uu-card.is-interactive:hover { transform: translateY(-5px) rotate(-1.5deg); box-shadow: 4px 7px 0 var(--uu-ink, #1b0f24); }
+.uu-card.is-selected {
+  transform: translateY(-18px);
+  box-shadow: 0 0 0 4px var(--cg-accent, #ff5fd2), 4px 8px 0 var(--uu-ink, #1b0f24), 0 0 24px 4px rgba(255, 95, 210, 0.55);
+}
+.uu-hand .uu-card.is-disabled { filter: saturate(0.5) brightness(0.72); }
+
+.uu-card.is-facedown { padding: 0; background: #1a0b24; }
+.uu-card.is-facedown .uu-back { display: block; width: 100%; height: 100%; }
+.uu-back-label {
+  position: absolute;
+  left: 50%;
+  bottom: 8%;
+  translate: -50% 0;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  border-radius: 999px;
+  background: #ffe27a;
+  border: 2px solid var(--uu-ink, #1b0f24);
+  white-space: nowrap;
+}
+
+.uu-card-preview { --w: 290px; padding: 16px; border-width: 4px; }
+.uu-card-preview .uu-card-name { font-size: 30px; }
+.uu-card-preview .uu-card-type { font-size: 14px; }
+.uu-card-preview .uu-card-text { font-size: 17px; -webkit-line-clamp: 9; }
+
+/* ==========================================================================
+   Board: piles · stage, and your own corral
+   ========================================================================== */
+
+.uu-board { display: flex; flex-direction: column; gap: 12px; }
+
+.uu-arena {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  border-radius: var(--cg-radius);
+  border: 2px dashed rgba(255, 95, 210, 0.22);
+  background: radial-gradient(55% 70% at 50% 50%, rgba(255, 95, 210, 0.13), transparent 72%);
+}
+.uu-piles { display: flex; gap: 14px; align-items: flex-end; }
+.uu-pile { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.uu-pile-label { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--cg-dim); }
+.uu-pile-label strong { color: var(--cg-text); font-size: 15px; }
+
+.uu-deck { position: relative; width: 64px; aspect-ratio: 5 / 7; }
+.uu-deck .uu-card { position: absolute; inset: 0; --w: 64px; }
+.uu-deck .uu-card:nth-child(1) { transform: translate(-6px, 6px) rotate(-4deg); }
+.uu-deck .uu-card:nth-child(2) { transform: translate(-3px, 3px) rotate(-2deg); }
+.uu-deck .uu-deck-top.is-drawn { animation: uu-draw 420ms var(--ease-out) both; }
+@keyframes uu-draw { 0% { transform: translate(0, -24px) rotate(8deg); opacity: 0.4; } 100% { transform: none; opacity: 1; } }
+.uu-count {
+  position: absolute;
+  z-index: 4;
+  right: -12px;
+  bottom: -10px;
+  display: grid;
+  place-items: center;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 5px;
+  font-family: var(--cg-display);
+  font-size: 15px;
+  border-radius: 50%;
+  color: var(--cg-accent-ink);
+  background: #ffe27a;
+  border: 3px solid var(--cg-ink);
+  box-shadow: 2px 2px 0 var(--cg-ink);
+}
+
+/* The Nursery: a lace basket of babies. */
+.uu-nursery { position: relative; width: 84px; height: 90px; display: flex; align-items: flex-end; justify-content: center; }
+.uu-nursery .uu-card { position: absolute; bottom: 26px; --w: 48px; }
+.uu-nursery .uu-card:nth-child(1) { transform: translateX(-16px) rotate(-14deg); }
+.uu-nursery .uu-card:nth-child(2) { transform: translateX(16px) rotate(12deg); }
+.uu-nursery .uu-card:nth-child(3) { transform: translateY(-6px); }
+.uu-basket { position: relative; z-index: 3; width: 84px; height: 40px; }
+
+.uu-discard { position: relative; width: 64px; aspect-ratio: 5 / 7; }
+.uu-discard > * { position: absolute; inset: 0; }
+.uu-discard .uu-card { --w: 64px; }
+.uu-discard > :nth-child(1) { transform: rotate(-8deg) translate(-5px, 3px); filter: brightness(0.7); }
+.uu-discard > .is-top { animation: uu-land 420ms var(--ease-spring) both; }
+@keyframes uu-land { 0% { transform: translate(-36px, -60px) rotate(-26deg) scale(1.12); opacity: 0; } 100% { transform: none; opacity: 1; } }
+.uu-empty {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 240, 251, 0.4);
+  border: 3px dashed rgba(255, 240, 251, 0.22);
+  border-radius: 10px;
+}
+
+.uu-stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 112px; text-align: center; }
+.uu-stage-cards .uu-card-md { --w: 76px; }
+.uu-stage-caption { font-size: 14px; color: var(--cg-dim); max-width: 40ch; }
+.uu-stage-caption strong { color: var(--cg-text); }
+.uu-stage-cards { position: relative; }
+.uu-stage-cards > .uu-card, .uu-stage-cards > .cg-inspect { animation: cg-pop 360ms var(--ease-spring) both; }
+.uu-neighs { position: absolute; inset: 0; pointer-events: none; }
+.uu-neighs > span { position: absolute; left: 50%; top: 50%; animation: uu-slap 420ms var(--ease-out) both; }
+@keyframes uu-slap {
+  0% { transform: translate(40px, -130px) rotate(40deg) scale(1.3); opacity: 0; }
+  100% { transform: translate(calc(-50% + var(--nx)), calc(-50% + var(--ny))) rotate(var(--nr)); opacity: 1; }
+}
+.uu-verdict {
+  padding: 1px 12px;
+  font-family: var(--cg-display);
+  font-size: 17px;
+  border-radius: 10px;
+  border: 3px solid currentColor;
+  transform: rotate(-4deg);
+}
+.uu-verdict.is-live { color: var(--cg-good); }
+.uu-verdict.is-neighed { color: var(--cg-danger); }
+.uu-verdict.is-super {
+  color: transparent;
+  border-color: #ffe27a;
+  background: linear-gradient(90deg, #ff5fd2, #ffe27a, #5ff2e6, #9a6bff);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+.uu-turn { font-family: var(--cg-display); font-size: 26px; line-height: 1.1; }
+.uu-turn span { color: var(--seat, var(--cg-accent)); }
+.uu-meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+
+/* A Stable is a corral: a pastel fence rail over the herd. */
+.uu-corral {
+  position: relative;
+  padding: 20px 12px 8px;
+  border-radius: var(--cg-radius);
+  background: linear-gradient(180deg, rgba(255, 95, 210, 0.08), rgba(0, 0, 0, 0.18));
+  border: 2px solid var(--cg-edge);
+}
+.uu-corral::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 7px;
+  height: 9px;
+  border-radius: 6px;
+  border: 2px solid var(--cg-ink);
+  background:
+    repeating-linear-gradient(90deg, transparent 0 34px, rgba(18, 6, 26, 0.55) 34px 37px),
+    linear-gradient(180deg, #ffc2ee, #c68cff);
+}
+.uu-corral.is-target { cursor: pointer; border: 2px dashed var(--cg-accent); }
+.uu-corral.is-target:hover { box-shadow: 0 0 0 3px rgba(255, 95, 210, 0.35); }
+.uu-corral.is-dest { border: 2px solid var(--cg-accent); box-shadow: 0 0 0 4px rgba(255, 95, 210, 0.35); }
+.uu-corral-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 4px; }
+.uu-corral-head .uu-chips { margin-left: auto; }
+.uu-corral .uu-card-sm { --w: 74px; }
+.uu-corral-head h4 { margin: 0; font-family: var(--cg-display); font-weight: 400; font-size: 17px; }
+.uu-corral-rows { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: flex-end; }
+.uu-herd { display: flex; flex-wrap: wrap; gap: 6px; min-height: 40px; align-items: flex-end; }
+.uu-herd > * { animation: cg-rise-in 360ms var(--ease-out) both; }
+.uu-herd-empty { font-size: 13px; color: var(--cg-dim); font-style: italic; padding: 10px 4px; }
+.uu-mods { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 14px; border-left: 2px dashed rgba(255, 240, 251, 0.2); }
+
+/* Progress to the win: a row of horns. */
+.uu-pips { display: inline-flex; gap: 2px; align-items: flex-end; }
+.uu-pips svg { width: 11px; height: 17px; display: block; }
+.uu-pips .is-on { filter: drop-shadow(0 0 3px rgba(255, 226, 122, 0.8)); }
+
+/* Opponents' plates: horns, a mini herd, visible hands. */
+.uu-plate-herd { display: flex; flex-wrap: nowrap; gap: 3px; margin-top: 5px; overflow: hidden; }
+.uu-plate-sub { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.uu-plate-sub .uu-pips svg { width: 8px; height: 13px; }
+.uu-table .cg-dock .uu-card-sm { --w: 58px; }
+.uu-plate-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.uu-plate-more { align-self: center; font-size: 11px; font-weight: 800; color: var(--cg-dim); }
+
+/* ==========================================================================
+   Hand + prompts
+   ========================================================================== */
+
+.uu-hand-area {
+  padding: 8px 14px 4px;
+  border-radius: var(--cg-radius);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.1));
+  border: 2px solid var(--cg-edge);
+}
+.uu-hand-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; }
+.uu-hand-head h4 { margin: 0; font-family: var(--cg-display); font-weight: 400; font-size: 18px; }
+.uu-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.uu-hand { min-height: 160px; }
+.uu-hand .cg-fan { padding-top: 20px; padding-bottom: 2px; }
+.uu-hand-empty { padding: 26px; text-align: center; color: var(--cg-dim); font-style: italic; }
+
+.uu-choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; align-items: flex-end; }
+.uu-choices.is-scroll { flex-wrap: nowrap; overflow-x: auto; padding: 12px 4px 6px; }
+.uu-owner-group { display: flex; flex-direction: column; gap: 4px; }
+.uu-owner-group > span { font-size: 12px; font-weight: 800; color: var(--cg-dim); }
+.uu-owner-group > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.uu-oracle-rest { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; }
+
+.uu-holo-text {
+  background: linear-gradient(90deg, #ff5fd2, #ffe27a, #5ff2e6, #9a6bff, #ff5fd2);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 1.5px #12061a;
+}
+.uu-table .cg-fx-stamp:has(.uu-holo-text) { border-color: #ffe27a; text-shadow: none; }
+.uu-stamp-hoof { display: inline-flex; align-items: center; gap: 10px; }
+.uu-stamp-hoof svg { width: 0.9em; height: 0.9em; }
+
+/* ==========================================================================
+   Gallery, lobby
+   ========================================================================== */
+
+.uu-gallery { display: flex; flex-direction: column; gap: 18px; padding: 20px; border-radius: 20px; background: #1d0a28; }
+.uu-gallery h3 { font-family: 'Shrikhand', Georgia, serif; font-weight: 400; margin: 0 0 8px; color: #ffd0f4; }
+.uu-gallery-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.uu-bulk { display: flex; gap: 6px; justify-content: flex-end; margin-bottom: -6px; }
+
+@media (max-width: 700px) {
+  /* piles and discard share the top row; the stage goes under them */
+  .uu-arena { grid-template-columns: 1fr auto; padding: 10px; gap: 10px; }
+  .uu-arena > .uu-stage { grid-column: 1 / -1; order: 3; }
+  .uu-piles { justify-content: flex-start; }
+  .uu-stage { min-height: 0; }
+  .uu-table { --cg-card-w: 80px; }
+  .uu-hand .uu-card-md { --w: 80px; }
+  .uu-corral .uu-card-sm { --w: 58px; }
+}

@@ -23,10 +23,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # `npm install` (NOT `npm ci`) — the committed lockfile carries DRW
-      # Artifactory URLs from Kyle's local environment; CI uses public
-      # npmjs.org via the project `.npmrc` and re-resolves the tree.
-      - run: npm install
+      # Every `resolved` URL in package-lock.json is on registry.npmjs.org
+      # (`npm run fix-lock` rewrites the local mirror's URLs after an install;
+      # scripts/lockfile.test.ts fails if one slips through), so `npm ci`
+      # installs exactly the locked tree.
+      - run: npm ci
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
