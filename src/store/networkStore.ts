@@ -52,7 +52,7 @@ import { useGameStore } from './gameStore';
 import { ActionSync } from './actionSync';
 
 /** The build this page runs (rooms record the build that made them). */
-export const APP_BUILD = typeof __APP_BUILD__ === 'string' ? __APP_BUILD__ : 'dev';
+const APP_BUILD = typeof __APP_BUILD__ === 'string' ? __APP_BUILD__ : 'dev';
 const SYSTEM_NAME = 'System';
 const MAX_NAME = 24;
 const UNREACHABLE_TEXT =
@@ -67,7 +67,7 @@ export interface JoinFailure {
 }
 
 /** FNV-1a over the state's JSON: devices compare it to know they built the same opening. */
-export function stateChecksum(state: unknown): string {
+function stateChecksum(state: unknown): string {
   const json = JSON.stringify(state);
   let h = 0x811c9dc5;
   for (let i = 0; i < json.length; i++) {
@@ -850,11 +850,6 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
     dismissNotice: () => set({ notice: null }),
   };
 });
-
-/** In a room (connecting, lobby, playing, or an error screen for one). */
-export function isOnline(connection: ConnectionState): boolean {
-  return connection !== 'disconnected';
-}
 
 /** Human seats of the current match whose owner isn't connected right now. */
 export function offlineSeats(seats: Seat[], onlineUuids: Set<string>): Seat[] {

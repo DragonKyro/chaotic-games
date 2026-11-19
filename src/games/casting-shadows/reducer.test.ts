@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { Seat } from '@/core/types';
 import {
   CS_CHARACTERS,
   CS_COMPANION_DEFS,
@@ -21,16 +20,7 @@ import { chooseAIAction } from './ai';
 import { castingShadowsModule } from './module';
 import { applyAction, createInitialState } from './reducer';
 import type { CsConfig } from './types';
-
-function makeSeats(n: number): Seat[] {
-  return Array.from({ length: n }, (_, i) => ({
-    id: `p${i + 1}`,
-    name: `Player ${i + 1}`,
-    color: '#000',
-    isAI: true,
-    isLocal: false,
-  }));
-}
+import { makeSeats, playOut } from '@/core/playout';
 
 const DEFAULT_CFG: CsConfig = { expansions: [], characterByPlayer: {} };
 
@@ -302,18 +292,13 @@ describe('Casting Shadows — mechanics & player decisions', () => {
   it('plays full AI-vs-AI games across 2, 3, and 4 players to completion', () => {
     for (const playerCount of [2, 3, 4]) {
       for (let seed = 1; seed <= 3; seed++) {
-        let s = createInitialState(DEFAULT_CFG, seed * 37, makeSeats(playerCount));
-        let steps = 0;
-        while (s.phase !== 'gameOver' && steps < 2500) {
-          const active = s.activePlayerId;
-          expect(active).toBeTruthy();
-          const action = chooseAIAction(s, active!);
-          expect(action).toBeTruthy();
-          s = applyAction(s, action!);
-          steps++;
-        }
+        const { state: s, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState(DEFAULT_CFG, seed * 37, makeSeats(playerCount)), 2500);
+        expect(stuck).toBe(false);
         expect(s.phase).toBe('gameOver');
         expect(s.winnerId).toBeTruthy();
+        // Scored by players outlasted: one distinct place each, the winner on top.
+        expect([...Object.values(s.finalScores!)].sort((x, y) => x - y)).toEqual([...Array(playerCount).keys()]);
+        expect(s.finalScores![s.winnerId!]).toBe(playerCount - 1);
       }
     }
   });
@@ -325,16 +310,8 @@ describe('Casting Shadows — mechanics & player decisions', () => {
       { cfg: { expansions: ['ice-storm', 'molten-rock'], characterByPlayer: {} }, players: 6 },
     ];
     for (const { cfg, players } of configs) {
-      let s = createInitialState(cfg, 77, makeSeats(players));
-      let steps = 0;
-      while (s.phase !== 'gameOver' && steps < 3500) {
-        const active = s.activePlayerId;
-        expect(active).toBeTruthy();
-        const action = chooseAIAction(s, active!);
-        expect(action).toBeTruthy();
-        s = applyAction(s, action!);
-        steps++;
-      }
+      const { state: s, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState(cfg, 77, makeSeats(players)), 3500);
+      expect(stuck).toBe(false);
       expect(s.phase).toBe('gameOver');
       expect(s.winnerId).toBeTruthy();
     }

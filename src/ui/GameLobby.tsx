@@ -11,7 +11,7 @@ import { SEAT_COLORS } from '@/core/seatColors';
 import { useGameStore } from '@/store/gameStore';
 import { useNetworkStore, warmUpNetwork } from '@/store/networkStore';
 import { getOrCreateUuid } from '@/net/identity';
-import { AiLevelSelect, ColorSwatchPicker, RulesModal } from './lobbyParts';
+import { AiLevelSelect, ColorSwatchPicker, LobbyBanner, RulesModal } from './lobbyParts';
 
 interface Props {
   module: AnyGameModule;
@@ -29,7 +29,8 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
   // Seat 0 defaults to the human local player; seats added beyond default to
   // AI. Returning from a match re-seeds from that match's lineup instead.
   const [seats, setSeats] = useState<Seat[]>(() => initial?.seats ?? [
-    { id: localUuid, name: 'You', color: SEAT_COLORS[0]!, isAI: false, isLocal: true },
+    // Logs speak in the third person ("Ash drew a card"), so not "You".
+    { id: localUuid, name: savedName.trim() || 'Player 1', color: SEAT_COLORS[0]!, isAI: false, isLocal: true },
     { id: 'seat-1', name: 'Player 2', color: SEAT_COLORS[1]!, isAI: true, isLocal: true },
   ]);
   const [config, setConfig] = useState<unknown>(() =>
@@ -111,11 +112,10 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
       </div>
 
       <section className="lobby-panel">
-        <h3>{module.name}</h3>
-        {module.tagline && <p className="lobby-hint" style={{ marginTop: -6, marginBottom: 12 }}>{module.tagline}</p>}
+        <LobbyBanner module={module} />
 
         {/* ----- seats ----- */}
-        <h4 className="lobby-section-h">Seats</h4>
+        <h4 className="lobby-section-h">Seats · {seats.length}</h4>
         <div className="seat-list">
           {seats.map((s) => (
             <div key={s.id} className="seat-row">
@@ -129,7 +129,7 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
                 value={s.name}
                 onChange={(e) => updateSeat(s.id, { name: e.target.value })}
               />
-              <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <label className="seat-ai-toggle">
                 <input
                   type="checkbox"
                   checked={s.isAI}
@@ -139,18 +139,19 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
               </label>
               <AiLevelSelect module={module} seat={s} onChange={(aiLevel) => updateSeat(s.id, { aiLevel })} />
               <button
-                className="secondary"
+                className="secondary tiny"
+                aria-label={`Remove ${s.name}`}
                 onClick={() => removeSeat(s.id)}
                 disabled={seats.length <= module.minPlayers}
-              >×</button>
+              >✕</button>
             </div>
           ))}
         </div>
         <button
-          className="secondary"
+          className="secondary tiny"
           onClick={addSeat}
           disabled={seats.length >= module.maxPlayers}
-          style={{ marginTop: 8 }}
+          style={{ marginTop: 10 }}
         >
           + Add seat
         </button>
@@ -164,7 +165,7 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
         )}
 
         {configErrors.length > 0 && (
-          <div className="online-error" style={{ marginTop: 12 }}>
+          <div className="config-errors">
             {configErrors.map((err, i) => (
               <div key={i}>⚠ {err}</div>
             ))}
@@ -172,10 +173,11 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
         )}
 
         {/* ----- launch ----- */}
-        <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={startLocal} disabled={!canStart || preparing}>
-            {preparing ? 'Loading AI…' : 'Start (hot-seat)'}
+        <div className="lobby-actions">
+          <button className="start" onClick={startLocal} disabled={!canStart || preparing}>
+            {preparing ? 'Loading AI…' : 'Deal me in ▶'}
           </button>
+          <span className="lobby-hint" style={{ margin: 0 }}>Hot-seat and AI seats on this device.</span>
         </div>
 
         {/* ----- host online ----- */}

@@ -1,8 +1,8 @@
 // Unstable Unicorns — types for the implemented 2nd Edition Base Game.
 
 import type { GameStateShape } from '@/core/module';
-import type { PlayerId } from '@/core/types';
-import type { ExpansionMeta, ScaffoldConfig } from '../_scaffold';
+import type { ExpansionConfig, ExpansionMeta, PlayerId } from '@/core/types';
+import type { LogEntry } from '@/core/state';
 
 // ============================================================================
 // Cards
@@ -16,12 +16,6 @@ export type UuCardType =
   | 'instant'
   | 'upgrade'
   | 'downgrade';
-
-export const UNICORN_TYPES: readonly UuCardType[] = [
-  'babyUnicorn',
-  'basicUnicorn',
-  'magicalUnicorn',
-];
 
 export function isUnicornType(t: UuCardType): boolean {
   return t === 'babyUnicorn' || t === 'basicUnicorn' || t === 'magicalUnicorn';
@@ -384,13 +378,6 @@ export type UuPrompt =
       sourceType: 'magic' | 'unicorn' | 'upgrade' | 'downgrade';
     };
 
-export interface UuLogEntry {
-  seq: number;
-  byPlayerId: PlayerId | null;
-  text: string;
-  tone: 'normal' | 'danger' | 'good';
-}
-
 // ============================================================================
 // Config
 // ============================================================================
@@ -466,7 +453,7 @@ export const UU_EXPANSIONS: readonly ExpansionMeta[] = [
   },
 ];
 
-export interface UuConfig extends ScaffoldConfig {
+export interface UuConfig extends ExpansionConfig {
   expansions: UuExpansionId[];
   edition: UuEdition;
 }
@@ -512,7 +499,7 @@ export interface UuState extends GameStateShape {
   unicornsToWin: number;
   winnerId: PlayerId | null;
 
-  log: UuLogEntry[];
+  log: LogEntry[];
   logSeq: number;
 
   config: UuConfig;

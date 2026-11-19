@@ -9,7 +9,7 @@ import type { GameStateShape, GameUiBundle } from '@/core/module';
 import { GAMES, getGameById } from '@/games/registry';
 import { lobbyStartProblem, useNetworkStore } from '@/store/networkStore';
 import { roomLink } from '@/net/roomLink';
-import { AiLevelSelect, ChatInput, ColorSwatchPicker, NameInput, RulesModal } from './lobbyParts';
+import { AiLevelSelect, ChatInput, ColorSwatchPicker, LobbyBanner, NameInput, RulesModal } from './lobbyParts';
 
 const ONLINE_GAMES = GAMES.filter((g) => g.onlineSupported !== false);
 
@@ -93,7 +93,7 @@ export function OnlineLobby() {
       </div>
 
       <section className="lobby-panel">
-        <div className="online-lobby-head">
+        <LobbyBanner module={module}>
           {isHost ? (
             <select
               className="online-game-select"
@@ -106,6 +106,8 @@ export function OnlineLobby() {
           ) : (
             <h3>{module.name}</h3>
           )}
+        </LobbyBanner>
+        <div className="online-lobby-head">
           {roomCode && (
             <div className="online-room">
               <span className="online-label">Room</span>
@@ -183,9 +185,9 @@ export function OnlineLobby() {
         )}
 
         {/* ----- start ----- */}
-        <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div className="lobby-actions">
           {isHost ? (
-            <button onClick={start} disabled={!!problem || starting}>
+            <button className="start" onClick={start} disabled={!!problem || starting}>
               {starting ? 'Starting…' : 'Start match'}
             </button>
           ) : (

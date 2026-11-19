@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { Seat } from '@/core/types';
 import {
   DM_AGE_DEFS,
   DM_CATASTROPHE_DEFS,
@@ -22,16 +21,7 @@ import {
 } from './reducer';
 import { DM_EXPANSIONS } from './types';
 import type { DmConfig, DmTraitCard } from './types';
-
-function makeSeats(n: number): Seat[] {
-  return Array.from({ length: n }, (_, i) => ({
-    id: `p${i + 1}`,
-    name: `Player ${i + 1}`,
-    color: '#000',
-    isAI: true,
-    isLocal: false,
-  }));
-}
+import { makeSeats, playOut } from '@/core/playout';
 
 const DEFAULT_CFG: DmConfig = { expansions: [] };
 const ALL_EXPANSIONS_CFG: DmConfig = {
@@ -405,16 +395,8 @@ describe('Doomlings — mechanics & scoring', () => {
   it('plays full AI-vs-AI games across 2, 3, and 4 players through all 3 Catastrophes to World\'s End', () => {
     for (const playerCount of [2, 3, 4]) {
       for (let seed = 1; seed <= 4; seed++) {
-        let s = createInitialState(DEFAULT_CFG, seed * 43, makeSeats(playerCount));
-        let steps = 0;
-        while (s.phase !== 'gameOver' && steps < 1500) {
-          const active = s.activePlayerId;
-          expect(active).toBeTruthy();
-          const action = chooseAIAction(s, active!);
-          expect(action).toBeTruthy();
-          s = applyAction(s, action!);
-          steps++;
-        }
+        const { state: s, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState(DEFAULT_CFG, seed * 43, makeSeats(playerCount)), 1500);
+        expect(stuck).toBe(false);
         expect(s.phase).toBe('gameOver');
         expect(s.catastrophesSeen).toBe(3);
         expect(s.winnerId).toBeTruthy();
@@ -431,16 +413,8 @@ describe('Doomlings — mechanics & scoring', () => {
 
     for (let i = 0; i < configs.length; i++) {
       const cfg = configs[i]!;
-      let s = createInitialState(cfg, (i + 1) * 71, makeSeats(3));
-      let steps = 0;
-      while (s.phase !== 'gameOver' && steps < 1500) {
-        const active = s.activePlayerId;
-        expect(active).toBeTruthy();
-        const action = chooseAIAction(s, active!);
-        expect(action).toBeTruthy();
-        s = applyAction(s, action!);
-        steps++;
-      }
+      const { state: s, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState(cfg, (i + 1) * 71, makeSeats(3)), 1500);
+      expect(stuck).toBe(false);
       expect(s.phase).toBe('gameOver');
       expect(s.catastrophesSeen).toBe(3);
       expect(s.winnerId).toBeTruthy();

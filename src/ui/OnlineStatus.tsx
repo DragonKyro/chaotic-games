@@ -54,7 +54,11 @@ export function JoinRoomBox({ initialCode }: { initialCode?: string | null }) {
         />
         <button className="secondary" type="submit" disabled={!canJoin}>Join</button>
       </div>
-      <p className="lobby-hint" style={{ margin: '8px 0 0' }}>To host, pick a game below and choose “Host online”.</p>
+      <ol className="join-steps">
+        <li><strong>Host:</strong> pick a game below, then “Host online”.</li>
+        <li><strong>Share:</strong> send friends the room code or invite link.</li>
+        <li><strong>Play:</strong> everyone joins from their own device. No accounts.</li>
+      </ol>
     </form>
   );
 }
@@ -84,6 +88,7 @@ export function OnlineStatusCard() {
   return (
     <div className="lobby-single">
       <section className="lobby-panel online-status">
+        <div className="cg-spinner" />
         <h3>{role === 'host' && !roomCode ? 'Opening a room…' : `Joining room ${roomCode ?? ''}…`}</h3>
         <p className="lobby-hint">Connecting to the game server.</p>
         <button className="secondary" onClick={() => net().leaveRoom()}>Cancel</button>

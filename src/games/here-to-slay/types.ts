@@ -1,8 +1,8 @@
 // Here to Slay — types for the implemented Base Game.
 
 import type { GameStateShape } from '@/core/module';
-import type { PlayerId } from '@/core/types';
-import type { ExpansionMeta, ScaffoldConfig } from '../_scaffold';
+import type { ExpansionConfig, ExpansionMeta, PlayerId } from '@/core/types';
+import type { LogEntry } from '@/core/state';
 
 // ============================================================================
 // Classes & Cards
@@ -19,28 +19,6 @@ export type HtsBaseClass =
   | 'druid'
   | 'berserker'
   | 'necromancer';
-
-export const HTS_BASE_CLASSES: readonly HtsBaseClass[] = [
-  'fighter',
-  'bard',
-  'guardian',
-  'ranger',
-  'thief',
-  'wizard',
-];
-
-export const HTS_ALL_CLASSES: readonly HtsBaseClass[] = [
-  'fighter',
-  'bard',
-  'guardian',
-  'ranger',
-  'thief',
-  'wizard',
-  'warrior',
-  'druid',
-  'berserker',
-  'necromancer',
-];
 
 export type HtsCardType =
   | 'partyLeader'
@@ -229,13 +207,6 @@ export type HtsPrompt =
       heroCardId: number;
     };
 
-export interface HtsLogEntry {
-  seq: number;
-  byPlayerId: PlayerId | null;
-  text: string;
-  tone: 'normal' | 'danger' | 'good';
-}
-
 // ============================================================================
 // Config
 // ============================================================================
@@ -266,7 +237,7 @@ export const HTS_EXPANSIONS: readonly ExpansionMeta[] = [
   },
 ];
 
-export interface HtsConfig extends ScaffoldConfig {
+export interface HtsConfig extends ExpansionConfig {
   expansions: HtsExpansionId[];
   monstersToWin: number;
   /** Number of distinct classes needed in a Party to win (defaults to 7 with class expansions, 6 in base game). */
@@ -326,7 +297,7 @@ export interface HtsState extends GameStateShape {
   promptQueue: HtsPrompt[];
 
   winnerId: PlayerId | null;
-  log: HtsLogEntry[];
+  log: LogEntry[];
   logSeq: number;
 
   config: HtsConfig;

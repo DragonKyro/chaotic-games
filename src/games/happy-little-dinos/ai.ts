@@ -6,9 +6,9 @@ import {
   canPlayScoringInstantCard,
   computeRoundScores,
   handOf,
-  livePlayerIds,
 } from './reducer';
 import type { HldAction, HldState } from './types';
+import { livePlayerIds } from '@/core/state';
 
 export function chooseAIAction(state: HldState, playerId: PlayerId): HldAction | null {
   if (state.phase === 'gameOver') return null;

@@ -30,13 +30,11 @@ import {
   canHoldWithStreaking,
   drawDanger,
   findCloneTargetKind,
-  isLive,
-  kittensInDeck,
   knownTopCards,
-  livePlayerIds,
   playableSingles,
 } from './reducer';
 import type { EkAction, EkBaseCardKind, EkCard, EkState } from './types';
+import { isLive, livePlayerIds } from '@/core/state';
 
 // ============================================================================
 // Tuning
@@ -553,6 +551,3 @@ function decideDigDeeper(s: EkState, me: PlayerId): EkAction | null {
   const pick = bestCard(safe) ?? options[0]!;
   return { type: 'pickDigDeeper', playerId: me, cardId: pick.id };
 }
-
-/** Exposed for tests: how the AI rates the current draw. */
-export const aiInternals = { SCARY, DIRE, kittensInDeck, keepValue };

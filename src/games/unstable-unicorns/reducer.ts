@@ -1,6 +1,6 @@
 // Unstable Unicorns — pure deterministic reducer for the 2nd Edition Base Game.
 
-import { rngInt, shuffle } from '@/core/rng';
+import { createRng, rngInt, shuffle } from '@/core/rng';
 import type { PlayerId, Seat } from '@/core/types';
 import { dealUuSetup, isFlyerKind, isNarwhalCard, isNeighCard } from './cards';
 import { isUnicornType } from './types';
@@ -12,8 +12,8 @@ import type {
   UuStable,
   UuState,
 } from './types';
+import { cloneState, pushLog, seatName } from '@/core/state';
 
-const LOG_CAP = 60;
 const HAND_LIMIT = 7;
 
 // ============================================================================
@@ -21,7 +21,7 @@ const HAND_LIMIT = 7;
 // ============================================================================
 
 export function createInitialState(config: UuConfig, seed: number, seats: Seat[]): UuState {
-  const rngState = { seed: seed >>> 0 };
+  const rngState = createRng(seed);
   const first = seats[0];
   if (!first) throw new Error('Unstable Unicorns needs at least one seat');
 
@@ -78,21 +78,6 @@ export function createInitialState(config: UuConfig, seed: number, seats: Seat[]
 // Basic helpers & continuous modifiers (computed on read, never cached)
 // ============================================================================
 
-function clone(state: UuState): UuState {
-  return JSON.parse(JSON.stringify(state)) as UuState;
-}
-
-function pushLog(s: UuState, byPlayerId: PlayerId | null, text: string, tone: 'normal' | 'danger' | 'good') {
-  s.logSeq += 1;
-  s.log.push({ seq: s.logSeq, byPlayerId, text, tone });
-  if (s.log.length > LOG_CAP) s.log = s.log.slice(-LOG_CAP);
-}
-
-export function seatName(s: UuState, id: PlayerId | null): string {
-  if (!id) return 'Someone';
-  return s.seats.find((x) => x.id === id)?.name ?? 'Someone';
-}
-
 export function stableOf(s: UuState, id: PlayerId): UuStable {
   const st = s.stables[id];
   if (!st) throw new Error(`unknown stable ${id}`);
@@ -111,7 +96,7 @@ export function hasDragonsBlessing(s: UuState, playerId: PlayerId): boolean {
 }
 
 /** Dragon's Curse Downgrade: "Effects of your Upgrade cards do not affect you." (Overridden by Dragon's Blessing) */
-export function hasDragonsCurse(s: UuState, playerId: PlayerId): boolean {
+function hasDragonsCurse(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'dragons-curse');
 }
@@ -126,12 +111,12 @@ export function hasPandamonium(s: UuState, playerId: PlayerId): boolean {
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'pandamonium');
 }
 
-export function hasRainbowAura(s: UuState, playerId: PlayerId): boolean {
+function hasRainbowAura(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsCurse(s, playerId)) return false;
   return stableOf(s, playerId).upgrades.some((c) => c.kind === 'rainbow-aura' || c.kind === 'prismatic-shield');
 }
 
-export function hasPrismaticShield(s: UuState, playerId: PlayerId): boolean {
+function hasPrismaticShield(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsCurse(s, playerId)) return false;
   return stableOf(s, playerId).upgrades.some((c) => c.kind === 'prismatic-shield');
 }
@@ -141,12 +126,12 @@ export function hasBrokenStable(s: UuState, playerId: PlayerId): boolean {
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'broken-stable');
 }
 
-export function hasSlowdown(s: UuState, playerId: PlayerId): boolean {
+function hasSlowdown(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'slowdown' || c.kind === 'the-black-spot');
 }
 
-export function hasYay(s: UuState, playerId: PlayerId): boolean {
+function hasYay(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsCurse(s, playerId)) return false;
   return stableOf(s, playerId).upgrades.some((c) => c.kind === 'yay');
 }
@@ -156,47 +141,47 @@ export function hasNannyCam(s: UuState, playerId: PlayerId): boolean {
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'nanny-cam');
 }
 
-export function hasBarbedWire(s: UuState, playerId: PlayerId): boolean {
+function hasBarbedWire(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'barbed-wire');
 }
 
-export function hasTinyStable(s: UuState, playerId: PlayerId): boolean {
+function hasTinyStable(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'tiny-stable');
 }
 
-export function hasDragonSkies(s: UuState, playerId: PlayerId): boolean {
+function hasDragonSkies(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'dragon-skies');
 }
 
-export function hasHex(s: UuState, playerId: PlayerId): boolean {
+function hasHex(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'hex');
 }
 
-export function hasStageFright(s: UuState, playerId: PlayerId): boolean {
+function hasStageFright(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'stage-fright');
 }
 
-export function hasBallAndChain(s: UuState, playerId: PlayerId): boolean {
+function hasBallAndChain(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsBlessing(s, playerId)) return false;
   return stableOf(s, playerId).downgrades.some((c) => c.kind === 'ball-and-chain');
 }
 
-export function hasUglySweater(s: UuState, playerId: PlayerId): boolean {
+function hasUglySweater(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsCurse(s, playerId)) return false;
   return stableOf(s, playerId).upgrades.some((c) => c.kind === 'ugly-holiday-sweater');
 }
 
-export function hasRoyalHooves(s: UuState, playerId: PlayerId): boolean {
+function hasRoyalHooves(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsCurse(s, playerId)) return false;
   return stableOf(s, playerId).upgrades.some((c) => c.kind === 'royal-hooves');
 }
 
-export function hasLeatherHarness(s: UuState, playerId: PlayerId): boolean {
+function hasLeatherHarness(s: UuState, playerId: PlayerId): boolean {
   if (hasDragonsCurse(s, playerId)) return false;
   return stableOf(s, playerId).upgrades.some((c) => c.kind === 'leather-harness');
 }
@@ -264,21 +249,13 @@ export function canPlayNeigh(s: UuState, playerId: PlayerId): boolean {
   return handOf(s, playerId).some((c) => isNeighCard(c));
 }
 
-export function allCardsInStable(st: UuStable): UuCard[] {
+function allCardsInStable(st: UuStable): UuCard[] {
   return [...st.unicorns, ...st.upgrades, ...st.downgrades];
 }
 
 export function findCardInStable(s: UuState, playerId: PlayerId, cardId: number): UuCard | null {
   const st = stableOf(s, playerId);
   return allCardsInStable(st).find((c) => c.id === cardId) ?? null;
-}
-
-export function findStableOwnerOfCard(s: UuState, cardId: number): { ownerId: PlayerId; card: UuCard } | null {
-  for (const seat of s.seats) {
-    const found = findCardInStable(s, seat.id, cardId);
-    if (found) return { ownerId: seat.id, card: found };
-  }
-  return null;
 }
 
 /**
@@ -3231,7 +3208,7 @@ function handleResolvePrompt(s: UuState, a: Extract<UuAction, { type: 'resolvePr
 
 export function applyAction(state: UuState, action: UuAction): UuState {
   if (state.phase === 'gameOver') throw new Error('the game is over');
-  const s = clone(state);
+  const s = cloneState(state);
 
   switch (action.type) {
     case 'drawForTurn':

@@ -1455,7 +1455,7 @@ export const UU_TRAVEL_EDITION_DEFS: readonly UuCardDef[] = [
   },
 ];
 
-export const FLYER_KINDS: readonly UuCardKind[] = [
+const FLYER_KINDS: readonly UuCardKind[] = [
   'annoying-flying-unicorn',
   'greedy-flying-unicorn',
   'magical-flying-unicorn',

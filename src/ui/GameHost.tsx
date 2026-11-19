@@ -225,9 +225,9 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
   }
 
   return (
-    <div>
+    <div className="game-host" style={module.accent ? ({ '--host-accent': module.accent } as React.CSSProperties) : undefined}>
       <div className="game-host-bar">
-        <strong className="game-host-title">{module.name}</strong>
+        <strong className="game-host-title"><span className="host-dot" />{module.name}</strong>
         <div className="game-host-actions">
           {online && roomCode && (
             <span className="net-pill" title={role === 'spectator' ? 'Watching: you have no seat in this match' : undefined}>
@@ -273,7 +273,7 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
       {GameView ? (
         <GameView state={state} localPlayerId={effectiveLocalPlayerId} dispatch={effectiveDispatch} />
       ) : (
-        <p>Loading…</p>
+        <div className="game-host-loading"><div className="cg-spinner" /></div>
       )}
       {online && <ChatPanel />}
       {rulesOpen && RulesComponent && (
@@ -281,7 +281,7 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
       )}
       {passSeat && (
         <div className="hotseat-pass-backdrop">
-          <div className="hotseat-pass-card">
+          <div className="hotseat-pass-card" style={{ '--pass-color': passSeat.color } as React.CSSProperties}>
             <div className="hotseat-pass-eyebrow">Pass the device</div>
             <div className="hotseat-pass-name" style={{ color: passSeat.color }}>
               {passSeat.name}

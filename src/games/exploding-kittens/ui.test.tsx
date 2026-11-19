@@ -205,8 +205,8 @@ describe('view survives a full AI game', () => {
 
     expect(explodingKittensModule.maxPlayers).toBe(10);
     expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: ['imploding-kittens'] })).toEqual([]);
-    expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: [], playerCount: 6 }).length).toBeGreaterThan(0);
-    expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: ['imploding-kittens'], playerCount: 6 })).toEqual([]);
-    expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: ['party-pack'], playerCount: 9 })).toEqual([]);
+    expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: [] }, seats(6)).length).toBeGreaterThan(0);
+    expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: ['imploding-kittens'] }, seats(6))).toEqual([]);
+    expect(explodingKittensModule.validateConfig({ ...CONFIG, expansions: ['party-pack'] }, seats(9))).toEqual([]);
   });
 });

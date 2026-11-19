@@ -1,6 +1,6 @@
 // Pieces shared by the local lobby (GameLobby) and the online one (OnlineLobby).
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { SEAT_COLORS, SEAT_COLOR_LABELS } from '@/core/seatColors';
 import type { AnyGameModule } from '@/core/module';
 import type { Seat } from '@/core/types';
@@ -20,54 +20,28 @@ export function ColorSwatchPicker({ value, takenBy, disabled, onChange }: {
     <span style={{ position: 'relative', display: 'inline-flex' }}>
       <button
         type="button"
-        className="swatch swatch-button"
+        className="swatch-button"
         onClick={() => !disabled && setOpen((v) => !v)}
         disabled={disabled}
         title={SEAT_COLOR_LABELS[value] ?? value}
         aria-label={`Seat color: ${SEAT_COLOR_LABELS[value] ?? value}`}
-        style={{
-          background: value,
-          width: 18, height: 18, borderRadius: 3, border: '1px solid rgba(0,0,0,0.25)',
-          padding: 0, cursor: disabled ? 'default' : 'pointer',
-          opacity: 1,
-        }}
+        style={{ background: value }}
       />
       {open && !disabled && (
         <>
-          <div
-            onClick={() => setOpen(false)}
-            style={{ position: 'fixed', inset: 0, zIndex: 10 }}
-          />
-          <div
-            style={{
-              position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 11,
-              background: 'var(--bg-elevated, #1e1c2e)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              borderRadius: 6,
-              padding: 6,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-              display: 'grid',
-              gridTemplateColumns: 'repeat(7, 22px)',
-              gap: 4,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 29 }} />
+          <div className="swatch-pop" onClick={(e) => e.stopPropagation()}>
             {SEAT_COLORS.map((c) => {
               const taken = takenBy[c];
               return (
                 <button
                   key={c}
                   type="button"
+                  className={c === value ? 'is-current' : undefined}
                   onClick={() => { onChange(c); setOpen(false); }}
                   title={taken ? `${SEAT_COLOR_LABELS[c]} — taken by ${taken}` : SEAT_COLOR_LABELS[c]}
                   disabled={!!taken}
-                  style={{
-                    width: 22, height: 22, borderRadius: 3, padding: 0,
-                    background: c,
-                    border: c === value ? '2px solid #fff' : '1px solid rgba(0,0,0,0.25)',
-                    cursor: taken ? 'not-allowed' : 'pointer',
-                    opacity: taken ? 0.3 : 1,
-                  }}
+                  style={{ background: c }}
                 />
               );
             })}
@@ -127,11 +101,8 @@ export function NameInput({ value, onCommit, disabled, className, maxLength = 24
 export function ChatInput({ onSend }: { onSend: (s: string) => void }) {
   const [v, setV] = useState('');
   return (
-    <form
-      onSubmit={(e) => { e.preventDefault(); if (v.trim()) { onSend(v); setV(''); } }}
-      style={{ display: 'flex', gap: 6, marginTop: 4 }}
-    >
-      <input value={v} onChange={(e) => setV(e.target.value)} placeholder="Chat…" maxLength={200} style={{ flex: 1 }} />
+    <form className="chat-form" onSubmit={(e) => { e.preventDefault(); if (v.trim()) { onSend(v); setV(''); } }}>
+      <input value={v} onChange={(e) => setV(e.target.value)} placeholder="Chat…" maxLength={200} />
       <button type="submit" disabled={!v.trim()}>Send</button>
     </form>
   );
@@ -142,8 +113,8 @@ export function RulesModal({ title, Rules, onClose }: { title: string; Rules: Re
     <div className="rules-modal-backdrop" onClick={onClose}>
       <div className="rules-modal" onClick={(e) => e.stopPropagation()}>
         <div className="rules-modal-header">
-          <h3>{title} — Rules</h3>
-          <button className="secondary" onClick={onClose}>Close</button>
+          <h3>{title} · Rules</h3>
+          <button className="secondary tiny" onClick={onClose}>Close ✕</button>
         </div>
         <div className="rules-modal-body">
           <Rules />
@@ -153,13 +124,32 @@ export function RulesModal({ title, Rules, onClose }: { title: string; Rules: Re
   );
 }
 
+export function playerRange(g: Pick<AnyGameModule, 'minPlayers' | 'maxPlayers'>): string {
+  return g.minPlayers === g.maxPlayers ? `${g.minPlayers} players` : `${g.minPlayers}–${g.maxPlayers} players`;
+}
+
+/** The game's art, name and pitch across the top of a lobby panel. */
+export function LobbyBanner({ module, children }: { module: AnyGameModule; children?: ReactNode }) {
+  const Thumb = module.Thumbnail;
+  return (
+    <div className="lobby-banner" style={module.accent ? ({ '--tile-accent': module.accent } as React.CSSProperties) : undefined}>
+      <div className="lobby-banner-art">{Thumb && <Thumb />}</div>
+      <div>
+        {children ?? <h3>{module.name}</h3>}
+        <p>{module.tagline}</p>
+        <p className="lobby-hint" style={{ marginTop: 6 }}>{playerRange(module)}</p>
+      </div>
+    </div>
+  );
+}
+
 /** The levels an AI seat can be set to in this game, or null when its AI has one strength. */
-export function seatLevels(module: AnyGameModule): ReadonlyArray<{ id: string; label: string }> | null {
+function seatLevels(module: AnyGameModule): ReadonlyArray<{ id: string; label: string }> | null {
   return module.aiLevels && module.aiLevels.length > 1 ? module.aiLevels : null;
 }
 
 /** The level an AI seat plays at in this game (its own, else the module's default). */
-export function seatLevelId(module: AnyGameModule, seat: Seat): string | undefined {
+function seatLevelId(module: AnyGameModule, seat: Seat): string | undefined {
   const levels = module.aiLevels;
   if (!levels?.length) return undefined;
   return seatAiLevel(levels, module.defaultAiLevel ?? levels[levels.length - 1]!.id, seat);

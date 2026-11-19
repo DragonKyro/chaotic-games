@@ -6,7 +6,8 @@ import {
   handOf,
   validTraitPileTargets,
 } from './reducer';
-import type { DmAction, DmState, DmTraitColor } from './types';
+import type { DmAction, DmState } from './types';
+import { DM_SCORING_COLORS } from './types';
 
 export function chooseAIAction(state: DmState, playerId: PlayerId): DmAction | null {
   if (state.phase === 'gameOver') return null;
@@ -71,7 +72,7 @@ export function chooseAIAction(state: DmState, playerId: PlayerId): DmAction | n
       }
 
       case 'chooseColor': {
-        const colors: DmTraitColor[] = ['red', 'blue', 'green', 'purple'];
+        const colors = DM_SCORING_COLORS;
         return {
           type: 'resolvePrompt',
           playerId,

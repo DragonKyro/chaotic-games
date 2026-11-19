@@ -5,6 +5,7 @@
 // Doubles as the reference for what THIS implementation does, including the two
 // places where the rules are ambiguous and we had to pick a reading.
 
+import { RulesTable } from '@/ui/RulesBook';
 import { Card } from './Card';
 import {
   BARKING_DECK_COUNTS,
@@ -27,29 +28,25 @@ const CATS: EkCoreCardKind[] = [
   'tacoCat', 'rainbowRalphingCat', 'cattermelon', 'hairyPotatoCat', 'beardCat',
 ];
 
-function ExpansionCardTable({ counts }: { counts: Partial<Record<EkBaseCardKind, number>> }) {
+const KITTENS: readonly EkBaseCardKind[] = ['explodingKitten', 'implodingKitten'];
+
+/** Card kinds with their counts and effects, plus a total row. */
+function CountTable({ counts }: { counts: Partial<Record<EkBaseCardKind, number>> }) {
   const entries = Object.entries(counts) as [EkBaseCardKind, number][];
   const total = entries.reduce((sum, [, n]) => sum + n, 0);
   return (
-    <table className="ek-rules-table">
-      <thead>
-        <tr><th>Card</th><th>×</th><th>What it does</th></tr>
-      </thead>
-      <tbody>
-        {entries.map(([kind, count]) => (
-          <tr key={kind} className={kind === 'implodingKitten' ? 'is-bad' : undefined}>
-            <td>{CARD_LABEL[kind]}</td>
-            <td className="ek-num">{count}</td>
-            <td>{CARD_TEXT[kind]}</td>
-          </tr>
-        ))}
-        <tr className="ek-rules-total">
-          <td>Total</td>
-          <td className="ek-num">{total}</td>
-          <td />
-        </tr>
-      </tbody>
-    </table>
+    <RulesTable
+      columns={['Card', '×', 'What it does']}
+      numeric={[1]}
+      rows={[
+        ...entries.map(([kind, count]) => ({
+          key: kind,
+          cells: [CARD_LABEL[kind], count, CARD_TEXT[kind]],
+          tone: KITTENS.includes(kind) ? ('bad' as const) : undefined,
+        })),
+        { key: 'total', cells: ['Total', total, null], tone: 'total' as const },
+      ]}
+    />
   );
 }
 
@@ -111,25 +108,7 @@ export function Rules() {
       <p>
         The base deck is <strong>{TOTAL_BASE_CARDS} cards</strong>.
       </p>
-      <table className="ek-rules-table">
-        <thead>
-          <tr><th>Card</th><th>×</th><th>What it does</th></tr>
-        </thead>
-        <tbody>
-          {ORDER.map((kind) => (
-            <tr key={kind} className={kind === 'explodingKitten' ? 'is-bad' : undefined}>
-              <td>{CARD_LABEL[kind]}</td>
-              <td className="ek-num">{BASE_DECK_COUNTS[kind]}</td>
-              <td>{CARD_TEXT[kind]}</td>
-            </tr>
-          ))}
-          <tr className="ek-rules-total">
-            <td>Total</td>
-            <td className="ek-num">{TOTAL_BASE_CARDS}</td>
-            <td />
-          </tr>
-        </tbody>
-      </table>
+      <CountTable counts={Object.fromEntries(ORDER.map((k) => [k, BASE_DECK_COUNTS[k]]))} />
 
       <h4>The cats</h4>
       <p>Five kinds, four of each. Powerless alone, dangerous in pairs.</p>
@@ -145,16 +124,16 @@ export function Rules() {
       </p>
 
       <h5>1. Imploding Kittens (+20 cards, up to 6 players)</h5>
-      <ExpansionCardTable counts={IMPLODING_DECK_COUNTS} />
+      <CountTable counts={IMPLODING_DECK_COUNTS} />
 
       <h5>2. Streaking Kittens (+15 cards, +1 Exploding Kitten)</h5>
-      <ExpansionCardTable counts={STREAKING_DECK_COUNTS} />
+      <CountTable counts={STREAKING_DECK_COUNTS} />
 
       <h5>3. Barking Kittens (+20 cards)</h5>
-      <ExpansionCardTable counts={BARKING_DECK_COUNTS} />
+      <CountTable counts={BARKING_DECK_COUNTS} />
 
       <h5>4. Zombie Kittens (Zombie Kitten replaces Defuse)</h5>
-      <ExpansionCardTable counts={ZOMBIE_DECK_COUNTS} />
+      <CountTable counts={ZOMBIE_DECK_COUNTS} />
 
       <h5>5. Party Pack (Up to 10 players)</h5>
       <p>

@@ -1,6 +1,6 @@
 // Doomlings — pure deterministic reducer for the Base Game and all 7 official expansions.
 
-import { rngInt, shuffle } from '@/core/rng';
+import { createRng, rngInt, shuffle } from '@/core/rng';
 import type { PlayerId, Seat } from '@/core/types';
 import { buildDmDecks, traitCountsAsColor } from './cards';
 import type {
@@ -12,15 +12,16 @@ import type {
   DmTraitCard,
   DmTraitColor,
 } from './types';
+import { cloneState, pushLog, seatName } from '@/core/state';
+import { DM_SCORING_COLORS } from './types';
 
-const LOG_CAP = 60;
 
 // ============================================================================
 // Setup
 // ============================================================================
 
 export function createInitialState(config: DmConfig, seed: number, seats: Seat[]): DmState {
-  const rngState = { seed: seed >>> 0 };
+  const rngState = createRng(seed);
   const first = seats[0];
   if (!first) throw new Error('Doomlings needs at least one seat');
 
@@ -78,21 +79,6 @@ export function createInitialState(config: DmConfig, seed: number, seats: Seat[]
 // Helpers & Continuous Gene Pool / Scoring Queries
 // ============================================================================
 
-function clone(state: DmState): DmState {
-  return JSON.parse(JSON.stringify(state)) as DmState;
-}
-
-function pushLog(s: DmState, byPlayerId: PlayerId | null, text: string, tone: 'normal' | 'danger' | 'good') {
-  s.logSeq += 1;
-  s.log.push({ seq: s.logSeq, byPlayerId, text, tone });
-  if (s.log.length > LOG_CAP) s.log = s.log.slice(-LOG_CAP);
-}
-
-export function seatName(s: DmState, id: PlayerId | null): string {
-  if (!id) return 'Someone';
-  return s.seats.find((x) => x.id === id)?.name ?? 'Someone';
-}
-
 export function handOf(s: DmState, id: PlayerId): DmTraitCard[] {
   const h = s.hands[id];
   if (!h) throw new Error(`unknown hand ${id}`);
@@ -146,7 +132,7 @@ export function countColorInTableau(s: DmState, playerId: PlayerId, color: DmTra
 }
 
 export function distinctColorsInTableau(s: DmState, playerId: PlayerId): DmTraitColor[] {
-  const colors: DmTraitColor[] = ['red', 'blue', 'green', 'purple'];
+  const colors = DM_SCORING_COLORS;
   return colors.filter((col) => countColorInTableau(s, playerId, col) > 0);
 }
 
@@ -161,7 +147,7 @@ export function isObjectiveFulfilled(
 
   switch (target.conditionTag) {
     case 'twoOfEachColor':
-      return (['red', 'blue', 'green', 'purple'] as DmTraitColor[]).every(
+      return DM_SCORING_COLORS.every(
         (col) => countColorInTableau(s, playerId, col) >= 2,
       );
     case 'genePool6Plus':
@@ -306,7 +292,7 @@ export function computePlayerScore(s: DmState, playerId: PlayerId): {
         break;
       }
       case 'symbiosisLowestColor': {
-        const counts = (['red', 'blue', 'green', 'purple'] as DmTraitColor[])
+        const counts = DM_SCORING_COLORS
           .map((col) => countColorInTableau(s, playerId, col))
           .filter((n) => n > 0);
         if (counts.length >= 2) {
@@ -1225,7 +1211,7 @@ function handleResolvePrompt(s: DmState, a: Extract<DmAction, { type: 'resolvePr
 
 export function applyAction(state: DmState, action: DmAction): DmState {
   if (state.phase === 'gameOver') throw new Error('the game is over');
-  const s = clone(state);
+  const s = cloneState(state);
 
   switch (action.type) {
     case 'playTrait':

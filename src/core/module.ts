@@ -49,6 +49,9 @@ export interface GameModule<
   /** Allowed player counts (inclusive). */
   readonly minPlayers: number;
   readonly maxPlayers: number;
+  /** The game's signature colour (hex). The shell paints the home tile, the
+   *  lobby banner and the in-game bar with it. Defaults to the shell's yellow. */
+  readonly accent?: string;
   /** Set false for games whose action model can't survive the online action
    *  log (real-time races need host-authoritative arbitration). The lobby then
    *  hides "Host online" for this game and an online room can't switch to it.
@@ -131,6 +134,9 @@ export interface GameUiBundle<S, A, C> {
    *  "Rules" button that opens this in a modal. Should cover gameplay summary
    *  and any reference tables (card frequencies, scoring tables, etc.). */
   Rules?: React.ComponentType;
+  /** Optional sheet of every card face (and back). Opened by the dev-only
+   *  `?gallery=<gameId>` route for art reviews; a Rules book may embed it. */
+  Gallery?: React.ComponentType;
 }
 
 export type AnyGameModule = GameModule<GameStateShape, unknown, unknown>;

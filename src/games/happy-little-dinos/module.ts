@@ -17,6 +17,7 @@ export const happyLittleDinosModule: GameModule<HldState, HldAction, HldConfig> 
   tagline: 'Survive the disasters of everyday dinosaur life. Barely.',
   minPlayers: 2,
   maxPlayers: 6,
+  accent: '#ff9f1c',
 
   defaultConfig: (seats: Seat[]): HldConfig => ({
     expansions: seats.length >= 5 ? ['players-5-6'] : [],
@@ -42,10 +43,12 @@ export const happyLittleDinosModule: GameModule<HldState, HldAction, HldConfig> 
   Thumbnail: HldThumbnail,
 
   ui: async () => {
-    const [{ GameView, LobbyConfig }, { Rules }] = await Promise.all([
+    const [{ GameView, LobbyConfig }, { Rules }, { Gallery }] = await Promise.all([
       import('./ui'),
       import('./Rules'),
+      import('./Gallery'),
+      import('./hld.css'),
     ]);
-    return { GameView, LobbyConfig, Rules };
+    return { GameView, LobbyConfig, Rules, Gallery };
   },
 };

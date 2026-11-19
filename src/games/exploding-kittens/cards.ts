@@ -34,7 +34,7 @@
 // nothing else needs to change.
 
 import type { RngState } from '@/core/rng';
-import { rngInt, shuffle } from '@/core/rng';
+import { shuffle } from '@/core/rng';
 import type { Seat } from '@/core/types';
 import type {
   EkBaseCardKind,
@@ -112,7 +112,7 @@ export const ZOMBIE_DECK_COUNTS: Partial<Record<EkBaseCardKind, number>> = {
 };
 
 /** The five base cat cards plus Feral Cat. They exist only as combo fodder. */
-export const CAT_KINDS: readonly EkBaseCardKind[] = [
+const CAT_KINDS: readonly EkBaseCardKind[] = [
   'tacoCat', 'rainbowRalphingCat', 'cattermelon', 'hairyPotatoCat', 'beardCat', 'feralCat',
 ];
 
@@ -288,18 +288,6 @@ export function needsTargetForKind(kind: EkBaseCardKind): boolean {
   );
 }
 
-/**
- * Nope stops any action EXCEPT an Exploding Kitten, Imploding Kitten, or a Defuse/Zombie Kitten.
- */
-export function isNopeable(kind: EkBaseCardKind): boolean {
-  return (
-    kind !== 'explodingKitten'
-    && kind !== 'implodingKitten'
-    && kind !== 'defuse'
-    && kind !== 'zombieKitten'
-  );
-}
-
 // ============================================================================
 // AI card valuation
 // ============================================================================
@@ -416,33 +404,6 @@ export function dealSetup(
   let nextId = 1;
   const make = (kind: EkBaseCardKind): EkCard => ({ id: nextId++, kind });
 
-  // Fast path: pure base game (preserves exact RNG sequence and card IDs for base tests).
-  if (expansions.length === 0 && seats.length <= 5) {
-    const kittens = Array.from({ length: BASE_DECK_COUNTS.explodingKitten }, () => make('explodingKitten'));
-    const defuses = Array.from({ length: BASE_DECK_COUNTS.defuse }, () => make('defuse'));
-    const pool: EkCard[] = [];
-    for (const kind of DEALABLE_KINDS) {
-      for (let i = 0; i < BASE_DECK_COUNTS[kind]; i++) pool.push(make(kind));
-    }
-
-    const shuffled = shuffle(rng, pool);
-    const hands: Record<string, EkCard[]> = {};
-    let cursor = 0;
-    seats.forEach((seat, i) => {
-      const dealt = shuffled.slice(cursor, cursor + handSize);
-      cursor += handSize;
-      const defuse = defuses[i];
-      hands[seat.id] = defuse ? [...dealt, defuse] : dealt;
-    });
-
-    const leftoverDefuses = defuses.slice(seats.length);
-    const kittensInPlay = kittens.slice(0, Math.max(0, seats.length - 1));
-    const deck = shuffle(rng, [...shuffled.slice(cursor), ...kittensInPlay, ...leftoverDefuses]);
-
-    return { deck, hands };
-  }
-
-  // Expansion / >5-player setup.
   const hasImploding = expansions.includes('imploding-kittens')
     || expansions.includes('party-pack')
     || expansions.includes('recipes-for-disaster');
@@ -460,7 +421,10 @@ export function dealSetup(
 
   const defuseKind: EkBaseCardKind = hasZombie ? 'zombieKitten' : 'defuse';
   const baseDefuseCount = hasZombie ? 5 : BASE_DECK_COUNTS.defuse;
-  const totalDefuses = Math.max(baseDefuseCount, seats.length + 2);
+  // The base box's 6 Defuses cover up to 5 players; bigger and expanded games
+  // keep two spares in the deck beyond one per player.
+  const baseGame = expansions.length === 0 && seats.length <= 5;
+  const totalDefuses = baseGame ? baseDefuseCount : Math.max(baseDefuseCount, seats.length + 2);
   const defuses = Array.from({ length: totalDefuses }, () => make(defuseKind));
 
   const pool: EkCard[] = [];
@@ -501,7 +465,3 @@ export function dealSetup(
   return { deck, hands };
 }
 
-/** Pick a uniformly random index into a hand, using the replicated RNG. */
-export function randomHandIndex(rng: RngState, handSize: number): number {
-  return rngInt(rng, handSize);
-}

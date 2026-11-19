@@ -4,7 +4,7 @@ import type { RngState } from '@/core/rng';
 import { shuffle } from '@/core/rng';
 import type { DmAgeCard, DmObjectiveCard, DmTraitCard, DmTraitColor } from './types';
 
-export const DM_BIRTH_OF_LIFE: Omit<DmAgeCard, 'id'> = {
+const DM_BIRTH_OF_LIFE: Omit<DmAgeCard, 'id'> = {
   name: 'The Birth of Life',
   kind: 'birthOfLife',
   genePoolDelta: 0,

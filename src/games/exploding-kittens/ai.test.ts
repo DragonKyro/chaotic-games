@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Seat } from '@/core/types';
 import { chooseAIAction } from './ai';
-import { applyAction, createInitialState, livePlayerIds } from './reducer';
+import { applyAction, createInitialState } from './reducer';
 import type { EkBaseCardKind, EkCard, EkConfig, EkState } from './types';
+import { livePlayerIds } from '@/core/state';
 
 function seats(n: number): Seat[] {
   return Array.from({ length: n }, (_, i) => ({

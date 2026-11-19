@@ -9,6 +9,7 @@
 // per card, and a single near-black ink for every outline.
 
 import type { ReactElement } from 'react';
+import { useSvgIds } from '@/ui/kit/hooks';
 import type { EkBaseCardKind } from './types';
 import { CARD_LABEL } from './cards';
 
@@ -898,58 +899,170 @@ export function CardArt({ kind }: { kind: EkBaseCardKind }) {
   );
 }
 
-/** The back of a card — shown for face-down hands and the deck. */
-export function CardBack() {
+/** Which corner badge a card wears. */
+export type EkCategory = 'kitten' | 'defuse' | 'cat' | 'reaction' | 'action';
+
+/** Small corner glyphs, drawn on a 0 0 24 24 canvas. */
+export function CategoryIcon({ category }: { category: EkCategory }) {
   return (
-    <svg viewBox="0 0 100 100" className="ek-art" role="img" aria-label="Face-down card">
-      <rect x={0} y={0} width={100} height={100} fill="#2b2544" />
-      <g stroke="#4a3f70" strokeWidth={2} fill="none">
-        <path d="M0,20 L100,20 M0,50 L100,50 M0,80 L100,80" />
-      </g>
-      {/* paw print */}
-      <g fill="#f6c48a" stroke={INK} strokeWidth={2} strokeLinejoin="round">
-        <path d="M50,54 q-16,0 -16,10 q0,8 16,8 q16,0 16,-8 q0,-10 -16,-10 Z" />
-        <ellipse cx={33} cy={44} rx={6} ry={7.5} />
-        <ellipse cx={44} cy={37} rx={6} ry={8} />
-        <ellipse cx={56} cy={37} rx={6} ry={8} />
-        <ellipse cx={67} cy={44} rx={6} ry={7.5} />
-      </g>
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      {category === 'kitten' && (
+        <g stroke={INK} strokeWidth={1.8} strokeLinejoin="round">
+          <circle cx={11} cy={14} r={7} fill={INK} />
+          <path d="M6.5 9.5 L7.5 5.5 L10 8.6 Z M15.5 9.5 L14.5 5.5 L12 8.6 Z" fill={INK} />
+          <path d="M16 8 Q19 5 20 3" fill="none" stroke="#c9a46a" strokeWidth={1.6} />
+          <circle cx={20.4} cy={2.8} r={1.8} fill="#ffd23f" stroke="none" />
+          <circle cx={8.6} cy={13.4} r={1.1} fill="#ffd23f" stroke="none" />
+          <circle cx={13.4} cy={13.4} r={1.1} fill="#ffd23f" stroke="none" />
+        </g>
+      )}
+      {category === 'defuse' && (
+        <g stroke={INK} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" fill="none">
+          <path d="M5 19 L13 11" strokeWidth={3.2} />
+          <path d="M5 19 L13 11" stroke="#9fe3c4" strokeWidth={1.4} />
+          <path d="M12.5 6.5 a4 4 0 1 0 5 5 l2.5 -1 -1.5 -1.5 1 -2.5 -2.5 1 -1.5 -1.5 Z" fill="#9fe3c4" />
+        </g>
+      )}
+      {category === 'cat' && (
+        <g fill="#f6c48a" stroke={INK} strokeWidth={1.6} strokeLinejoin="round">
+          <path d="M12 21 q-6 0 -6 -4 q0 -3.5 6 -3.5 q6 0 6 3.5 q0 4 -6 4 Z" />
+          <ellipse cx={5.5} cy={10.5} rx={2.4} ry={3} />
+          <ellipse cx={9.6} cy={6.8} rx={2.4} ry={3.2} />
+          <ellipse cx={14.4} cy={6.8} rx={2.4} ry={3.2} />
+          <ellipse cx={18.5} cy={10.5} rx={2.4} ry={3} />
+        </g>
+      )}
+      {category === 'reaction' && (
+        <g stroke={INK} strokeWidth={1.8} strokeLinejoin="round">
+          <circle cx={12} cy={12} r={9} fill="#ff5a6a" />
+          <path d="M5.8 18.2 L18.2 5.8" stroke="#fff" strokeWidth={2.6} />
+          <circle cx={12} cy={12} r={9} fill="none" />
+        </g>
+      )}
+      {category === 'action' && (
+        <path d="M13.5 2 L5 13.5 h6 L9.5 22 L19 9.5 h-6.2 Z" fill="#ffd23f" stroke={INK} strokeWidth={1.7} strokeLinejoin="round" />
+      )}
     </svg>
   );
 }
 
-/** Picker tile art. Registered on the module so the shell never imports game art. */
+/**
+ * The back of a card — face-down hands and the deck. Fills the whole card
+ * (viewBox 0 0 100 140): charred violet stock, a hazard band, and a lit
+ * cat-bomb seal.
+ */
+export function CardBack() {
+  const id = useSvgIds();
+  const stripes = Array.from({ length: 12 }, (_, i) => i * 18 - 40);
+  return (
+    <svg viewBox="0 0 100 140" className="ek-back" role="img" aria-label="Face-down card" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <radialGradient id={id('glow')} cx="50%" cy="46%" r="62%">
+          <stop offset="0" stopColor="#4a2a62" />
+          <stop offset="1" stopColor="#1a1024" />
+        </radialGradient>
+        <pattern id={id('dots')} width={5} height={5} patternUnits="userSpaceOnUse">
+          <circle cx={2.5} cy={2.5} r={0.8} fill="#ffffff" opacity={0.08} />
+        </pattern>
+        <clipPath id={id('band')}>
+          <rect x={0} y={56} width={100} height={28} />
+        </clipPath>
+      </defs>
+      <rect width={100} height={140} fill={id.url('glow')} />
+      <rect width={100} height={140} fill={id.url('dots')} />
+      {/* hazard band */}
+      <g clipPath={id.url('band')}>
+        <rect x={0} y={56} width={100} height={28} fill="#ffd23f" />
+        {stripes.map((x) => (
+          <path key={x} d={`M${x} 84 L${x + 9} 84 L${x + 37} 56 L${x + 28} 56 Z`} fill={INK} />
+        ))}
+      </g>
+      <path d="M0 56 H100 M0 84 H100" stroke={INK} strokeWidth={2.4} />
+      {/* the seal: a cat-shaped bomb with a lit fuse */}
+      <circle cx={50} cy={70} r={25} fill="#ff5a6a" stroke={INK} strokeWidth={3} />
+      <circle cx={50} cy={70} r={19} fill={INK} />
+      <path d="M36.5 58 L38.5 47.5 L45.5 55.5 Z M63.5 58 L61.5 47.5 L54.5 55.5 Z" fill={INK} stroke={INK} strokeWidth={2} strokeLinejoin="round" />
+      <ellipse cx={43.5} cy={68.5} rx={3.4} ry={4.2} fill="#ffd23f" />
+      <ellipse cx={56.5} cy={68.5} rx={3.4} ry={4.2} fill="#ffd23f" />
+      <circle cx={44.4} cy={67.4} r={1.1} fill="#fff" />
+      <circle cx={57.4} cy={67.4} r={1.1} fill="#fff" />
+      <path d="M46 77 Q50 80 54 77" stroke="#ffd23f" strokeWidth={2} fill="none" strokeLinecap="round" />
+      <path d="M62 50 Q70 40 66 31 Q63 25 69 20" stroke="#d9b07a" strokeWidth={2.6} fill="none" strokeLinecap="round" />
+      <g className="ek-back-spark">
+        <circle cx={69} cy={19} r={5} fill="#ffd23f" stroke={INK} strokeWidth={1.6} />
+        <path d="M69 9 V13 M69 25 V29 M59 19 H63 M75 19 H79 M62 12 L64.5 14.5 M73.5 23.5 L76 26 M76 12 L73.5 14.5 M64.5 23.5 L62 26" stroke="#ffd23f" strokeWidth={1.8} strokeLinecap="round" />
+      </g>
+      {/* corner paws */}
+      {[[12, 14], [88, 126]].map(([x, y]) => (
+        <g key={x} fill="#ffd23f" opacity={0.85} transform={`translate(${x} ${y}) scale(0.55)`}>
+          <path d="M0 6 q-7 0 -7 4 q0 4 7 4 q7 0 7 -4 q0 -4 -7 -4 Z" />
+          <ellipse cx={-7} cy={-1} rx={2.6} ry={3.2} />
+          <ellipse cx={-2.4} cy={-5} rx={2.6} ry={3.4} />
+          <ellipse cx={2.4} cy={-5} rx={2.6} ry={3.4} />
+          <ellipse cx={7} cy={-1} rx={2.6} ry={3.2} />
+        </g>
+      ))}
+      <rect x={4} y={4} width={92} height={132} rx={8} fill="none" stroke="#ffd23f" strokeOpacity={0.35} strokeWidth={1.2} strokeDasharray="3 3" />
+    </svg>
+  );
+}
+
+/** Picker tile art: a lit cat-bomb in front of a KABOOM, cards flying. Registered on the module. */
 export function Thumbnail() {
-  // A fanned hand where each card actually shows its art, rather than blanks.
   const MiniCard = ({ x, y, rot, accent, children }: {
     x: number; y: number; rot: number; accent: string; children: React.ReactNode;
   }) => (
-    <g transform={`rotate(${rot} ${x + 23} ${y + 31})`}>
-      <rect x={x} y={y} width={46} height={62} rx={6} fill="#fbf6ea" stroke={INK} strokeWidth={2.6} />
-      <svg x={x + 4} y={y + 4} width={38} height={38} viewBox="0 0 100 100">
+    <g transform={`rotate(${rot} ${x + 18} ${y + 25})`}>
+      <rect x={x} y={y} width={36} height={50} rx={5} fill="#fdf6e3" stroke={INK} strokeWidth={2.4} />
+      <svg x={x + 3.5} y={y + 3.5} width={29} height={31} viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice">
         <rect x={0} y={0} width={100} height={100} fill={accent} />
         {children}
       </svg>
-      <rect x={x + 4} y={y + 46} width={38} height={4} rx={2} fill="#cfc6b4" />
-      <rect x={x + 9} y={y + 53} width={28} height={4} rx={2} fill="#cfc6b4" />
+      <rect x={x + 3.5} y={y + 3.5} width={29} height={31} fill="none" stroke={INK} strokeWidth={1.6} />
+      <rect x={x + 6} y={y + 39} width={24} height={4} rx={2} fill={INK} opacity={0.75} />
     </g>
   );
-
+  const id = useSvgIds();
+  const burst: string[] = [];
+  for (let i = 0; i < 28; i++) {
+    const a = (i / 28) * Math.PI * 2;
+    const r = i % 2 ? 23 : 44 - (i % 4 === 0 ? 6 : 0);
+    burst.push(`${(80 + Math.cos(a) * r * 1.25).toFixed(1)},${(52 + Math.sin(a) * r).toFixed(1)}`);
+  }
   return (
-    <svg viewBox="0 0 160 100" role="img" aria-label="Exploding Kittens">
-      <rect x={0} y={0} width={160} height={100} fill="#1d1930" />
-      <MiniCard x={8} y={26} rot={-17} accent={CARD_ACCENT.beardCat}>
-        <BeardCatArt />
-      </MiniCard>
-      <MiniCard x={38} y={20} rot={-6} accent={CARD_ACCENT.seeTheFuture}>
-        <SeeTheFutureArt />
-      </MiniCard>
-      <MiniCard x={70} y={16} rot={5} accent={CARD_ACCENT.explodingKitten}>
-        <ExplodingKittenArt />
-      </MiniCard>
-      <MiniCard x={102} y={24} rot={16} accent={CARD_ACCENT.tacoCat}>
-        <TacoCatArt />
-      </MiniCard>
+    <svg viewBox="0 0 160 100" role="img" aria-label="Exploding Kittens" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <radialGradient id={id('bg')} cx="50%" cy="50%" r="70%">
+          <stop offset="0" stopColor="#d23a3a" />
+          <stop offset="1" stopColor="#3a0d18" />
+        </radialGradient>
+        <pattern id={id('dots')} width={4} height={4} patternUnits="userSpaceOnUse">
+          <circle cx={2} cy={2} r={0.9} fill="#120c1f" opacity={0.28} />
+        </pattern>
+      </defs>
+      <rect width={160} height={100} fill={id.url('bg')} />
+      <rect width={160} height={100} fill={id.url('dots')} />
+      <polygon points={burst.join(' ')} fill="#ffd23f" stroke={INK} strokeWidth={2.6} strokeLinejoin="round" />
+      <MiniCard x={6} y={30} rot={-24} accent={CARD_ACCENT.defuse}><DefuseArt /></MiniCard>
+      <MiniCard x={118} y={30} rot={22} accent={CARD_ACCENT.nope}><NopeArt /></MiniCard>
+      <MiniCard x={22} y={6} rot={-38} accent={CARD_ACCENT.tacoCat}><TacoCatArt /></MiniCard>
+      <MiniCard x={104} y={4} rot={34} accent={CARD_ACCENT.seeTheFuture}><SeeTheFutureArt /></MiniCard>
+      {/* the cat-bomb */}
+      <g stroke={INK} strokeWidth={2.8} strokeLinejoin="round">
+        <circle cx={80} cy={58} r={22} fill={INK} />
+        <path d="M63 46 L65 31 L75 41 Z M97 46 L95 31 L85 41 Z" fill={INK} />
+        <path d="M66 44 L67 36 L72 41 Z M94 44 L93 36 L88 41 Z" fill={PINK} strokeWidth={1.4} />
+      </g>
+      <circle cx={72} cy={50} r={6} fill="#ffffff" opacity={0.14} />
+      <ellipse cx={72.5} cy={57} rx={4.4} ry={5.4} fill="#ffd23f" />
+      <ellipse cx={87.5} cy={57} rx={4.4} ry={5.4} fill="#ffd23f" />
+      <circle cx={73.4} cy={55.6} r={1.5} fill="#fff" />
+      <circle cx={88.4} cy={55.6} r={1.5} fill="#fff" />
+      <path d="M75 67 Q80 71 85 67" stroke="#ffd23f" strokeWidth={2.4} fill="none" strokeLinecap="round" />
+      <path d="M64 63 H54 M64 67 L55 70 M96 63 H106 M96 67 L105 70" stroke="#ffd23f" strokeWidth={1.4} strokeLinecap="round" opacity={0.8} />
+      <path d="M93 39 Q102 28 99 20 Q97 14 103 10" stroke="#d9b07a" strokeWidth={3} fill="none" strokeLinecap="round" />
+      <circle cx={103.5} cy={9.5} r={5} fill="#fff4b0" stroke={INK} strokeWidth={1.8} />
+      <path d="M103.5 0.5 V3.5 M103.5 15.5 V18.5 M94.5 9.5 H97.5 M109.5 9.5 H112.5 M97 3 L99 5 M108 14 L110 16 M110 3 L108 5 M99 14 L97 16" stroke="#fff4b0" strokeWidth={1.8} strokeLinecap="round" />
     </svg>
   );
 }

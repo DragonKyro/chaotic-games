@@ -15,6 +15,7 @@ export const hereToSlayModule: GameModule<HtsState, HtsAction, HtsConfig> = {
   tagline: 'Assemble a party of adorable murderers. Roll dice. Slay monsters.',
   minPlayers: 2,
   maxPlayers: 6,
+  accent: '#ffb02e',
 
   defaultConfig: (_seats: Seat[]): HtsConfig => ({
     expansions: [],
@@ -37,10 +38,12 @@ export const hereToSlayModule: GameModule<HtsState, HtsAction, HtsConfig> = {
   Thumbnail,
 
   ui: async () => {
-    const [{ GameView, LobbyConfig }, { Rules }] = await Promise.all([
+    const [{ GameView, LobbyConfig }, { Rules }, { Gallery }] = await Promise.all([
       import('./ui'),
       import('./Rules'),
+      import('./Gallery'),
+      import('./hts.css'),
     ]);
-    return { GameView, LobbyConfig, Rules };
+    return { GameView, LobbyConfig, Rules, Gallery };
   },
 };

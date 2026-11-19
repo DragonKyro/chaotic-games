@@ -1,35 +1,65 @@
+// Home-page tile (16:10): a side-eyeing unicorn with a holographic horn on a
+// glitter night, fanned cards, and a NEIGH! hoof stamp. Imports only the
+// portrait system (unicornArt.tsx) and the kit's hooks — this lands in the
+// main bundle via module.ts.
+
+import { useSvgIds } from '@/ui/kit/hooks';
+import { INK, Sparkles, UnicornHead, unicornLook } from './unicornArt';
+
 export function Thumbnail() {
+  const id = useSvgIds();
+  const hero = { ...unicornLook('thumbnail-hero', 'magicalUnicorn'), eyes: 'side' as const, mouth: 'fang' as const, horn: 'crystal' as const, coat: '#f4e8ff', mane: ['#ff4fbf', '#9a4dff', '#38e1ff'], accessories: [] as never[], magical: true };
+  const stars = [[12, 14], [30, 8], [146, 12], [128, 22], [150, 50], [8, 46], [20, 84], [140, 86]];
   return (
-    <svg viewBox="0 0 160 100" role="img" aria-label="Unstable Unicorns">
-      <rect x={0} y={0} width={160} height={100} fill="#1b1530" />
-      <g fill="none" strokeLinecap="round" strokeWidth={5} opacity={0.85}>
-        <path d="M16,86 A64,64 0 0,1 144,86" stroke="#ef4444" />
-        <path d="M22,86 A58,58 0 0,1 138,86" stroke="#f97316" />
-        <path d="M28,86 A52,52 0 0,1 132,86" stroke="#eab308" />
-        <path d="M34,86 A46,46 0 0,1 126,86" stroke="#22c55e" />
-        <path d="M40,86 A40,40 0 0,1 120,86" stroke="#3b82f6" />
-        <path d="M46,86 A34,34 0 0,1 114,86" stroke="#a855f7" />
+    <svg viewBox="0 0 160 100" role="img" aria-label="Unstable Unicorns" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <radialGradient id={id('bg')} cx="50%" cy="40%" r="75%">
+          <stop offset="0" stopColor="#6a2386" />
+          <stop offset="0.6" stopColor="#2a0d3a" />
+          <stop offset="1" stopColor="#12061a" />
+        </radialGradient>
+        <linearGradient id={id('holo')} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#ff5fd2" />
+          <stop offset="0.35" stopColor="#ffe27a" />
+          <stop offset="0.7" stopColor="#5ff2e6" />
+          <stop offset="1" stopColor="#9a6bff" />
+        </linearGradient>
+      </defs>
+      <rect width={160} height={100} fill={id.url('bg')} />
+      {stars.map(([x, y], i) => (
+        <path key={i} d={`M${x} ${y! - 2.4} L${x! + 0.7} ${y! - 0.7} L${x! + 2.4} ${y} L${x! + 0.7} ${y! + 0.7} L${x} ${y! + 2.4} L${x! - 0.7} ${y! + 0.7} L${x! - 2.4} ${y} L${x! - 0.7} ${y! - 0.7} Z`} fill="#fff" opacity={0.75} />
+      ))}
+      {/* rainbow arc behind */}
+      <g fill="none" strokeLinecap="round" opacity={0.9}>
+        {['#ff4f6d', '#ff9a3d', '#ffe74d', '#5ce07a', '#4fb3ff', '#a96bff'].map((c, i) => (
+          <path key={c} d={`M${22 + i * 4} 100 A${58 - i * 4} ${58 - i * 4} 0 0 1 ${138 - i * 4} 100`} stroke={c} strokeWidth={4} />
+        ))}
       </g>
-      <g transform="rotate(-14 48 56)">
-        <rect x={26} y={24} width={44} height={60} rx={6} fill="#fef9ef" stroke="#221f33" strokeWidth={2.4} />
-        <rect x={30} y={28} width={36} height={34} rx={3} fill="#ef4444" />
-        <text x={48} y={50} textAnchor="middle" fill="#fff" fontSize="9" fontWeight="bold">NEIGH!</text>
+      {/* fanned cards */}
+      <g stroke={INK} strokeWidth={2.2} strokeLinejoin="round">
+        <g transform="rotate(-20 32 70)">
+          <rect x={14} y={44} width={34} height={48} rx={5} fill="#ff4d6d" />
+          <rect x={18} y={48} width={26} height={26} rx={3} fill="#3a1d5c" />
+          <path d="M24 70 Q22 58 27 53 Q31 50 35 53 Q40 58 38 70 L34 70 L33.5 64 Q31 62.5 28.5 64 L28 70 Z" fill="#ffc7d1" strokeWidth={1.4} />
+        </g>
+        <g transform="rotate(18 128 70)">
+          <rect x={112} y={44} width={34} height={48} rx={5} fill="#ffc94d" />
+          <rect x={116} y={48} width={26} height={26} rx={3} fill="#1d2f5c" />
+          <path d="M122 70 L129 52 L136 70 Z M126 64 L132 64" fill="#ffe27a" strokeWidth={1.4} />
+        </g>
       </g>
-      <g transform="rotate(14 112 56)">
-        <rect x={90} y={24} width={44} height={60} rx={6} fill="#fef9ef" stroke="#221f33" strokeWidth={2.4} />
-        <rect x={94} y={28} width={36} height={34} rx={3} fill="#22c55e" />
-        <path d="M112,34 L115,43 L124,43 L117,48 L119,57 L112,52 L105,57 L107,48 L100,43 L109,43 Z" fill="#fde047" />
+      {/* the unicorn */}
+      <g transform="translate(36 -2) scale(0.9)">
+        <Sparkles seed={0x9e3779b9} count={6} />
+        <UnicornHead look={hero} id={id} />
       </g>
-      <g>
-        <rect x={56} y={16} width={48} height={66} rx={6} fill="#ffffff" stroke="#221f33" strokeWidth={2.6} />
-        <rect x={60} y={20} width={40} height={42} rx={4} fill="#3b82f6" />
-        <path d="M72,56 Q68,40 78,34 Q88,34 90,44 Q94,46 92,52 Q86,56 72,56 Z" fill="#fff" stroke="#221f33" strokeWidth={2} />
-        <path d="M80,34 L90,14 L85,36 Z" fill="#facc15" stroke="#221f33" strokeWidth={1.8} />
-        <path d="M68,38 Q62,44 66,54" fill="none" stroke="#ec4899" strokeWidth={3.5} strokeLinecap="round" />
-        <circle cx={83} cy={42} r={2} fill="#221f33" />
-        <rect x={63} y={66} width={34} height={4} rx={2} fill="#cbd5e1" />
-        <rect x={68} y={73} width={24} height={4} rx={2} fill="#cbd5e1" />
+      {/* NEIGH! stamp */}
+      <g transform="rotate(-12 34 22)">
+        <rect x={8} y={12} width={52} height={20} rx={5} fill="#12061a" opacity={0.6} />
+        <rect x={8} y={12} width={52} height={20} rx={5} fill="none" stroke="#ff4d6d" strokeWidth={2.6} />
+        <text x={34} y={27.5} textAnchor="middle" fontSize={13} fontWeight={900} fill="#ff4d6d" fontFamily="Shrikhand, Bungee, Impact, sans-serif" letterSpacing={0.5}>NEIGH!</text>
       </g>
+      <rect x={1} y={1} width={158} height={98} fill="none" stroke={id.url('holo')} strokeWidth={2} opacity={0.6} />
     </svg>
   );
 }

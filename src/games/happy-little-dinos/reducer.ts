@@ -1,6 +1,6 @@
 // Happy Little Dinosaurs — pure deterministic reducer for Base Game + all 4 Expansions.
 
-import { rngInt, shuffle } from '@/core/rng';
+import { createRng, rngInt, shuffle } from '@/core/rng';
 import type { PlayerId, Seat } from '@/core/types';
 import { buildHldDecks, HLD_DINO_DEFS } from './cards';
 import type {
@@ -13,10 +13,10 @@ import type {
   HldHazardCard,
   HldState,
 } from './types';
+import { cloneState, isLive, livePlayerIds, pushLog, seatName } from '@/core/state';
 
-const LOG_CAP = 60;
 
-export const SCORING_INSTANT_KINDS: readonly HldCardKind[] = [
+const SCORING_INSTANT_KINDS: readonly HldCardKind[] = [
   'score-booster',
   'score-sapper',
   'score-inversion',
@@ -31,7 +31,7 @@ export const SCORING_INSTANT_KINDS: readonly HldCardKind[] = [
   'roadblock',
 ];
 
-export const DISASTER_SAVE_INSTANT_KINDS: readonly HldCardKind[] = [
+const DISASTER_SAVE_INSTANT_KINDS: readonly HldCardKind[] = [
   'disaster-insurance',
   'disaster-redirect',
   'lucky-break',
@@ -44,7 +44,7 @@ export const DISASTER_SAVE_INSTANT_KINDS: readonly HldCardKind[] = [
 // ============================================================================
 
 export function createInitialState(config: HldConfig, seed: number, seats: Seat[]): HldState {
-  const rngState = { seed: seed >>> 0 };
+  const rngState = createRng(seed);
   const first = seats[0];
   if (!first) throw new Error('Happy Little Dinosaurs needs at least one seat');
 
@@ -109,29 +109,6 @@ export function createInitialState(config: HldConfig, seed: number, seats: Seat[
 // Helpers & Score Calculation
 // ============================================================================
 
-function clone(state: HldState): HldState {
-  return JSON.parse(JSON.stringify(state)) as HldState;
-}
-
-function pushLog(s: HldState, byPlayerId: PlayerId | null, text: string, tone: 'normal' | 'danger' | 'good') {
-  s.logSeq += 1;
-  s.log.push({ seq: s.logSeq, byPlayerId, text, tone });
-  if (s.log.length > LOG_CAP) s.log = s.log.slice(-LOG_CAP);
-}
-
-export function seatName(s: HldState, id: PlayerId | null): string {
-  if (!id) return 'Someone';
-  return s.seats.find((x) => x.id === id)?.name ?? 'Someone';
-}
-
-export function isLive(s: HldState, id: PlayerId): boolean {
-  return !s.eliminated.includes(id);
-}
-
-export function livePlayerIds(s: HldState): PlayerId[] {
-  return s.seats.filter((st) => isLive(s, st.id)).map((st) => st.id);
-}
-
 export function handOf(s: HldState, id: PlayerId): HldCard[] {
   const h = s.hands[id];
   if (!h) throw new Error(`unknown hand ${id}`);
@@ -148,7 +125,7 @@ export function hazardScorePenalty(s: HldState, playerId: PlayerId): number {
   return delta;
 }
 
-export function maxHandRefillSize(s: HldState, playerId: PlayerId): number {
+function maxHandRefillSize(s: HldState, playerId: PlayerId): number {
   const hazards = s.hazardAreas?.[playerId] ?? [];
   let cap = 5;
   for (const h of hazards) {
@@ -157,7 +134,7 @@ export function maxHandRefillSize(s: HldState, playerId: PlayerId): number {
   return Math.max(2, cap);
 }
 
-export function hasNoInstantsHazard(s: HldState, playerId: PlayerId): boolean {
+function hasNoInstantsHazard(s: HldState, playerId: PlayerId): boolean {
   const hazards = s.hazardAreas?.[playerId] ?? [];
   return hazards.some((h) => h.penalty === 'no-instants');
 }
@@ -183,14 +160,14 @@ export function dinoTraitDelta(s: HldState, playerId: PlayerId): number {
   return 0;
 }
 
-export function isChainsawActive(s: HldState): boolean {
+function isChainsawActive(s: HldState): boolean {
   for (const id of livePlayerIds(s)) {
     if (s.revealedPicks[id]?.kind === 'flaming-chainsaw') return true;
   }
   return false;
 }
 
-export function starFruitMultiplier(s: HldState): number {
+function starFruitMultiplier(s: HldState): number {
   if (isChainsawActive(s)) return 1;
   let mult = 1;
   for (const id of livePlayerIds(s)) {
@@ -518,7 +495,7 @@ export function canPlayScoringInstantCard(s: HldState, playerId: PlayerId, card:
   return true;
 }
 
-export function hasScoringInstant(s: HldState, playerId: PlayerId): boolean {
+function hasScoringInstant(s: HldState, playerId: PlayerId): boolean {
   if (hasNoInstantsHazard(s, playerId)) return false;
   return handOf(s, playerId).some((c) => canPlayScoringInstantCard(s, playerId, c));
 }
@@ -1269,7 +1246,7 @@ function handleDeclineDisasterSave(s: HldState, a: Extract<HldAction, { type: 'd
 
 export function applyAction(state: HldState, action: HldAction): HldState {
   if (state.phase === 'gameOver') throw new Error('the game is over');
-  const s = clone(state);
+  const s = cloneState(state);
 
   switch (action.type) {
     case 'chooseDino':

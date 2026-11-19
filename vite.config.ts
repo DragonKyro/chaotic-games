@@ -9,6 +9,9 @@ export default defineConfig({
   define: {
     __APP_BUILD__: JSON.stringify(process.env.GITHUB_SHA?.slice(0, 7) ?? 'dev'),
   },
+  // scripts/render.mjs runs its own dev server per port; separate optimizer
+  // caches keep concurrent runs from clobbering each other.
+  ...(process.env.CG_VITE_CACHE ? { cacheDir: process.env.CG_VITE_CACHE } : {}),
   plugins: [react()],
   resolve: {
     alias: {

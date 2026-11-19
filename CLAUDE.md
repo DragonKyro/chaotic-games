@@ -28,14 +28,16 @@ look there first; it has five finished games' worth of precedent.
 editions, Here to Slay + 3 expansions, Happy Little Dinosaurs + 4 expansions,
 Casting Shadows + 2 expansions, Doomlings + 7 expansions). Each game has its
 official base and expansion card pools, pure deterministic reducer, interactive
-prompts for every player decision, heuristic AI driver, picker `Thumbnail` SVG,
-functional UI (`GameView` + `LobbyConfig` + `Rules`), and unit + AI-vs-AI
-playout tests.
+prompts for every player decision, heuristic AI driver, its own art direction
+(original SVG card art system, card back, board, home-page `Thumbnail`, a
+`Gallery` of every card face), a `GameView` built on the shared kit with
+state-driven FX, `LobbyConfig`, `Rules`, and unit + AI-vs-AI playout tests.
 
-239 tests pass (`npm run test:run`), covering all six base games and all 30
+242 tests pass (`npm run test:run`), covering all six base games and all 30
 expansions across 2–10 players and multiple seeds, plus the online layer
-(rooms, lobby, action log, races, rejoin, spectators) and a whole online match
-of each of the six games.
+(rooms, lobby, action log, races, rejoin, spectators), a whole online match
+of each of the six games, and UI tests for Exploding Kittens and Happy Little
+Dinosaurs (every state of full AI games renders; no hidden card leaks).
 
 ## Tech stack (locked)
 
@@ -50,15 +52,12 @@ holds the rooms, and the only server-side logic is the security rules in
 
 Five layers, separated by directory:
 
-- **`src/core/`** — `GameModule<S, A, C>` contract, seeded RNG (mulberry32 in `rng.ts`), shared types (`Seat`, `PlayerId`, `GamePhase`), seat helpers (`seats.ts`: simultaneous-decision order, AI levels) and the seat colour palette (`seatColors.ts`). Game-agnostic — never references a specific game.
+- **`src/core/`** — `GameModule<S, A, C>` contract, seeded RNG (mulberry32 in `rng.ts`), shared types (`Seat`, `PlayerId`, `GamePhase`, `ExpansionMeta`, `ExpansionConfig`), the helpers every reducer shares (`state.ts`: `LogEntry`, `pushLog`, `cloneState`, `seatName`, `isLive`, `livePlayerIds`), `playout.ts` (`playOut` drives a match with its own AI the way the shell does, and `makeSeats`; used by every game's tests and the dev demo), seat helpers (`seats.ts`: simultaneous-decision order, AI levels) and the seat colour palette (`seatColors.ts`). Game-agnostic — never references a specific game.
 - **`src/games/<id>/`** — one folder per game. Each folder owns its own types, reducer (`applyAction`), AI, and UI bundle. Registered in `src/games/registry.ts`.
 - **`src/net/`** — the room transport: `transport.ts` (the `RoomTransport` / `RoomConnection` interface, log-slot encoding), `firebaseRoom.ts` (the Firebase implementation, lazy-loaded), `fakeTransport.ts` (in-memory server for tests); `identity.ts` (localStorage UUID + saved name + room codes, `?fresh` escape hatch), `roomLink.ts` (`?room=CODE` in the URL), wire types (`types.ts`). Never imports from `src/store` or `src/ui`.
 - **`src/store/`** — Zustand stores (`gameStore`, `networkStore`) plus `actionSync.ts` (the online action log's pending queue and rollback). `gameStore` holds the active module + state and exposes `dispatch` (hands the move to networkStore's broadcast handler when online) and `applyLocal` (silent receiver path).
-- **`src/ui/`** — Game-agnostic shell: `App.tsx` (routes between picker / lobby / playing, or by room state while online), `GameLobby.tsx` (local seat builder + game's `LobbyConfig` + "Host online"), `OnlineLobby.tsx` (the room's lobby), `OnlineStatus.tsx` (join box, connecting / error card), `lobbyParts.tsx`, `GameHost.tsx` (mounts the active game's `GameView`, runs the AI driver), `ChatPanel.tsx`, `RulesBook.tsx`, `theme.css`.
-
-Plus one temporary folder:
-
-- **`src/games/_scaffold/`** — placeholder helpers shared by the five remaining outlines: `index.ts` (`baseInitialState`, `notImplemented`, `ExpansionMeta`) and `ui.tsx` (`makeScaffoldUi`, the "outline only" lobby form + board). Exploding Kittens no longer imports it. Games stop importing it as they get real implementations; **delete the folder when the last one is done**, along with the `.scaffold-*` rules in `theme.css`.
+- **`src/ui/`** — Game-agnostic shell: `App.tsx` (routes between home / lobby / playing, or by room state while online), `Brand.tsx` (the logo mark), `GameLobby.tsx` (local seat builder + game's `LobbyConfig` + "Host online"), `OnlineLobby.tsx` (the room's lobby), `OnlineStatus.tsx` (join box, connecting / error card), `lobbyParts.tsx` (`LobbyBanner`, seat pickers, `RulesModal`), `GameHost.tsx` (mounts the active game's `GameView`, runs the AI driver, the hot-seat hand-off), `ChatPanel.tsx`, `RulesBook.tsx` (`RulesBook` / `RulesTable` / tiles), `theme.css` (the design system), `devDemo.ts` (dev-only deep links, see Commands).
+- **`src/ui/kit/`** — the game-view kit every game's `ui.tsx` builds on: `GameTable` (layout), `PlayerStrip` / `PlayerPlate`, `Dock` (the decision panel), `CardFan` (the hand), `CardShell` (a card's button-or-div outer element plus hover zoom), `GameLog`, `Panel` / `Chip`, `useFx` + `FxLayer` (stamps, toasts, bursts), `TurnCue`, `GameOverPanel` (with confetti for a local win), `ExpansionPicker`, `Die`, `Tally`, `Inspect` (hover zoom), and hooks (`useSvgIds`, `useChangeKey`, `usePulse`). Art helpers that need no kit: `hashString` / `seededRandom` in `src/core/rng.ts`. Themed entirely by `--cg-*` CSS variables (`kit.css` header). See "UI and art" below.
 
 ## GameModule contract
 
@@ -72,8 +71,9 @@ GameModule<S, A, C> {
   createInitialState(config, seed, seats) → S
   applyAction(state, action) → S          // pure, deterministic
   chooseAIAction?(state, playerId) → A | null
+  accent?: string                                     // signature colour: home tile, lobby banner, in-game bar
   Thumbnail?: React.ComponentType
-  ui() → Promise<{ LobbyConfig, GameView, Rules? }>   // lazy-loaded
+  ui() → Promise<{ LobbyConfig, GameView, Rules?, Gallery? }>   // lazy-loaded
 }
 ```
 
@@ -183,9 +183,9 @@ public the instant it happens, so folding it into the action payload is enough.
 
 ## The games
 
-All six are outlines. Each `types.ts` is the design doc — read it before
-touching that game. Expansion lists were verified against publisher stores
-except where noted.
+All six are built, with every expansion. Each `types.ts` is the design doc —
+read it before touching that game. Expansion lists were verified against
+publisher stores except where noted.
 
 ### Exploding Kittens (`src/games/exploding-kittens/`) — ✅ BASE GAME BUILT
 
@@ -198,8 +198,8 @@ survives.
 - `cards.ts` — deck composition, card metadata, `dealSetup`, combo detection, AI card values.
 - `types.ts` — state machine, action union, config, expansion list.
 - `reducer.ts` — all rules. Also exports the shared derivations (`kittensInDeck`, `drawDanger`, `knownTopCards`, `availableCombos`) used by both UI and AI.
-- `ai.ts` — heuristic AI. `reducer.test.ts` / `ai.test.ts` / `ui.test.tsx` — 93 tests.
-- `CardArt.tsx` — original inline SVG for all 13 cards + back + picker thumbnail. `Card.tsx`, `ui.tsx`, `Rules.tsx`, `ek.css`.
+- `ai.ts` — heuristic AI. `reducer.test.ts` / `ai.test.ts` / `ui.test.tsx` — 130 tests.
+- `CardArt.tsx` — original inline SVG for every card kind (base + expansions), the category badges, the card back and the home thumbnail. `Card.tsx` (the frame), `ui.tsx` (lobby + table, on the kit), `Gallery.tsx`, `Rules.tsx`, `ek.css`.
 
 **Deck composition (`BASE_DECK_COUNTS`) — 56 cards:** 4 Exploding Kitten,
 6 Defuse, 5 Nope, 4 each Attack / Skip / Favor / Shuffle, 5 See the Future,
@@ -227,10 +227,6 @@ would draw its own kitten, in which case it buries it.
 **Fair play is a hard rule here** — see primitive 3 above. The AI must never
 read `state.deck` except through `knownTopCards`.
 
-**Not built:** every expansion. Imploding Kittens is the cheapest next step
-(Reverse needs `turnDirection`, which already exists; Alter the Future is a
-variant of the existing peek).
-
 ### Unstable Unicorns (`src/games/unstable-unicorns/`) — ✅ BASE GAME BUILT
 2–8 players. Build a Stable of 7 unicorns (6 at 6–8 players). Four-phase turns
 (Beginning / Draw / Action / End), 7-card hand limit, shared Nursery for Baby
@@ -252,6 +248,14 @@ hand and draw 5. Win by slaying 3 monsters or completing a full 6-class party
 Heroes, 15 Items/Cursed Items, 13 Magic, 25 Modifiers, and 14 Challenges are
 implemented.
 
+Noticed during the UI rebuild, not fixed (confirm against the rulebook first):
+`choosePartyLeader` is accepted at any point in your turn, so a leader can be
+swapped mid-game (the rulebook fixes it at setup); and `finalScores` is an
+invented `trophies × 10 + classes + gifts × 5`, so the end screen shows the
+ranking without the numbers. AI rolls that resolve with no modifier window
+never put their dice in state, so they show only in the log and FX, not the
+roll tray.
+
 ### Casting Shadows (`src/games/casting-shadows/`) — ✅ BASE GAME BUILT
 2–4 players, last player standing wins (18 HP start). 7-Hex board (Ancient Rune
 at center + 6 outer hexes), 4 double-sided Character boards (Kit Gale, Frill
@@ -269,6 +273,15 @@ so chip damage and healing cancel out forever (e.g. 3 seats `host-uuid`,
 moving; an all-AI match won't. The fix belongs in `ai.ts`: Travel when no
 held attack can reach a living enemy.
 
+`finalScores` counts the players each caster outlasted (the last-one-standing
+convention, as in Exploding Kittens; it used to be `100 + HP` for the winner
+and 0 for every fallen player, which ranked them all tied). Noticed during the
+UI rebuild, not fixed: with a full spell book and no `replaceSpellId`, the
+reducer discards the first card to `mainDiscard` even when it is a
+Counterspell; and collecting a level-2/3 spell may replace any card of a
+high-enough level (Counterspells and Conversions included), not only a lower
+Attack spell.
+
 ### Happy Little Dinosaurs (`src/games/happy-little-dinos/`) — ✅ BASE GAME BUILT
 2–4 players (up to 6 with 5–6 Player toggle). 4 Dinosaur boards (Nervous Rex,
 Cry Ceratops, Bad Luck Bronto, Stego), 28 Disaster cards (8 Natural, 8
@@ -277,6 +290,10 @@ effects resolved lowest-to-highest), and 16 Instant cards (Score Booster, Score
 Sapper, Score Inversion, Disaster Insurance, Disaster Redirect). Win by reaching
 50 points on your Escape Route or being the last Dinosaur standing (eliminated on
 3 same-type or 3 different-type Disasters).
+
+Noticed during the UI rebuild, not fixed: `handlePlayScoringInstant` doesn't
+check that the player is the current responder, so any holder can play out of
+turn (possibly intended, as a shout); `chooseDino` has no phase check.
 
 ### Doomlings (`src/games/doomlings/`) — ✅ BASE GAME BUILT
 2–6 players. Gene Pool starts at 5 (clamped 1–8, dynamically adjusted by Ages,
@@ -288,15 +305,18 @@ World's End effect + Drop of Life scoring). All 7 official expansions (Overlush,
 Imaginary Ends, Legends of Enderas, Ancient Fates, Shadow Puppets, Castle Glass,
 Mokoko Village) are documented in `DM_EXPANSIONS`.
 
+Noticed during the UI rebuild, not fixed: a World's End tie goes to the
+first seat in seat order, with no tiebreak.
+
 ## Conventions
 
 - Strict TypeScript. No `any` unless genuinely necessary.
 - Co-locate tests next to code: `reducer.ts` and `reducer.test.ts` side by side.
-- Game logic in `src/games/<id>/` must not import from `src/ui`, `src/net`, or `src/store`.
+- Game logic in `src/games/<id>/` (reducer, ai, cards, types) must not import from `src/ui`, `src/net`, or `src/store`. A game's UI files (`ui.tsx`, art, `Rules.tsx`, `Gallery.tsx`) build on `@/ui/kit` and `@/ui/RulesBook`.
 - **Every AI must terminate.** An AI move loop isn't just a frozen screen online: the AI driver writes each move into the shared database's log, so a loop eats into the free plan every app shares. Sweep a few hundred seeds when you touch an AI.
 - The net layer may import from `src/core` but not `src/ui`.
 - Path alias: `@/` → `src/`.
-- Game-specific UI is lazy-loaded via `module.ui()` — keeps the picker bundle tiny. Don't statically import a game's UI from its `module.ts`; it defeats the split.
+- Game-specific UI is lazy-loaded via `module.ui()` — keeps the picker bundle tiny. Don't statically import a game's UI from its `module.ts`; it defeats the split. The one exception is `Thumbnail`, which the home page needs: it may import `@/ui/kit/hooks` but **not** `@/ui/kit` (the index pulls `kit.css` into the main bundle).
 - Don't introduce game-agnostic code into a game folder, or game-specific code into the shell. If you're about to, you probably want a new field on `GameModule` or `GameStateShape` instead.
 - Ongoing / continuous card effects are computed by walking the tableau on read — **never stored as flags**. (Sibling-project rule, learned the hard way.)
 - Expansions get hooks, not `if (expansion === ...)` conditionals in the base reducer. See `../card-collecting/src/games/seven-wonders/expansions/` for the pattern.
@@ -312,6 +332,8 @@ Mokoko Village) are documented in `DM_EXPANSIONS`.
 - `FIREBASE_LIVE=1 npx vitest run src/store/networkStore.live.test.ts` — online play + the security rules against the real Firebase project
 - `npm run deploy:rules` — deploy `database.rules.json`, merged into the shared database's live rules by `scripts/merge-db-rules.mjs` (never deploy the file on its own; `node scripts/merge-db-rules.mjs` alone writes the merged file without deploying). From Git Bash, set `MSYS_NO_PATHCONV=1` for CLI database paths, e.g. `database:remove /chaotic-games/rooms/X --force`
 - `npm run fix-lock` — after any `npm install`, rewrite the lockfile's mirror URLs to registry.npmjs.org (see Deployment)
+- `node scripts/render.mjs [shot…]` — screenshots in headless Chrome (starts its own Vite), into `art-renders/` (git-ignored). Named shots: `home`, and per game `<k>-gallery` / `<k>-lobby` / `<k>-game` / `<k>-over` with `k` ∈ ek uu hts cs hld dm. `--url "?demo=…" --name x --wait .cg-table` for anything else; `--size 390,844 --mobile`, `--full`, `--click <selector>`, `--port` (parallel runs). Prints any page errors.
+- Dev-only deep links (`src/ui/devDemo.ts`, stripped from production): `?demo=<gameId>` (you + AIs, fast-forwarded to your move; `&players` `&seed` `&moves` `&over` `&exp=a,b` `&humans=2` `&sub=<subPhase>` to land on a specific decision), `?lobby=<gameId>`, `?gallery=<gameId>` (every card face).
 
 ## Deployment
 
@@ -339,24 +361,50 @@ through.
 
 ## Where to start next
 
-1. **Unstable Unicorns** — the reaction window is the bulk of the work and it already exists; it needs the terminal-cancel variant for Super Neigh. The 135-card list is the real cost.
-2. **Imploding Kittens** — cheapest expansion: Reverse uses the existing `turnDirection`, Alter the Future is a variant of the existing peek, Feral Cat is a wildcard in `detectCombo`. Raises max players to 6. Remember to update the deck-knowledge rules for any card that touches deck order.
-3. **Spot-check `BASE_DECK_COUNTS`** against a physical Exploding Kittens box, and confirm the combo rule (any matching cards vs cats only).
-4. **Source the Doomlings expansion list** and confirm Casting Shadows' rules — the two research gaps.
-5. Confirm Here to Slay's action-point costs and Happy Little Dinosaurs' resolution order against their rulebooks.
+1. **Fix the Casting Shadows AI stalemate** (see that game's section): Travel when no held attack can reach a living enemy.
+2. **Spot-check `BASE_DECK_COUNTS`** against a physical Exploding Kittens box, and confirm the combo rule (any matching cards vs cats only).
+3. Confirm Casting Shadows' rules, Here to Slay's action-point costs and Happy Little Dinosaurs' resolution order against their rulebooks.
 
-## Art notes
+## UI and art
 
-Card art is original inline SVG, drawn per game, no raster assets and nothing
-traced from retail cards. Exploding Kittens' set is built from one canonical
-`CatHead` primitive (centred at 50,56 on a `0 0 100 100` canvas) plus per-card
-props and accessories, which is what makes thirteen cards read as one set. Each
-card gets one accent colour from `CARD_ACCENT`, and every outline uses the same
-near-black ink.
+**Shell: "midnight carnival".** Ink-violet night, chunky sticker outlines with
+hard offset shadows (`--sticker`), a chaos-yellow signature (`--chaos`),
+halftone + grain for texture. Fonts are self-hosted from `@fontsource`:
+Outfit (UI) and Bungee (display) load with the shell; each game imports its
+own display font from its own CSS, so it only downloads with that game.
+Motion is transform / opacity only, and `theme.css` stops everything for
+`prefers-reduced-motion`. Shared keyframes are named `cg-*` (fade-in, rise-in,
+pop, deal-in, stamp, shake, pulse-ring, burst, confetti…).
 
-If you draw more: **look at it rendered before calling it done.** A typecheck and
-a render test both pass on art that looks like nothing. The first pass of this set
-had a beard that read as a wooden bucket, a foreleg that read as a tail, and a
-rainbow that started at the cat's cheek instead of its mouth — all invisible in
-tests, all obvious in a screenshot. `ui.test.tsx` asserts each card puts more
-than three shapes on the canvas, which catches empty art but not ugly art.
+**Every game view builds on `src/ui/kit/`** — read `kit.css`'s header first.
+The rules that keep six art styles on one engine:
+
+- Theme the table with **one class** passed to `GameTable` that sets the `--cg-*` variables (felt, surfaces, edge/ink, text, accent, danger, display font, radius, `--cg-card-w`, and `--cg-chip-bg` / `--cg-log-*` on light tables). The kit's defaults are zero-specificity (`:where`), so that one class always wins whatever order the CSS loads in.
+- Game CSS loads lazily from `module.ui()` (`import('./xx.css')` in its `Promise.all`), as does a `Gallery`.
+- **FX come from state transitions** — compare the previous state with the current one in an effect (`useFx` → `stamp` / `toast` / `burst`, `usePulse` for a shake, `useChangeKey` to replay an animation). Never parse log text.
+- Hand prompts use the hand itself where natural ("click a card to give it"); targets are picked from player plates (`targetable` / `selected`) where natural. Player-facing text is plain English — never a raw subPhase name.
+- Hidden information is a UI rule: render only `localPlayerId`'s hand, never deck order or other hands; a card face shown on the table must be public.
+- Layout target: at 1440×900 the opponents strip, board, dock and the top of your hand are visible without scrolling; everything stacks at 390px.
+- **Runtime budget:** lean SVG — gradients fine, no SVG filters (`feTurbulence` / `feGaussianBlur`) in per-card art; gradient ids via `useSvgIds` (duplicate ids break when the first copy unmounts); one-shot or hover animation only, continuous animation on at most one focal element; no `mix-blend-mode` on cards. Art variation comes from `hashString` / `seededRandom` (`src/core/rng.ts`), never `Math.random`.
+
+**Art systems.** All art is original inline SVG — nothing traced from retail
+cards, and deliberately not imitating any retail game's look. Hundreds of
+cards are drawn by parametric primitives with deterministic per-kind variation:
+
+| Game | Direction | Display font · accent | Art system |
+|---|---|---|---|
+| Exploding Kittens | Comic-book bomb shelter: charred crimson table under halftone | Bangers · `#ff4d4d` | One `CatHead` primitive + per-card props (`CardArt.tsx`); category badges; kittens on black stock; a deck whose fuse burns hotter with the draw risk |
+| Unstable Unicorns | Glitter-goth sleepover: plum velvet, holo-foil frames | Shrikhand · `#ff5fd2` | One parametric unicorn head (`unicornArt.tsx`: coat, mane, horn, eyes, mouth, 28 name-picked accessories); keyword emblems for Magic / Instant / Upgrade / Downgrade (`emblemArt.tsx`); Stables as corrals |
+| Here to Slay | Lantern-lit tavern: walnut planks, parchment, wax seals | Grenze Gotisch · `#ffb02e` | Ten class sigils (`sigils.tsx`); heroes as coats of arms (field, tinctures, one of 12 charges); 11 monster silhouettes; AP as lanterns; a 2d6 roll tray with modifier chips |
+| Casting Shadows | Moonlit arcane woodland: the rune-hex map is the centrepiece | Almendra · `#7cf5ff` | Terrain art per hex (`Board.tsx`); hooded caster silhouettes with crests, inverted for Shadow form; one gem iconography for dice / pool / costs; tarot spell frames with ~45 name-picked motifs (`motifs.tsx`) |
+| Happy Little Dinosaurs | Saturday-morning disaster cartoon: the only daytime table | Luckiest Guy · `#ff9f1c` | One papercraft dino primitive covering every species and mood (`DinoArt.tsx`); the winding Escape Route board with sliding tokens; 60 point / instant doodles; 14 disaster scenes |
+| Doomlings | Cosmic petri dish: bioluminescent specimen slides | Gluten · `#8cff5a` | Living-cell trait art from five body plans × colour signatures (`shapes.ts`, `art.tsx`); each player's procedural species evolves with their Trait Pile; era timeline; Age and Catastrophe scenes |
+
+**Look at it rendered before calling it done.** A typecheck and a render test
+both pass on art that looks like nothing. Use `node scripts/render.mjs` (see
+Commands): `?gallery=<gameId>` lays out every card face, and
+`?demo=<gameId>&sub=<subPhase>` lands on any decision. Read the PNGs.
+History: the first Exploding Kittens set had a beard that read as a wooden
+bucket, a foreleg that read as a tail, and a rainbow that started at the
+cat's cheek instead of its mouth — all invisible in tests, all obvious in a
+screenshot.

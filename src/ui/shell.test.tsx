@@ -129,7 +129,7 @@ describe('local lobby: per-seat AI difficulty', () => {
     expect((screen.getByLabelText('Player 3 difficulty') as HTMLSelectElement).value).toBe('hard');
     // A human seat has no picker.
     expect(screen.queryByLabelText('You difficulty')).toBeNull();
-    fireEvent.click(screen.getByText('Start (hot-seat)'));
+    fireEvent.click(screen.getByText('Deal me in ▶'));
     await waitFor(() => expect(onStart).toHaveBeenCalled());
     expect(useGameStore.getState().state!.seats.map((s) => s.aiLevel)).toEqual([undefined, 'easy', undefined]);
     expect(prepareCalls).toEqual([['tally', 2]]);

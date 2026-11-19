@@ -1,95 +1,46 @@
-// Unstable Unicorns — LobbyConfig + GameView with full player decision support.
+// Unstable Unicorns — lobby config + in-game view, on the shared table kit.
+//
+// Hidden information: only `localPlayerId`'s hand is rendered (plus hands a
+// Nanny Cam makes public, and the cards a prompt legitimately shows — a deck
+// search, Blatant Thievery's look). Deck order is never shown.
 
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { PlayerId, Seat } from '@/core/types';
+import { seatName } from '@/core/state';
 import {
-  canPlayCardFromHand,
-  canPlayNeigh,
-  findCardInStable,
-  handLimitOf,
-  handOf,
-  hasDragonsBlessing,
-  hasNannyCam,
-  hasPandamonium,
-  isBlinded,
-  queenBeeOwner,
-  seatName,
-  stableOf,
-  unicornCount,
-  validHandCards,
-  validPileCards,
-  validStableTargets,
-} from './reducer';
+  CardFan, Chip, Dock, ExpansionPicker, FxLayer, GameLog, GameOverPanel, GameTable, PlayerPlate, PlayerStrip,
+  Tally, TurnCue, useChangeKey, useFx,
+} from '@/ui/kit';
+import { UuCardBack, UuCardView } from './Card';
+import { CardArt } from './CardArt';
 import { isNeighCard } from './cards';
-import type { UuAction, UuCard, UuConfig, UuExpansionId, UuPrompt, UuState } from './types';
+import {
+  canPlayCardFromHand, canPlayNeigh, findCardInStable, handLimitOf, handOf, hasDragonsBlessing, hasNannyCam, hasPandamonium,
+  isBlinded, queenBeeOwner, stableOf, unicornCount, validHandCards, validPileCards, validStableTargets,
+} from './reducer';
+import { INK } from './unicornArt';
+import type { UuAction, UuCard, UuConfig, UuExpansionId, UuPhase, UuPrompt, UuState } from './types';
 import { UU_EXPANSIONS } from './types';
 
-export function Thumbnail() {
-  return (
-    <svg viewBox="0 0 160 100" role="img" aria-label="Unstable Unicorns">
-      <rect x={0} y={0} width={160} height={100} fill="#1b1530" />
-      {/* Rainbow arch */}
-      <g fill="none" strokeLinecap="round" strokeWidth={5} opacity={0.85}>
-        <path d="M16,86 A64,64 0 0,1 144,86" stroke="#ef4444" />
-        <path d="M22,86 A58,58 0 0,1 138,86" stroke="#f97316" />
-        <path d="M28,86 A52,52 0 0,1 132,86" stroke="#eab308" />
-        <path d="M34,86 A46,46 0 0,1 126,86" stroke="#22c55e" />
-        <path d="M40,86 A40,40 0 0,1 120,86" stroke="#3b82f6" />
-        <path d="M46,86 A34,34 0 0,1 114,86" stroke="#a855f7" />
-      </g>
-      {/* Fanned cards */}
-      <g transform="rotate(-14 48 56)">
-        <rect x={26} y={24} width={44} height={60} rx={6} fill="#fef9ef" stroke="#221f33" strokeWidth={2.4} />
-        <rect x={30} y={28} width={36} height={34} rx={3} fill="#ef4444" />
-        <text x={48} y={50} textAnchor="middle" fill="#fff" fontSize="9" fontWeight="bold">NEIGH!</text>
-      </g>
-      <g transform="rotate(14 112 56)">
-        <rect x={90} y={24} width={44} height={60} rx={6} fill="#fef9ef" stroke="#221f33" strokeWidth={2.4} />
-        <rect x={94} y={28} width={36} height={34} rx={3} fill="#22c55e" />
-        <path d="M112,34 L115,43 L124,43 L117,48 L119,57 L112,52 L105,57 L107,48 L100,43 L109,43 Z" fill="#fde047" />
-      </g>
-      {/* Center Unicorn card */}
-      <g>
-        <rect x={56} y={16} width={48} height={66} rx={6} fill="#ffffff" stroke="#221f33" strokeWidth={2.6} />
-        <rect x={60} y={20} width={40} height={42} rx={4} fill="#3b82f6" />
-        {/* Unicorn head + golden horn */}
-        <path d="M72,56 Q68,40 78,34 Q88,34 90,44 Q94,46 92,52 Q86,56 72,56 Z" fill="#fff" stroke="#221f33" strokeWidth={2} />
-        <path d="M80,34 L90,14 L85,36 Z" fill="#facc15" stroke="#221f33" strokeWidth={1.8} />
-        <path d="M68,38 Q62,44 66,54" fill="none" stroke="#ec4899" strokeWidth={3.5} strokeLinecap="round" />
-        <circle cx={83} cy={42} r={2} fill="#221f33" />
-        <rect x={63} y={66} width={34} height={4} rx={2} fill="#cbd5e1" />
-        <rect x={68} y={73} width={24} height={4} rx={2} fill="#cbd5e1" />
-      </g>
-    </svg>
-  );
-}
-
 // ============================================================================
-// Lobby Config
+// Lobby
 // ============================================================================
 
-export function LobbyConfig({
-  config,
-  onChange,
-}: {
+export function LobbyConfig({ config, onChange, readOnly }: {
   config: UuConfig;
-  seats: Seat[];
+  seats?: Seat[];
   onChange: (c: UuConfig) => void;
+  readOnly?: boolean;
 }) {
-  const toggleExpansion = (id: UuExpansionId) => {
-    const exists = config.expansions.includes(id);
-    const next = exists ? config.expansions.filter((x) => x !== id) : [...config.expansions, id];
-    onChange({ ...config, expansions: next });
+  const toggle = (id: string) => {
+    const has = config.expansions.includes(id as UuExpansionId);
+    onChange({ ...config, expansions: has ? config.expansions.filter((x) => x !== id) : [...config.expansions, id as UuExpansionId] });
   };
-
   return (
-    <div className="uu-lobby" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span><strong>Base Edition</strong></span>
-        <select
-          value={config.edition}
-          onChange={(e) => onChange({ ...config, edition: e.target.value as UuConfig['edition'] })}
-        >
+    <div className="game-config">
+      <label className="field">
+        <span>Base edition</span>
+        <select value={config.edition} onChange={(e) => onChange({ ...config, edition: e.target.value as UuConfig['edition'] })}>
           <option value="base-2nd">2nd Edition Base Deck (135 cards — default)</option>
           <option value="base">1st Edition / Original Print (Fertile, Puppicorn, Zombie, Angel, Shrinkray, Lasso)</option>
           <option value="control">Control Collector&apos;s Edition (Chronocorn, Time Shift, Absorb &amp; Reflect)</option>
@@ -98,781 +49,681 @@ export function LobbyConfig({
           <option value="travel">Travel Edition (Compact 82-card portable deck)</option>
         </select>
       </label>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span><strong>Expansions ({config.expansions.length} / {UU_EXPANSIONS.length} enabled)</strong></span>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button
-              type="button"
-              className="secondary"
-              style={{ fontSize: '0.75rem', padding: '2px 8px' }}
-              onClick={() =>
-                onChange({
-                  ...config,
-                  expansions: UU_EXPANSIONS.map((e) => e.id as UuExpansionId),
-                })
-              }
-            >
-              Select All
-            </button>
-            <button
-              type="button"
-              className="secondary"
-              style={{ fontSize: '0.75rem', padding: '2px 8px' }}
-              onClick={() => onChange({ ...config, expansions: [] })}
-            >
-              Clear
-            </button>
-          </div>
+      {!readOnly && (
+        <div className="uu-bulk">
+          <button type="button" className="secondary tiny" onClick={() => onChange({ ...config, expansions: UU_EXPANSIONS.map((e) => e.id as UuExpansionId) })}>Select all</button>
+          <button type="button" className="secondary tiny" onClick={() => onChange({ ...config, expansions: [] })}>Clear</button>
         </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6 }}>
-          {UU_EXPANSIONS.map((exp) => {
-            const id = exp.id as UuExpansionId;
-            const checked = config.expansions.includes(id);
-            return (
-              <label
-                key={exp.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: 8,
-                  padding: '6px 8px',
-                  borderRadius: 6,
-                  border: `1px solid ${checked ? '#a855f7' : 'rgba(255,255,255,0.12)'}`,
-                  background: checked ? 'rgba(168, 85, 247, 0.14)' : 'rgba(255,255,255,0.03)',
-                  cursor: 'pointer',
-                  fontSize: '0.82rem',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggleExpansion(id)}
-                  style={{ marginTop: 2 }}
-                />
-                <div>
-                  <div><strong>{exp.name}</strong></div>
-                  <div style={{ fontSize: '0.74rem', opacity: 0.8 }}>{exp.summary}</div>
-                </div>
-              </label>
-            );
-          })}
-        </div>
-      </div>
-
-      <p style={{ margin: 0, fontSize: '0.82rem', opacity: 0.8 }}>
-        2–8 players. First to 7 Unicorns wins (6 at 6–8 players). Combine any Base Edition with any of the 8 official Expansion packs!
+      )}
+      <ExpansionPicker expansions={UU_EXPANSIONS} enabled={config.expansions} onToggle={toggle} readOnly={readOnly} />
+      <p className="lobby-hint" style={{ margin: 0 }}>
+        2–8 players. First to 7 Unicorns wins (6 at 6–8 players). Mix any base edition with any of the 8 expansions.
       </p>
     </div>
   );
 }
 
 // ============================================================================
-// Card Pill / Tile component
+// Game view
 // ============================================================================
 
-const TYPE_BADGE: Record<UuCard['type'], { label: string; color: string }> = {
-  babyUnicorn: { label: 'Baby Unicorn', color: '#a855f7' },
-  basicUnicorn: { label: 'Basic Unicorn', color: '#6366f1' },
-  magicalUnicorn: { label: 'Magical Unicorn', color: '#3b82f6' },
-  magic: { label: 'Magic', color: '#22c55e' },
-  instant: { label: 'Instant', color: '#ef4444' },
-  upgrade: { label: 'Upgrade', color: '#f97316' },
-  downgrade: { label: 'Downgrade', color: '#eab308' },
-};
-
-function UuCardBox({
-  card,
-  selected,
-  disabled,
-  onClick,
-  compact,
-}: {
-  card: UuCard;
-  selected?: boolean;
-  disabled?: boolean;
-  onClick?: () => void;
-  compact?: boolean;
-}) {
-  const badge = TYPE_BADGE[card.type];
-  return (
-    <div
-      onClick={!disabled ? onClick : undefined}
-      title={`${card.name} (${badge.label})\n${card.text}`}
-      style={{
-        border: `2px solid ${selected ? '#facc15' : badge.color}`,
-        borderRadius: 8,
-        padding: compact ? '6px 8px' : '8px 10px',
-        background: selected ? 'rgba(250, 204, 21, 0.15)' : 'rgba(255,255,255,0.04)',
-        width: compact ? 150 : 180,
-        cursor: onClick && !disabled ? 'pointer' : 'default',
-        opacity: disabled ? 0.45 : 1,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 4,
-        userSelect: 'none',
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
-        <strong style={{ fontSize: compact ? '0.8rem' : '0.88rem' }}>{card.name}</strong>
-        <span
-          style={{
-            fontSize: '0.68rem',
-            padding: '1px 5px',
-            borderRadius: 4,
-            background: badge.color,
-            color: '#fff',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {badge.label}
-        </span>
-      </div>
-      {card.text && (
-        <div style={{ fontSize: '0.74rem', opacity: 0.85, lineHeight: 1.25 }}>
-          {card.text}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
-// GameView
-// ============================================================================
-
-export function GameView({
-  state: s,
-  localPlayerId: me,
-  dispatch,
-}: {
+interface ViewProps {
   state: UuState;
   localPlayerId: PlayerId | null;
   dispatch: (action: UuAction) => void;
-}) {
-  const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
-  const [targetStablePlayerId, setTargetStablePlayerId] = useState<PlayerId | null>(null);
+}
 
-  const myHand = me ? s.hands[me] ?? [] : [];
-  const isMyTurn = me !== null && s.turnPlayerId === me;
-  const selectedCard = myHand.find((c) => c.id === selectedCardId) ?? null;
+const PHASE_LABEL: Record<UuPhase, string> = {
+  beginningOfTurn: 'Start of turn',
+  draw: 'Draw phase',
+  action: 'Action phase',
+  endOfTurn: 'End of turn',
+  awaitingNeigh: 'Neigh window',
+  awaitingPrompt: 'Resolving an effect',
+  gameOver: 'Game over',
+};
 
-  const qbOwner = queenBeeOwner(s);
-  const defaultTargetStable =
-    selectedCard?.type === 'downgrade'
-      ? s.seats.find((st) => st.id !== me)?.id ?? me
-      : selectedCard?.type === 'basicUnicorn' && qbOwner
-        ? qbOwner
-        : me;
-  const effectiveTargetStable = targetStablePlayerId ?? defaultTargetStable ?? undefined;
+const seatOf = (s: UuState, id: PlayerId | null | undefined) => (id ? s.seats.find((x) => x.id === id) ?? null : null);
+const nameOf = (s: UuState, id: PlayerId | null | undefined) => seatName(s, id ?? null);
 
-  const canPlaySelected =
-    me !== null &&
-    isMyTurn &&
-    s.subPhase === 'action' &&
-    selectedCard !== null &&
-    canPlayCardFromHand(s, me, selectedCard, effectiveTargetStable);
+/** Every unicorn in every Stable, by id → owner (for spotting destroyed / stolen ones). */
+function herdIndex(s: UuState): Map<number, { owner: PlayerId; card: UuCard }> {
+  const m = new Map<number, { owner: PlayerId; card: UuCard }>();
+  for (const seat of s.seats) for (const u of s.stables[seat.id]?.unicorns ?? []) m.set(u.id, { owner: seat.id, card: u });
+  return m;
+}
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* Top Status Bar */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 12,
-          padding: '10px 14px',
-          borderRadius: 8,
-          background: 'rgba(255,255,255,0.05)',
-        }}
-      >
-        <div>
-          <strong>Turn:</strong> {seatName(s, s.turnPlayerId)} · <strong>Phase:</strong> {s.subPhase} ·{' '}
-          <strong>Goal:</strong> {s.unicornsToWin} Unicorns
-        </div>
-        <div style={{ display: 'flex', gap: 16, fontSize: '0.9rem' }}>
-          <span>Deck: <strong>{s.deck.length}</strong></span>
-          <span>Discard: <strong>{s.discard.length}</strong></span>
-          <span>Nursery: <strong>{s.nursery.length}</strong></span>
-        </div>
-      </div>
+/** Where a card from the hand may legally go. Magic resolves on its own (no Stable). */
+function legalDestinations(s: UuState, me: PlayerId, c: UuCard): PlayerId[] {
+  if (c.type === 'instant') return [];
+  if (c.type === 'magic') return canPlayCardFromHand(s, me, c) ? [me] : [];
+  return s.seats.map((x) => x.id).filter((id) => canPlayCardFromHand(s, me, c, id));
+}
 
-      {/* Game Over Banner */}
-      {s.phase === 'gameOver' && (
-        <div
-          style={{
-            padding: 16,
-            borderRadius: 8,
-            background: 'rgba(34, 197, 94, 0.2)',
-            border: '2px solid #22c55e',
-          }}
-        >
-          <h3 style={{ margin: '0 0 6px' }}>🦄 {seatName(s, s.winnerId)} wins Unstable Unicorns!</h3>
-        </div>
-      )}
+export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [destination, setDestination] = useState<PlayerId | null>(null);
+  const [handPicks, setHandPicks] = useState<number[]>([]);
+  const fx = useFx();
 
-      {/* Active Reaction / Prompt Window */}
-      {me && s.subPhase === 'awaitingNeigh' && s.activePlayerId === me && (
-        <NeighPromptView state={s} me={me} dispatch={dispatch} />
-      )}
+  const seated = me != null && !!s.hands[me];
+  const myHand: UuCard[] = seated ? handOf(s, me!) : [];
+  const isMyTurn = seated && s.turnPlayerId === me;
+  const prompt: UuPrompt | null = s.subPhase === 'awaitingPrompt' ? s.promptQueue[0] ?? null : null;
+  const myPrompt = !!prompt && prompt.playerId === me;
+  const promptKey = prompt ? JSON.stringify(prompt) : '';
 
-      {me && s.subPhase === 'awaitingPrompt' && s.activePlayerId === me && s.promptQueue[0] && (
-        <PromptResolutionView state={s} prompt={s.promptQueue[0]} me={me} dispatch={dispatch} />
-      )}
+  // A new decision clears half-made picks.
+  useEffect(() => { setHandPicks([]); }, [promptKey]);
+  useEffect(() => {
+    if (!(isMyTurn && s.subPhase === 'action')) { setSelectedId(null); setDestination(null); }
+  }, [isMyTurn, s.subPhase]);
 
-      {/* Draw / Action Phase Controls */}
-      {me && isMyTurn && s.subPhase === 'draw' && (
-        <div
-          style={{
-            padding: 14,
-            borderRadius: 8,
-            background: 'rgba(59, 130, 246, 0.15)',
-            border: '1px solid #3b82f6',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}
-        >
-          <span><strong>Draw Phase:</strong> Draw 1 card to start your turn.</span>
-          <button onClick={() => dispatch({ type: 'drawForTurn', playerId: me })}>
-            Draw 1 Card
-          </button>
-        </div>
-      )}
+  const playMode = isMyTurn && s.subPhase === 'action' && s.activePlayerId === me;
+  const selectPrompt = myPrompt && prompt!.kind === 'chooseCardsFromHand' ? (prompt as Extract<UuPrompt, { kind: 'chooseCardsFromHand' }>) : null;
+  const selectValid = useMemo(() => (selectPrompt ? new Set(validHandCards(s, selectPrompt).map((c) => c.id)) : new Set<number>()), [s, selectPrompt]);
+  const selectNeeded = selectPrompt ? Math.min(selectPrompt.count, selectValid.size) : 0;
 
-      {/* All Players' Stables */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
-        {s.seats.map((seat) => {
-          const st = stableOf(s, seat.id);
-          const count = unicornCount(s, seat.id);
-          const panda = hasPandamonium(s, seat.id);
-          const blinded = isBlinded(s, seat.id);
-          const blessed = hasDragonsBlessing(s, seat.id);
-          const nanny = hasNannyCam(s, seat.id);
-          const oppHand = handOf(s, seat.id);
-          return (
-            <div
-              key={seat.id}
-              style={{
-                border: `2px solid ${s.turnPlayerId === seat.id ? seat.color : 'rgba(255,255,255,0.12)'}`,
-                borderRadius: 10,
-                padding: 12,
-                background: 'rgba(255,255,255,0.02)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <span
-                    style={{
-                      display: 'inline-block',
-                      width: 10,
-                      height: 10,
-                      borderRadius: '50%',
-                      background: seat.color,
-                      marginRight: 6,
-                    }}
-                  />
-                  <strong>{seat.name}</strong> {seat.id === me && <em>(You)</em>}
-                </div>
-                <div style={{ fontSize: '0.85rem' }}>
-                  Unicorns: <strong>{count} / {s.unicornsToWin}</strong>
-                  {panda && <span style={{ marginLeft: 6, color: '#eab308' }}>(🐼 Pandas!)</span>}
-                  {blinded && <span style={{ marginLeft: 6, color: '#f97316' }}>(Blinded)</span>}
-                  {blessed && <span style={{ marginLeft: 6, color: '#22c55e' }}>(✨ Dragon&apos;s Blessing)</span>}
-                  {' · '}Hand: <strong>{oppHand.length} / {handLimitOf(s, seat.id)}</strong>
-                </div>
-              </div>
+  const selected = playMode ? myHand.find((c) => c.id === selectedId) ?? null : null;
+  const dests = selected && me ? legalDestinations(s, me, selected) : [];
+  const qb = queenBeeOwner(s);
+  const others = s.seats.filter((x) => x.id !== me);
+  const leader = [...others].sort((a, b) => unicornCount(s, b.id) - unicornCount(s, a.id))[0]?.id ?? null;
+  const defaultDest = !selected || !me ? null
+    : selected.type === 'basicUnicorn' && qb && dests.includes(qb) ? qb
+    : selected.type === 'downgrade' ? (leader && dests.includes(leader) ? leader : dests.find((d) => d !== me) ?? dests[0] ?? null)
+    : dests.includes(me) ? me : dests[0] ?? null;
+  const dest = destination && dests.includes(destination) ? destination : defaultDest;
+  const needsStable = !!selected && selected.type !== 'magic';
+  const pickingStable = needsStable && dests.length > 1;
 
-              {nanny && seat.id !== me && oppHand.length > 0 && (
-                <div style={{ fontSize: '0.78rem', padding: 6, borderRadius: 6, background: 'rgba(234, 179, 8, 0.12)' }}>
-                  <strong>🎥 Nanny Cam (Visible Hand):</strong> {oppHand.map((c) => c.name).join(', ')}
-                </div>
-              )}
+  function send(a: UuAction) {
+    dispatch(a);
+    setSelectedId(null);
+    setDestination(null);
+  }
 
-              <div>
-                <div style={{ fontSize: '0.78rem', opacity: 0.7, marginBottom: 4 }}>
-                  Unicorns ({st.unicorns.length})
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {st.unicorns.map((u) => (
-                    <UuCardBox key={u.id} card={u} compact />
-                  ))}
-                  {st.unicorns.length === 0 && <span style={{ fontSize: '0.8rem', opacity: 0.5 }}>None</span>}
-                </div>
-              </div>
+  function onHandCard(c: UuCard): (() => void) | undefined {
+    if (playMode && me) {
+      if (legalDestinations(s, me, c).length === 0) return undefined;
+      return () => { setSelectedId((cur) => (cur === c.id ? null : c.id)); setDestination(null); };
+    }
+    if (selectPrompt && selectValid.has(c.id)) {
+      return () => setHandPicks((cur) => (cur.includes(c.id) ? cur.filter((x) => x !== c.id) : cur.length < selectNeeded ? [...cur, c.id] : cur));
+    }
+    return undefined;
+  }
 
-              {(st.upgrades.length > 0 || st.downgrades.length > 0) && (
-                <div>
-                  <div style={{ fontSize: '0.78rem', opacity: 0.7, marginBottom: 4 }}>
-                    Upgrades ({st.upgrades.length}) &amp; Downgrades ({st.downgrades.length})
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {st.upgrades.map((u) => (
-                      <UuCardBox key={u.id} card={u} compact />
-                    ))}
-                    {st.downgrades.map((d) => (
-                      <UuCardBox key={d.id} card={d} compact />
-                    ))}
-                  </div>
-                </div>
+  // ---- FX from state transitions -------------------------------------------------
+  const prev = useRef(s);
+  useEffect(() => {
+    const was = prev.current;
+    prev.current = s;
+    if (was === s) return;
+    const n0 = was.pending?.neighCards.length ?? 0;
+    const n1 = s.pending?.neighCards.length ?? 0;
+    if (s.pending && n1 > n0) {
+      if (s.pending.superNeighed && !was.pending?.superNeighed) {
+        fx.stamp(<span className="uu-holo-text">SUPER NEIGH!</span>, 'accent');
+        fx.burst([0.5, 0.4], '#ffe27a');
+      } else {
+        fx.stamp(<span className="uu-stamp-hoof"><Hoof />NEIGH!</span>, 'danger');
+      }
+    }
+    // Unicorns that left every Stable were destroyed or sacrificed.
+    const before = herdIndex(was);
+    const after = herdIndex(s);
+    const gone = [...before.values()].filter((u) => !after.has(u.card.id));
+    if (gone.length > 0) {
+      fx.burst([0.5, 0.45], '#ff5fd2');
+      fx.toast(gone.length === 1 ? `${gone[0]!.card.name} is gone. (${nameOf(s, gone[0]!.owner)})` : `${gone.length} unicorns are gone.`);
+    } else {
+      const stolen = [...before.values()].find((u) => after.has(u.card.id) && after.get(u.card.id)!.owner !== u.owner);
+      if (stolen) fx.toast(`${nameOf(s, after.get(stolen.card.id)!.owner)} stole ${stolen.card.name}!`, 'accent');
+    }
+    if (s.phase === 'gameOver' && was.phase !== 'gameOver') fx.stamp('UNSTOPPABLE!', 'good');
+  }, [s]);
+
+  const drawKey = useChangeKey(s.deck.length);
+
+  // ---- opponents --------------------------------------------------------------------
+  const choosePlayerPrompt = myPrompt && prompt!.kind === 'choosePlayer' ? (prompt as Extract<UuPrompt, { kind: 'choosePlayer' }>) : null;
+  const playerCandidates = choosePlayerPrompt
+    ? s.seats.filter((x) => (choosePlayerPrompt.allowSelf || x.id !== me) && x.id !== choosePlayerPrompt.movedFromPlayerId).map((x) => x.id)
+    : [];
+
+  const top = (
+    <PlayerStrip>
+      {others.map((o) => {
+        const st = stableOf(s, o.id);
+        const hand = handOf(s, o.id);
+        const count = unicornCount(s, o.id);
+        const stableTarget = pickingStable && dests.includes(o.id);
+        const playerTarget = playerCandidates.includes(o.id);
+        const nanny = hasNannyCam(s, o.id) && hand.length > 0;
+        return (
+          <PlayerPlate
+            key={o.id}
+            seat={o}
+            active={s.turnPlayerId === o.id && s.phase === 'playing'}
+            sub={<span className="uu-plate-sub"><HornPips have={count} goal={s.unicornsToWin} /><span><Tally value={count} />/{s.unicornsToWin} · {hand.length} card{hand.length === 1 ? '' : 's'}</span></span>}
+            targetable={stableTarget || playerTarget}
+            selected={stableTarget && dest === o.id}
+            onClick={
+              playerTarget && me ? () => dispatch({ type: 'resolvePrompt', playerId: me, targetPlayerId: o.id })
+              : stableTarget ? () => setDestination(o.id)
+              : undefined
+            }
+          >
+            <div className="uu-plate-herd">
+              {[...st.unicorns, ...st.upgrades, ...st.downgrades].slice(0, 8).map((u) => <UuCardView key={u.id} card={u} size="xs" />)}
+              {st.unicorns.length + st.upgrades.length + st.downgrades.length > 8 && (
+                <span className="uu-plate-more">+{st.unicorns.length + st.upgrades.length + st.downgrades.length - 8}</span>
               )}
             </div>
-          );
-        })}
+            <StatusChips state={s} id={o.id} />
+            {s.activePlayerId === o.id && s.turnPlayerId !== o.id && <div className="uu-plate-chips"><Chip tone="accent">Deciding…</Chip></div>}
+            {nanny && (
+              <div className="uu-plate-herd" title="Nanny Cam: this hand is public">
+                {hand.map((c) => <UuCardView key={c.id} card={c} size="xs" />)}
+              </div>
+            )}
+          </PlayerPlate>
+        );
+      })}
+    </PlayerStrip>
+  );
+
+  // ---- board: piles · stage · your corral ----------------------------------------------
+  const turnSeat = seatOf(s, s.turnPlayerId);
+  const myStable = seated ? stableOf(s, me!) : null;
+  const myCount = seated ? unicornCount(s, me!) : 0;
+  const corralTarget = pickingStable && !!me && dests.includes(me);
+  const board = (
+    <div className="uu-board">
+      <div className="uu-arena">
+        <div className="uu-piles">
+          <div className="uu-pile">
+            <div className="uu-deck">
+              {s.deck.length > 2 && <UuCardBack />}
+              {s.deck.length > 1 && <UuCardBack />}
+              {s.deck.length > 0 ? <UuCardBack key={drawKey} className={`uu-deck-top${drawKey ? ' is-drawn' : ''}`} /> : <div className="uu-empty">empty</div>}
+              <span className="uu-count">{s.deck.length}</span>
+            </div>
+            <span className="uu-pile-label">Deck</span>
+          </div>
+          <div className="uu-pile" title="The Nursery: Baby Unicorns waiting for a Stable">
+            <div className="uu-nursery">
+              {s.nursery.slice(0, 3).map((c) => <UuCardView key={c.id} card={c} size="sm" />)}
+              <Basket />
+              <span className="uu-count">{s.nursery.length}</span>
+            </div>
+            <span className="uu-pile-label">Nursery</span>
+          </div>
+        </div>
+
+        <div className="uu-stage">
+          {s.pending ? (
+            <Stage state={s} />
+          ) : s.phase === 'gameOver' ? (
+            <div className="uu-turn">The herd has spoken</div>
+          ) : (
+            <>
+              <div className="uu-turn" style={{ '--seat': turnSeat?.color } as CSSProperties}>
+                <span>{turnSeat?.id === me ? 'Your' : `${turnSeat?.name ?? '—'}'s`}</span> turn
+              </div>
+              <div className="uu-meta">
+                <Chip>{PHASE_LABEL[s.subPhase]}</Chip>
+                {s.subPhase === 'action' && <Chip tone="accent">{s.playsRemaining} play{s.playsRemaining === 1 ? '' : 's'} left</Chip>}
+                <Chip>{s.unicornsToWin} unicorns to win</Chip>
+                {qb && <Chip title="Basic Unicorns can only enter this player's Stable">Queen Bee: {nameOf(s, qb)}</Chip>}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="uu-pile">
+          <div className="uu-discard">
+            {s.discard.length === 0 && <div className="uu-empty">discard</div>}
+            {s.discard.slice(-2).map((c, i, arr) => (
+              <UuCardView key={c.id} card={c} className={i === arr.length - 1 ? 'is-top' : undefined} inspect={i === arr.length - 1} />
+            ))}
+          </div>
+          <span className="uu-pile-label"><strong>{s.discard.length}</strong> discarded</span>
+        </div>
       </div>
 
-      {/* Local Player's Hand & Action Phase Controls */}
-      {me && (
+      {myStable && (
         <div
-          style={{
-            border: '1px solid rgba(255,255,255,0.15)',
-            borderRadius: 10,
-            padding: 12,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 10,
-          }}
+          className={`uu-corral${corralTarget ? ' is-target' : ''}${needsStable && dest === me ? ' is-dest' : ''}`}
+          onClick={corralTarget ? () => setDestination(me) : undefined}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <h4 style={{ margin: 0 }}>Your Hand ({myHand.length} / {handLimitOf(s, me)} limit)</h4>
-            {isMyTurn && s.subPhase === 'action' && (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '0.85rem' }}>
-                  Plays remaining: <strong>{s.playsRemaining}</strong>
-                </span>
-                {!s.actedInActionPhase && (
-                  <button
-                    className="secondary"
-                    onClick={() => {
-                      dispatch({ type: 'drawInsteadOfPlaying', playerId: me });
-                      setSelectedCardId(null);
-                    }}
-                  >
-                    Draw 1 Card Instead of Playing
-                  </button>
-                )}
-                {s.actedInActionPhase && (
-                  <button
-                    className="secondary"
-                    onClick={() => {
-                      dispatch({ type: 'endActionPhase', playerId: me });
-                      setSelectedCardId(null);
-                    }}
-                  >
-                    End Action Phase
-                  </button>
-                )}
+          <div className="uu-corral-head">
+            <h4>Your Stable</h4>
+            <HornPips have={myCount} goal={s.unicornsToWin} />
+            <span className="uu-chips">
+              <Chip tone={myCount >= s.unicornsToWin - 1 ? 'accent' : undefined}><Tally value={myCount} /> / {s.unicornsToWin} unicorns</Chip>
+              <StatusChips state={s} id={me!} inline />
+            </span>
+          </div>
+          <div className="uu-corral-rows">
+            <div className="uu-herd">
+              {myStable.unicorns.length === 0 && <span className="uu-herd-empty">No unicorns yet — not even a baby.</span>}
+              {myStable.unicorns.map((u) => <UuCardView key={u.id} card={u} size="sm" />)}
+            </div>
+            {(myStable.upgrades.length > 0 || myStable.downgrades.length > 0) && (
+              <div className="uu-mods">
+                {[...myStable.upgrades, ...myStable.downgrades].map((c) => <UuCardView key={c.id} card={c} size="sm" />)}
               </div>
             )}
           </div>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {myHand.map((c) => (
-              <UuCardBox
-                key={c.id}
-                card={c}
-                selected={selectedCardId === c.id}
-                onClick={
-                  isMyTurn && s.subPhase === 'action'
-                    ? () => {
-                        setSelectedCardId((cur) => (cur === c.id ? null : c.id));
-                        setTargetStablePlayerId(null);
-                      }
-                    : undefined
-                }
-              />
-            ))}
-            {myHand.length === 0 && <span style={{ opacity: 0.6 }}>Your hand is empty.</span>}
-          </div>
-
-          {isMyTurn && s.subPhase === 'action' && selectedCard && (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                flexWrap: 'wrap',
-                padding: 10,
-                borderRadius: 8,
-                background: 'rgba(255,255,255,0.05)',
-              }}
-            >
-              {selectedCard.type !== 'magic' && selectedCard.type !== 'instant' && (
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.88rem' }}>
-                  <span>Play into Stable of:</span>
-                  <select
-                    value={effectiveTargetStable ?? me}
-                    onChange={(e) => setTargetStablePlayerId(e.target.value)}
-                  >
-                    {s.seats.map((seat) => (
-                      <option key={seat.id} value={seat.id}>
-                        {seat.name} {seat.id === me ? '(You)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <button
-                disabled={!canPlaySelected}
-                onClick={() => {
-                  if (!canPlaySelected) return;
-                  dispatch({
-                    type: 'playCard',
-                    playerId: me,
-                    cardId: selectedCard.id,
-                    targetPlayerId: effectiveTargetStable,
-                  });
-                  setSelectedCardId(null);
-                  setTargetStablePlayerId(null);
-                }}
-              >
-                Play {selectedCard.name}
-              </button>
-              <button className="secondary" onClick={() => setSelectedCardId(null)}>
-                Cancel
-              </button>
-            </div>
-          )}
         </div>
       )}
-
-      {/* Action Log */}
-      <div
-        style={{
-          fontSize: '0.82rem',
-          padding: 10,
-          borderRadius: 8,
-          background: 'rgba(0,0,0,0.25)',
-          maxHeight: 140,
-          overflowY: 'auto',
-        }}
-      >
-        {s.log.slice(-8).map((entry) => (
-          <div key={entry.seq} style={{ opacity: 0.9, marginBottom: 2 }}>
-            {entry.text}
-          </div>
-        ))}
-      </div>
     </div>
   );
-}
 
-// ============================================================================
-// Neigh Window Component
-// ============================================================================
+  // ---- the dock ------------------------------------------------------------------------
+  function renderDock(): ReactNode {
+    if (s.phase === 'gameOver') {
+      const winner = seatOf(s, s.winnerId);
+      const best = winner ? stableOf(s, winner.id).unicorns.find((u) => u.type === 'magicalUnicorn') ?? stableOf(s, winner.id).unicorns[0] : undefined;
+      return (
+        <GameOverPanel
+          seats={s.seats}
+          finalScores={s.finalScores}
+          winnerIds={s.winnerId ? [s.winnerId] : undefined}
+          localPlayerId={me}
+          headline={winner ? `${winner.name} wins!` : undefined}
+          detail={winner ? `A Stable of ${unicornCount(s, winner.id)} unicorns. Everyone else: neighed.` : 'The deck ran dry — the biggest herd takes it.'}
+          scoreLabel="unicorns"
+          art={best ? <CardArt card={best} /> : undefined}
+        />
+      );
+    }
+    const active = seatOf(s, s.activePlayerId);
 
-function NeighPromptView({
-  state: s,
-  me,
-  dispatch,
-}: {
-  state: UuState;
-  me: PlayerId;
-  dispatch: (a: UuAction) => void;
-}) {
-  const p = s.pending;
-  if (!p) return null;
-  const myNeighs = handOf(s, me).filter((c) => isNeighCard(c));
-  const cancelled = p.neighCards.length % 2 === 1;
+    // Neigh window: the current responder, or anyone queued (playing out of turn is allowed).
+    if (s.subPhase === 'awaitingNeigh' && s.pending && me) {
+      const queued = s.pending.responderQueue.includes(me);
+      if (s.activePlayerId === me || (queued && canPlayNeigh(s, me))) {
+        return <NeighDock state={s} me={me} mine={s.activePlayerId === me} dispatch={dispatch} />;
+      }
+      return <Dock tone="wait" who={active} eyebrow={`Neigh window · ${active?.name ?? '…'} may answer`} title={`${nameOf(s, s.pending.byPlayerId)} played ${s.pending.card.name}`} />;
+    }
+
+    if (prompt) {
+      if (myPrompt && me) {
+        return (
+          <PromptDock
+            key={promptKey}
+            state={s}
+            prompt={prompt}
+            me={me}
+            dispatch={dispatch}
+            handPicks={handPicks}
+            handNeeded={selectNeeded}
+          />
+        );
+      }
+      return (
+        <Dock tone="wait" who={active} title={prompt.kind === 'beginningTrigger' ? `${prompt.sourceCard.name} stirs in ${active?.name ?? 'someone'}'s Stable` : `${active?.name ?? 'Someone'} is deciding`}>
+          {'reason' in prompt ? prompt.reason : prompt.kind === 'oraclePeek' ? 'Peering at the top of the deck…' : null}
+        </Dock>
+      );
+    }
+
+    if (isMyTurn && s.subPhase === 'draw' && me) {
+      return (
+        <Dock tone="turn" eyebrow="Your turn · draw phase" title="Draw a card to start your turn" actions={<button onClick={() => send({ type: 'drawForTurn', playerId: me })}>Draw a card</button>} />
+      );
+    }
+
+    if (playMode && me) {
+      if (selected) {
+        const playable = dests.length > 0 && (!needsStable || !!dest);
+        const where = needsStable
+          ? dest === me ? 'into your Stable' : `into ${nameOf(s, dest)}'s Stable`
+          : 'its effect resolves after the Neigh window';
+        return (
+          <Dock
+            tone="turn"
+            eyebrow={`Your turn · ${s.playsRemaining} play${s.playsRemaining === 1 ? '' : 's'} left`}
+            title={`Play ${selected.name}`}
+            actions={
+              <>
+                <button disabled={!playable} onClick={() => send({ type: 'playCard', playerId: me, cardId: selected.id, ...(needsStable && dest ? { targetPlayerId: dest } : {}) })}>Play ▶</button>
+                <button className="secondary" onClick={() => setSelectedId(null)}>Cancel</button>
+              </>
+            }
+          >
+            {playable ? `Goes ${where}.` : "This card can't be played right now."}
+            {pickingStable && ' Click a player above (or your Stable) to send it somewhere else.'}
+            {selected.type === 'basicUnicorn' && qb && qb !== me && ` The Queen Bee forces it into ${nameOf(s, qb)}'s Stable.`}
+          </Dock>
+        );
+      }
+      return (
+        <Dock
+          tone="turn"
+          eyebrow={`Your turn · action phase · ${s.playsRemaining} play${s.playsRemaining === 1 ? '' : 's'} left`}
+          title={s.actedInActionPhase ? 'Play another card — or wrap it up' : 'Play a card — or draw instead'}
+          actions={s.actedInActionPhase
+            ? <button className="secondary" onClick={() => send({ type: 'endActionPhase', playerId: me })}>End action phase</button>
+            : <button className="secondary" onClick={() => send({ type: 'drawInsteadOfPlaying', playerId: me })}>Draw instead</button>}
+        >
+          Select a card in your hand. Dimmed cards can&apos;t be played right now.
+        </Dock>
+      );
+    }
+
+    return <Dock tone="wait" who={active} title={`${active?.name ?? 'Someone'}'s ${PHASE_LABEL[s.subPhase].toLowerCase()}`} />;
+  }
+
+  // ---- side + hand ----------------------------------------------------------------------------
+  const side = <GameLog entries={s.log} seats={s.seats} title="Stable gossip" />;
+
+  const hand = seated ? (
+    <div className="uu-hand-area">
+      <div className="uu-hand-head">
+        <h4>Your hand ({myHand.length} / {handLimitOf(s, me!)})</h4>
+        <div className="uu-chips">
+          {selectPrompt && <Chip tone="accent">Choose {selectNeeded} · {handPicks.length} picked</Chip>}
+          {playMode && !selected && <Chip>Click a card to play it</Chip>}
+        </div>
+      </div>
+      <div className="uu-hand">
+        {myHand.length === 0 ? (
+          <p className="uu-hand-empty">Empty-handed. Very zen. Very vulnerable.</p>
+        ) : (
+          <CardFan label="Your hand" maxTilt={8}>
+            {myHand.map((c) => {
+              const click = onHandCard(c);
+              const live = playMode || !!selectPrompt;
+              return (
+                <UuCardView
+                  key={c.id}
+                  card={c}
+                  selected={selectedId === c.id || handPicks.includes(c.id)}
+                  onClick={click}
+                  disabled={live && !click}
+                />
+              );
+            })}
+          </CardFan>
+        )}
+      </div>
+    </div>
+  ) : (
+    <div className="uu-hand-area"><p className="uu-hand-empty">Spectating — no hand to show.</p></div>
+  );
 
   return (
-    <div
-      style={{
-        padding: 14,
-        borderRadius: 8,
-        background: 'rgba(239, 68, 68, 0.15)',
-        border: '2px solid #ef4444',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 10,
-      }}
-    >
-      <h4 style={{ margin: 0 }}>
-        {cancelled ? 'Play is currently Neighed — Counter-Neigh it?' : 'Neigh this card?'}
-      </h4>
-      <p style={{ margin: 0, fontSize: '0.9rem' }}>
-        <strong>{seatName(s, p.byPlayerId)}</strong> played <strong>{p.card.name}</strong> ({p.card.text}).
-        {p.neighCards.length > 0 && ` (${p.neighCards.length} Neigh card(s) on the stack)`}
-      </p>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        {canPlayNeigh(s, me) &&
-          myNeighs.map((c) => (
-            <button key={c.id} onClick={() => dispatch({ type: 'playNeigh', playerId: me, cardId: c.id })}>
-              Play {c.name}
-            </button>
-          ))}
-        <button className="secondary" onClick={() => dispatch({ type: 'declineNeigh', playerId: me })}>
-          Allow / Pass
-        </button>
-      </div>
-    </div>
+    <GameTable
+      className="uu-table"
+      top={top}
+      board={board}
+      side={side}
+      dock={renderDock()}
+      hand={hand}
+      overlay={
+        <>
+          <FxLayer fx={fx} />
+          <TurnCue active={isMyTurn && s.subPhase === 'draw' && s.phase === 'playing'} />
+        </>
+      }
+    />
   );
 }
 
 // ============================================================================
-// Interactive Prompt Resolution Component
+// Pieces
 // ============================================================================
 
-function PromptResolutionView({
-  state: s,
-  prompt,
-  me,
-  dispatch,
-}: {
+function Hoof() {
+  return (
+    <svg viewBox="0 0 40 40" aria-hidden="true">
+      <path d="M8 34 Q4 18 12 9 Q20 2 28 9 Q36 18 32 34 L25 34 L24 24 Q20 21 16 24 L15 34 Z" fill="currentColor" stroke={INK} strokeWidth={2.4} strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function Basket() {
+  return (
+    <svg className="uu-basket" viewBox="0 0 96 46" aria-hidden="true">
+      <path d="M4 10 Q48 22 92 10 L82 42 Q48 48 14 42 Z" fill="#f6c6e8" stroke="#12061a" strokeWidth={2.6} strokeLinejoin="round" />
+      <path d="M10 22 Q48 32 86 22 M14 32 Q48 40 82 32" fill="none" stroke="#12061a" strokeWidth={1.4} opacity={0.45} />
+      <path d="M4 10 Q48 22 92 10" fill="none" stroke="#fff" strokeWidth={4} strokeDasharray="1 6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** A row of horns: one per unicorn needed, lit as the herd grows. */
+function HornPips({ have, goal }: { have: number; goal: number }) {
+  return (
+    <span className="uu-pips" aria-label={`${have} of ${goal} unicorns`}>
+      {Array.from({ length: goal }, (_, i) => {
+        const on = i < have;
+        return (
+          <svg key={i} viewBox="0 0 11 17" className={on ? 'is-on' : undefined} aria-hidden="true">
+            <path d="M1.5 16 L6 1 L9.5 16 Z" fill={on ? '#ffe27a' : 'rgba(255,240,251,0.12)'} stroke={on ? '#12061a' : 'rgba(255,240,251,0.35)'} strokeWidth={1.3} strokeLinejoin="round" />
+            {on && <path d="M3 11.5 L8.5 10.5 M4 7 L7.8 6.4" stroke="#12061a" strokeWidth={0.9} />}
+          </svg>
+        );
+      })}
+    </span>
+  );
+}
+
+function StatusChips({ state: s, id, inline }: { state: UuState; id: PlayerId; inline?: boolean }) {
+  const chips: ReactNode[] = [];
+  if (hasPandamonium(s, id)) chips.push(<Chip key="p" tone="danger" title="Unicorns are pandas: they don't count">Pandamonium</Chip>);
+  if (isBlinded(s, id)) chips.push(<Chip key="b" tone="danger" title="Unicorn effects are switched off">Blinded</Chip>);
+  if (hasDragonsBlessing(s, id)) chips.push(<Chip key="d" tone="good" title="Downgrades don't affect them">Dragon&apos;s Blessing</Chip>);
+  if (hasNannyCam(s, id)) chips.push(<Chip key="n" title="Their hand is public">Nanny Cam</Chip>);
+  if (chips.length === 0) return null;
+  return inline ? <>{chips}</> : <div className="uu-plate-chips">{chips}</div>;
+}
+
+/** The card waiting out its Neigh window, every Neigh slapped on top. */
+function Stage({ state: s }: { state: UuState }) {
+  const p = s.pending!;
+  const n = p.neighCards.length;
+  const verdict = p.superNeighed ? { cls: 'is-super', text: 'Super Neighed — final' } : n % 2 === 1 ? { cls: 'is-neighed', text: n > 1 ? `Neighed ×${n}` : 'Neighed!' } : n > 0 ? { cls: 'is-live', text: 'Back on!' } : null;
+  const into = p.card.type !== 'magic' && p.card.type !== 'instant' && p.targetPlayerId && p.targetPlayerId !== p.byPlayerId
+    ? ` into ${nameOf(s, p.targetPlayerId)}'s Stable` : '';
+  return (
+    <>
+      <div className="uu-stage-cards">
+        <UuCardView card={p.card} size="md" />
+        <div className="uu-neighs">
+          {p.neighCards.map((c, i) => (
+            <span key={c.id} style={{ '--nx': `${i * 16 - 16}px`, '--ny': `${14 - i * 8}px`, '--nr': `${(i % 2 ? 1 : -1) * (12 + i * 4)}deg` } as CSSProperties}>
+              <UuCardView card={c} size="sm" inspect={false} />
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="uu-stage-caption"><strong>{nameOf(s, p.byPlayerId)}</strong> played {p.card.name}{into}</div>
+      {verdict && <div className={`uu-verdict ${verdict.cls}`}>{verdict.text}</div>}
+    </>
+  );
+}
+
+/** Answer a play: one button per distinct Instant you hold, plus "let it happen". */
+function NeighDock({ state: s, me, mine, dispatch }: { state: UuState; me: PlayerId; mine: boolean; dispatch: (a: UuAction) => void }) {
+  const p = s.pending!;
+  const neighed = p.neighCards.length % 2 === 1;
+  const able = canPlayNeigh(s, me);
+  const kinds = new Map<string, UuCard[]>();
+  for (const c of handOf(s, me).filter(isNeighCard)) kinds.set(c.kind, [...(kinds.get(c.kind) ?? []), c]);
+  return (
+    <Dock
+      tone="react"
+      eyebrow={mine ? 'Neigh window · your call' : 'Neigh window · you can jump in'}
+      title={neighed ? "It's Neighed — Neigh it back?" : `Neigh ${p.card.name}?`}
+      actions={
+        <>
+          {able && [...kinds.values()].map((cards) => (
+            <UuCardView
+              key={cards[0]!.kind}
+              card={cards[0]!}
+              size="sm"
+              inspect={false}
+              footnote={cards.length > 1 ? `×${cards.length}` : undefined}
+              onClick={() => dispatch({ type: 'playNeigh', playerId: me, cardId: cards[0]!.id })}
+            />
+          ))}
+          {mine && <button className="secondary" onClick={() => dispatch({ type: 'declineNeigh', playerId: me })}>Let it happen</button>}
+        </>
+      }
+    >
+      <strong>{nameOf(s, p.byPlayerId)}</strong> played <strong>{p.card.name}</strong>
+      {p.neighCards.length > 0 && ` — ${p.neighCards.length} on the stack`}.
+      {!able && kinds.size > 0 && ' You can\'t play Instants right now.'}
+      {!mine && ' Or wait your turn to answer.'}
+    </Dock>
+  );
+}
+
+function SkipButton({ me, dispatch }: { me: PlayerId; dispatch: (a: UuAction) => void }) {
+  return <button className="secondary" onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, decline: true })}>Skip</button>;
+}
+
+/** Every prompt the reducer can ask the local player. Keyed by the prompt, so local picks reset. */
+function PromptDock({ state: s, prompt, me, dispatch, handPicks, handNeeded }: {
   state: UuState;
   prompt: UuPrompt;
   me: PlayerId;
   dispatch: (a: UuAction) => void;
+  handPicks: number[];
+  handNeeded: number;
 }) {
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [oraclePick, setOraclePick] = useState<number | null>(null);
-  const [swapOracleRest, setSwapOracleRest] = useState(false);
+  const [swapRest, setSwapRest] = useState(false);
+  const resolve = (extra: Omit<Extract<UuAction, { type: 'resolvePrompt' }>, 'type' | 'playerId'>) => dispatch({ type: 'resolvePrompt', playerId: me, ...extra });
 
-  if (prompt.kind === 'beginningTrigger') {
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(249, 115, 22, 0.15)', border: '2px solid #f97316' }}>
-        <h4 style={{ margin: '0 0 6px' }}>Beginning of Turn: {prompt.sourceCard.name}</h4>
-        <p style={{ margin: '0 0 10px', fontSize: '0.9rem' }}>{prompt.sourceCard.text}</p>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => dispatch({ type: 'resolvePrompt', playerId: me })}>
-            Activate {prompt.sourceCard.name}
-          </button>
-          {!prompt.mandatory && (
-            <button className="secondary" onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, decline: true })}>
-              Skip / Decline
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (prompt.kind === 'chooseCardsFromHand') {
-    const valid = validHandCards(s, prompt);
-    const needed = Math.min(prompt.count, valid.length);
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(234, 179, 8, 0.15)', border: '2px solid #eab308' }}>
-        <h4 style={{ margin: '0 0 6px' }}>{prompt.reason}</h4>
-        <p style={{ margin: '0 0 8px', fontSize: '0.85rem' }}>
-          Select {needed} card(s) ({selectedIds.length} / {needed} selected):
-        </p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-          {valid.map((c) => (
-            <UuCardBox
-              key={c.id}
-              card={c}
-              compact
-              selected={selectedIds.includes(c.id)}
-              onClick={() =>
-                setSelectedIds((cur) =>
-                  cur.includes(c.id)
-                    ? cur.filter((x) => x !== c.id)
-                    : cur.length < needed
-                      ? [...cur, c.id]
-                      : cur,
-                )
-              }
-            />
-          ))}
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            disabled={selectedIds.length !== needed}
-            onClick={() => {
-              dispatch({ type: 'resolvePrompt', playerId: me, cardIds: selectedIds });
-              setSelectedIds([]);
-            }}
-          >
-            Confirm Selection
-          </button>
-          {prompt.optional && (
-            <button
-              className="secondary"
-              onClick={() => {
-                dispatch({ type: 'resolvePrompt', playerId: me, decline: true });
-                setSelectedIds([]);
-              }}
-            >
-              Skip / Decline
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (prompt.kind === 'chooseStableCard') {
-    const valid = validStableTargets(s, prompt);
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(59, 130, 246, 0.15)', border: '2px solid #3b82f6' }}>
-        <h4 style={{ margin: '0 0 8px' }}>{prompt.reason}</h4>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-          {valid.map(({ ownerId, card }) => (
-            <div key={card.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>{seatName(s, ownerId)}'s Stable:</span>
-              <UuCardBox
-                card={card}
-                compact
-                onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, targetCardId: card.id })}
-              />
-            </div>
-          ))}
-        </div>
-        {prompt.optional && (
-          <button className="secondary" onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, decline: true })}>
-            Skip / Decline
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  if (prompt.kind === 'choosePlayer') {
-    const candidates = s.seats.filter(
-      (st) => (prompt.allowSelf ? true : st.id !== me) && st.id !== prompt.movedFromPlayerId,
-    );
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(168, 85, 247, 0.15)', border: '2px solid #a855f7' }}>
-        <h4 style={{ margin: '0 0 8px' }}>{prompt.reason}</h4>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {candidates.map((st) => (
-            <button
-              key={st.id}
-              onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, targetPlayerId: st.id })}
-            >
-              {st.name} (Hand: {handOf(s, st.id).length}, Unicorns: {unicornCount(s, st.id)})
-            </button>
-          ))}
-          {prompt.optional && (
-            <button className="secondary" onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, decline: true })}>
-              Skip / Decline
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  if (prompt.kind === 'chooseFromOpponentHand') {
-    const oppHand = handOf(s, prompt.targetPlayerId);
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(34, 197, 94, 0.15)', border: '2px solid #22c55e' }}>
-        <h4 style={{ margin: '0 0 8px' }}>{prompt.reason}</h4>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          {oppHand.map((c) => (
-            <UuCardBox
-              key={c.id}
-              card={c}
-              compact
-              onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, targetCardId: c.id })}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (prompt.kind === 'chooseFromPile') {
-    const valid = validPileCards(s, prompt);
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(34, 197, 94, 0.15)', border: '2px solid #22c55e' }}>
-        <h4 style={{ margin: '0 0 8px' }}>{prompt.reason}</h4>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 260, overflowY: 'auto', marginBottom: 10 }}>
-          {valid.map((c) => (
-            <UuCardBox
-              key={c.id}
-              card={c}
-              compact
-              onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, targetCardId: c.id })}
-            />
-          ))}
-        </div>
-        {prompt.optional && (
-          <button className="secondary" onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, decline: true })}>
-            Skip / Decline
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  if (prompt.kind === 'oraclePeek') {
-    const pickedId = oraclePick ?? prompt.cards[0]?.id ?? null;
-    const rest = prompt.cards.filter((c) => c.id !== pickedId);
-    const orderedRest = swapOracleRest && rest.length === 2 ? [rest[1]!, rest[0]!] : rest;
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(59, 130, 246, 0.15)', border: '2px solid #3b82f6' }}>
-        <h4 style={{ margin: '0 0 6px' }}>Unicorn Oracle — Look at top 3 cards</h4>
-        <p style={{ margin: '0 0 8px', fontSize: '0.85rem' }}>
-          Click a card to choose which 1 to add to your hand, and arrange the remaining {orderedRest.length} for the top of the deck:
-        </p>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-          {prompt.cards.map((c) => (
-            <UuCardBox
-              key={c.id}
-              card={c}
-              compact
-              selected={pickedId === c.id}
-              onClick={() => setOraclePick(c.id)}
-            />
-          ))}
-        </div>
-        {orderedRest.length === 2 && (
-          <div style={{ marginBottom: 10, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span>
-              Top of deck order: <strong>1st: {orderedRest[0]!.name}</strong>, <strong>2nd: {orderedRest[1]!.name}</strong>
-            </span>
-            <button className="secondary" onClick={() => setSwapOracleRest((v) => !v)}>
-              Swap Top 2 Order
-            </button>
+  switch (prompt.kind) {
+    case 'beginningTrigger':
+      return (
+        <Dock tone="turn" eyebrow="Start of your turn" title={prompt.sourceCard.name} actions={
+          <>
+            <UuCardView card={prompt.sourceCard} size="sm" />
+            <button onClick={() => resolve({})}>Activate</button>
+            {!prompt.mandatory && <SkipButton me={me} dispatch={dispatch} />}
+          </>
+        }>
+          {prompt.sourceCard.text}
+        </Dock>
+      );
+    case 'chooseCardsFromHand':
+      return (
+        <Dock tone="turn" eyebrow="Choose from your hand" title={prompt.reason} actions={
+          <>
+            <button disabled={handPicks.length !== handNeeded} onClick={() => resolve({ cardIds: handPicks })}>Confirm</button>
+            {prompt.optional && <SkipButton me={me} dispatch={dispatch} />}
+          </>
+        }>
+          {handNeeded === 0 ? 'Nothing in your hand fits.' : `Click ${handNeeded} card${handNeeded === 1 ? '' : 's'} in your hand — ${handPicks.length} picked.`}
+        </Dock>
+      );
+    case 'chooseStableCard': {
+      const valid = validStableTargets(s, prompt);
+      const owners = [...new Set(valid.map((v) => v.ownerId))];
+      const verb = { sacrifice: 'Sacrifice', destroy: 'Destroy', steal: 'Steal', bounce: 'Return', moveSource: 'Move', swapGive: 'Give', swapSteal: 'Take' }[prompt.mode];
+      return (
+        <Dock tone={prompt.mode === 'destroy' || prompt.mode === 'sacrifice' ? 'danger' : 'turn'} eyebrow={`${verb} a card`} title={prompt.reason} actions={prompt.optional ? <SkipButton me={me} dispatch={dispatch} /> : undefined}>
+          {valid.length === 0 && 'No card qualifies.'}
+          <div className="uu-choices">
+            {owners.map((o) => (
+              <div key={o} className="uu-owner-group">
+                <span>{o === me ? 'Your Stable' : `${nameOf(s, o)}'s Stable`}</span>
+                <div>
+                  {valid.filter((v) => v.ownerId === o).map(({ card }) => (
+                    <UuCardView key={card.id} card={card} size="sm" onClick={() => resolve({ targetCardId: card.id })} />
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
-        )}
-        <button
-          disabled={pickedId === null}
-          onClick={() => {
-            if (pickedId === null) return;
-            dispatch({
-              type: 'resolvePrompt',
-              playerId: me,
-              oraclePickId: pickedId,
-              oracleTopOrder: orderedRest.map((c) => c.id),
-            });
-            setOraclePick(null);
-            setSwapOracleRest(false);
-          }}
-        >
-          Confirm Oracle Choice
-        </button>
-      </div>
-    );
+        </Dock>
+      );
+    }
+    case 'choosePlayer': {
+      const candidates = s.seats.filter((x) => (prompt.allowSelf ? true : x.id !== me) && x.id !== prompt.movedFromPlayerId);
+      return (
+        <Dock tone="turn" eyebrow="Pick a player" title={prompt.reason} actions={
+          <>
+            {candidates.map((c) => (
+              <button key={c.id} className={c.id === me ? 'secondary' : undefined} onClick={() => resolve({ targetPlayerId: c.id })}>
+                {c.id === me ? 'Me' : c.name} · {unicornCount(s, c.id)}🦄 · {handOf(s, c.id).length} cards
+              </button>
+            ))}
+            {prompt.optional && <SkipButton me={me} dispatch={dispatch} />}
+          </>
+        }>
+          Click a name — or a player above.
+        </Dock>
+      );
+    }
+    case 'chooseFromOpponentHand':
+      return (
+        <Dock tone="turn" eyebrow={`${nameOf(s, prompt.targetPlayerId)}'s hand`} title={prompt.reason}>
+          <div className="uu-choices">
+            {handOf(s, prompt.targetPlayerId).map((c) => <UuCardView key={c.id} card={c} size="sm" onClick={() => resolve({ targetCardId: c.id })} />)}
+          </div>
+        </Dock>
+      );
+    case 'chooseFromPile': {
+      const valid = validPileCards(s, prompt);
+      const pile = prompt.pile === 'deck' ? 'the deck' : prompt.pile === 'nursery' ? 'the Nursery' : 'the discard pile';
+      return (
+        <Dock tone="turn" eyebrow={`Search ${pile}`} title={prompt.reason} actions={prompt.optional ? <SkipButton me={me} dispatch={dispatch} /> : undefined}>
+          {valid.length === 0 && 'Nothing there fits.'}
+          <div className="uu-choices is-scroll">
+            {valid.map((c) => <UuCardView key={c.id} card={c} size="sm" onClick={() => resolve({ targetCardId: c.id })} />)}
+          </div>
+        </Dock>
+      );
+    }
+    case 'oraclePeek': {
+      const pickedId = oraclePick ?? prompt.cards[0]?.id ?? null;
+      const rest = prompt.cards.filter((c) => c.id !== pickedId);
+      const ordered = swapRest && rest.length === 2 ? [rest[1]!, rest[0]!] : rest;
+      return (
+        <Dock tone="turn" eyebrow="Unicorn Oracle" title="Keep one — stack the rest" actions={
+          <button disabled={pickedId === null} onClick={() => pickedId !== null && resolve({ oraclePickId: pickedId, oracleTopOrder: ordered.map((c) => c.id) })}>Confirm</button>
+        }>
+          Click the card to add to your hand. The others go back on top of the deck in the order shown.
+          <div className="uu-choices">
+            {prompt.cards.map((c) => (
+              <UuCardView key={c.id} card={c} size="sm" selected={pickedId === c.id} footnote={pickedId === c.id ? 'keep' : undefined} onClick={() => setOraclePick(c.id)} />
+            ))}
+          </div>
+          {ordered.length === 2 && (
+            <div className="uu-oracle-rest">
+              <span>Back on the deck: <strong>1st {ordered[0]!.name}</strong>, then <strong>{ordered[1]!.name}</strong></span>
+              <button className="secondary tiny" onClick={() => setSwapRest((v) => !v)}>Swap order</button>
+            </div>
+          )}
+        </Dock>
+      );
+    }
+    case 'blackKnightSave': {
+      const protector = findCardInStable(s, me, prompt.blackKnightCardId);
+      const name = protector?.name ?? 'Black Knight Unicorn';
+      return (
+        <Dock tone="danger" eyebrow="Your unicorn is about to be destroyed" title={`Sacrifice ${name} instead?`} actions={
+          <>
+            {protector && <UuCardView card={protector} size="sm" />}
+            <button onClick={() => resolve({ decline: false })}>Sacrifice {name}</button>
+            <button className="secondary" onClick={() => resolve({ decline: true })}>Let it go</button>
+          </>
+        }>
+          {name} can take the hit for the unicorn under attack.
+        </Dock>
+      );
+    }
+    default:
+      return null;
   }
-
-  if (prompt.kind === 'blackKnightSave') {
-    const protectorName = findCardInStable(s, me, prompt.blackKnightCardId)?.name ?? 'Black Knight Unicorn';
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(239, 68, 68, 0.15)', border: '2px solid #ef4444' }}>
-        <h4 style={{ margin: '0 0 6px' }}>{protectorName} — Protect your Unicorn?</h4>
-        <p style={{ margin: '0 0 10px', fontSize: '0.9rem' }}>
-          One of your Unicorns is about to be destroyed. You may SACRIFICE {protectorName} instead!
-        </p>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, decline: false })}>
-            Sacrifice {protectorName}
-          </button>
-          <button className="secondary" onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, decline: true })}>
-            Let Unicorn be Destroyed
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return null;
 }

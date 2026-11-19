@@ -17,6 +17,7 @@ export const doomlingsModule: GameModule<DmState, DmAction, DmConfig> = {
   tagline: 'Evolve a species of weirdos. Outlast the catastrophes.',
   minPlayers: 2,
   maxPlayers: 6,
+  accent: '#8cff5a',
 
   defaultConfig: (_seats: Seat[]): DmConfig => ({ expansions: [] }),
 
@@ -36,10 +37,12 @@ export const doomlingsModule: GameModule<DmState, DmAction, DmConfig> = {
   Thumbnail: DmThumbnail,
 
   ui: async () => {
-    const [{ GameView, LobbyConfig }, { Rules }] = await Promise.all([
+    const [{ GameView, LobbyConfig }, { Rules }, { Gallery }] = await Promise.all([
       import('./ui'),
       import('./Rules'),
+      import('./Gallery'),
+      import('./dm.css'),
     ]);
-    return { GameView, LobbyConfig, Rules };
+    return { GameView, LobbyConfig, Rules, Gallery };
   },
 };

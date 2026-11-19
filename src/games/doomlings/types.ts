@@ -1,8 +1,8 @@
 // Doomlings — types for the Base Game and all 7 official expansions.
 
 import type { GameStateShape } from '@/core/module';
-import type { PlayerId } from '@/core/types';
-import type { ExpansionMeta, ScaffoldConfig } from '../_scaffold';
+import type { ExpansionConfig, ExpansionMeta, PlayerId } from '@/core/types';
+import type { LogEntry } from '@/core/state';
 
 // ============================================================================
 // Expansions & Sources
@@ -25,7 +25,8 @@ export type DmCardSource = 'base' | DmExpansionId;
 
 export type DmTraitColor = 'red' | 'blue' | 'green' | 'purple' | 'colorless';
 
-export const DM_COLORS: readonly DmTraitColor[] = ['red', 'blue', 'green', 'purple', 'colorless'];
+/** The four true colours (colorless doesn't count toward colour sets). */
+export const DM_SCORING_COLORS: readonly DmTraitColor[] = ['red', 'blue', 'green', 'purple'];
 
 export type DmActionTag =
   | 'draw1'
@@ -243,13 +244,6 @@ export type DmPrompt =
       mode?: 'takeToHand' | 'playDirectly';
     };
 
-export interface DmLogEntry {
-  seq: number;
-  byPlayerId: PlayerId | null;
-  text: string;
-  tone: 'normal' | 'danger' | 'good';
-}
-
 // ============================================================================
 // Config (Verified Expansion List from Doomlings)
 // ============================================================================
@@ -299,7 +293,7 @@ export const DM_EXPANSIONS: readonly ExpansionMeta[] = [
   },
 ];
 
-export interface DmConfig extends ScaffoldConfig {
+export interface DmConfig extends ExpansionConfig {
   expansions: string[];
 }
 
@@ -346,7 +340,7 @@ export interface DmState extends GameStateShape {
   promptQueue: DmPrompt[];
   winnerId: PlayerId | null;
 
-  log: DmLogEntry[];
+  log: LogEntry[];
   logSeq: number;
 
   config: DmConfig;

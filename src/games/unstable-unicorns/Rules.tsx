@@ -1,6 +1,6 @@
 // Unstable Unicorns — in-app RulesBook covering Base Rules, Editions, and all 8 Expansions.
 
-import { RulesBook, RulesGrid, RulesHero, RulesTile } from '@/ui/RulesBook';
+import { RulesBook, RulesGrid, RulesHero, RulesTable, RulesTile } from '@/ui/RulesBook';
 import {
   UU_BABY_DEFS,
   UU_CHAOS_EDITION_DEFS,
@@ -133,26 +133,10 @@ export function Rules() {
                   accent="#22c55e"
                 />
               </RulesGrid>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.2)', textAlign: 'left' }}>
-                    <th style={{ padding: 4 }}>Card</th>
-                    <th style={{ padding: 4 }}>Edition</th>
-                    <th style={{ padding: 4 }}>Type</th>
-                    <th style={{ padding: 4 }}>Effect</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {editionDefs.map((d) => (
-                    <tr key={`${d.source}-${d.kind}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                      <td style={{ padding: 4 }}><strong>{d.name}</strong></td>
-                      <td style={{ padding: 4 }}>{d.source}</td>
-                      <td style={{ padding: 4 }}>{d.type}</td>
-                      <td style={{ padding: 4 }}>{d.text}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <RulesTable
+                columns={['Card', 'Edition', 'Type', 'Effect']}
+                rows={editionDefs.map((d) => ({ key: `${d.source}-${d.kind}`, cells: [<strong>{d.name}</strong>, d.source, d.type, d.text] }))}
+              />
             </div>
           ),
         },
@@ -175,26 +159,10 @@ export function Rules() {
                   />
                 ))}
               </RulesGrid>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.2)', textAlign: 'left' }}>
-                    <th style={{ padding: 4 }}>Card</th>
-                    <th style={{ padding: 4 }}>Expansion</th>
-                    <th style={{ padding: 4 }}>Type</th>
-                    <th style={{ padding: 4 }}>Effect</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {UU_EXPANSION_DEFS.map((d) => (
-                    <tr key={`${d.source}-${d.kind}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                      <td style={{ padding: 4 }}><strong>{d.name}</strong></td>
-                      <td style={{ padding: 4 }}>{d.source}</td>
-                      <td style={{ padding: 4 }}>{d.type}</td>
-                      <td style={{ padding: 4 }}>{d.text}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <RulesTable
+                columns={['Card', 'Expansion', 'Type', 'Effect']}
+                rows={UU_EXPANSION_DEFS.map((d) => ({ key: `${d.source}-${d.kind}`, cells: [<strong>{d.name}</strong>, d.source, d.type, d.text] }))}
+              />
             </div>
           ),
         },
@@ -206,26 +174,11 @@ export function Rules() {
                 2nd Edition Base Deck ({totalBabies} Babies + {totalMain} Main Deck = {totalBabies + totalMain} playable
                 cards)
               </h4>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.2)', textAlign: 'left' }}>
-                    <th style={{ padding: 4 }}>Card</th>
-                    <th style={{ padding: 4 }}>Type</th>
-                    <th style={{ padding: 4 }}>×</th>
-                    <th style={{ padding: 4 }}>Effect</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {UU_MAIN_DECK_DEFS.map((d) => (
-                    <tr key={d.kind} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                      <td style={{ padding: 4 }}><strong>{d.name}</strong></td>
-                      <td style={{ padding: 4 }}>{d.type}</td>
-                      <td style={{ padding: 4 }}>{d.count}</td>
-                      <td style={{ padding: 4 }}>{d.text}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <RulesTable
+                columns={['Card', 'Type', '×', 'Effect']}
+                rows={UU_MAIN_DECK_DEFS.map((d) => ({ key: d.kind, cells: [<strong>{d.name}</strong>, d.type, d.count, d.text] }))}
+                numeric={[2]}
+              />
             </div>
           ),
         },

@@ -1,8 +1,8 @@
 // Casting Shadows — types for the Base Game + Ice Storm + Molten Rock Expansions.
 
 import type { GameStateShape } from '@/core/module';
-import type { PlayerId } from '@/core/types';
-import type { ExpansionMeta, ScaffoldConfig } from '../_scaffold';
+import type { ExpansionConfig, ExpansionMeta, PlayerId } from '@/core/types';
+import type { LogEntry } from '@/core/state';
 
 // ============================================================================
 // Hex Map & Resources
@@ -140,13 +140,6 @@ export interface CsPendingAttack {
   inflictBurn?: boolean;
 }
 
-export interface CsLogEntry {
-  seq: number;
-  byPlayerId: PlayerId | null;
-  text: string;
-  tone: 'normal' | 'danger' | 'good';
-}
-
 // ============================================================================
 // Config
 // ============================================================================
@@ -168,7 +161,7 @@ export const CS_EXPANSIONS: readonly ExpansionMeta[] = [
   },
 ];
 
-export interface CsConfig extends ScaffoldConfig {
+export interface CsConfig extends ExpansionConfig {
   expansions: CsExpansionId[];
   characterByPlayer: Record<PlayerId, string>;
 }
@@ -207,7 +200,7 @@ export interface CsState extends GameStateShape {
   pendingAttack: CsPendingAttack | null;
   winnerId: PlayerId | null;
 
-  log: CsLogEntry[];
+  log: LogEntry[];
   logSeq: number;
 
   config: CsConfig;

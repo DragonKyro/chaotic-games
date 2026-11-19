@@ -12,9 +12,9 @@ import {
   canAffordCost,
   canCollectCard,
   getShadowAbilityCost,
-  livePlayerIds,
 } from './reducer';
 import type { CsAction, CsHexId, CsState } from './types';
+import { livePlayerIds } from '@/core/state';
 
 export function chooseAIAction(state: CsState, playerId: PlayerId): CsAction | null {
   if (state.phase === 'gameOver') return null;

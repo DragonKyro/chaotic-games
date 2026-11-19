@@ -1,6 +1,6 @@
 // Casting Shadows — pure deterministic reducer for Base Game + Ice Storm + Molten Rock.
 
-import { shuffle } from '@/core/rng';
+import { createRng, shuffle } from '@/core/rng';
 import type { PlayerId, Seat } from '@/core/types';
 import {
   areHexesAdjacent,
@@ -24,8 +24,8 @@ import type {
   CsResourceCost,
   CsState,
 } from './types';
+import { cloneState, isLive, livePlayerIds, pushLog, seatName } from '@/core/state';
 
-const LOG_CAP = 60;
 const SPELLBOOK_LIMIT = 5;
 
 export interface AttackEffects {
@@ -39,7 +39,7 @@ export interface AttackEffects {
 // ============================================================================
 
 export function createInitialState(config: CsConfig, seed: number, seats: Seat[]): CsState {
-  const rngState = { seed: seed >>> 0 };
+  const rngState = createRng(seed);
   const first = seats[0];
   if (!first) throw new Error('Casting Shadows needs at least one seat');
 
@@ -151,33 +151,10 @@ export function getShadowAbilityCost(b: CsPlayerBoard): number {
 // Helpers & Resource Payment
 // ============================================================================
 
-function clone(state: CsState): CsState {
-  return JSON.parse(JSON.stringify(state)) as CsState;
-}
-
-function pushLog(s: CsState, byPlayerId: PlayerId | null, text: string, tone: 'normal' | 'danger' | 'good') {
-  s.logSeq += 1;
-  s.log.push({ seq: s.logSeq, byPlayerId, text, tone });
-  if (s.log.length > LOG_CAP) s.log = s.log.slice(-LOG_CAP);
-}
-
-export function seatName(s: CsState, id: PlayerId | null): string {
-  if (!id) return 'Someone';
-  return s.seats.find((x) => x.id === id)?.name ?? 'Someone';
-}
-
 export function boardOf(s: CsState, id: PlayerId): CsPlayerBoard {
   const b = s.boards[id];
   if (!b) throw new Error(`unknown board ${id}`);
   return b;
-}
-
-export function isLive(s: CsState, id: PlayerId): boolean {
-  return !s.eliminated.includes(id);
-}
-
-export function livePlayerIds(s: CsState): PlayerId[] {
-  return s.seats.filter((st) => isLive(s, st.id)).map((st) => st.id);
 }
 
 export function combinedPool(s: CsState): CsResource[] {
@@ -283,8 +260,13 @@ function checkElimination(s: CsState, targetId: PlayerId) {
     s.subPhase = 'gameOver';
     s.activePlayerId = null;
     s.winnerId = winner;
+    // Score = how many players you outlasted (the last-one-standing convention, as in
+    // Exploding Kittens): the end screen then ranks the fallen in the order they fell.
     s.finalScores = Object.fromEntries(
-      s.seats.map((st) => [st.id, isLive(s, st.id) ? 100 + boardOf(s, st.id).hp : 0]),
+      s.seats.map((st) => {
+        const place = s.eliminated.indexOf(st.id);
+        return [st.id, place < 0 ? s.seats.length - 1 : place];
+      }),
     );
     pushLog(s, winner, `🏆 ${seatName(s, winner)} is the Ultimate Shadow Caster!`, 'good');
   }
@@ -1054,7 +1036,7 @@ function handleRespondCounterspell(s: CsState, a: Extract<CsAction, { type: 'res
 
 export function applyAction(state: CsState, action: CsAction): CsState {
   if (state.phase === 'gameOver') throw new Error('the game is over');
-  const s = clone(state);
+  const s = cloneState(state);
 
   switch (action.type) {
     case 'rollResourceDice':

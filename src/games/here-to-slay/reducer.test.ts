@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { Seat } from '@/core/types';
 import {
   HTS_BERSERKERS_NECROMANCERS_DECK_DEFS,
   HTS_BERSERKERS_NECROMANCERS_LEADERS,
@@ -19,16 +18,7 @@ import { chooseAIAction } from './ai';
 import { hereToSlayModule } from './module';
 import { applyAction, createInitialState, getClassesToWin, partyClasses } from './reducer';
 import type { HtsCard, HtsConfig } from './types';
-
-function makeSeats(n: number): Seat[] {
-  return Array.from({ length: n }, (_, i) => ({
-    id: `p${i + 1}`,
-    name: `Player ${i + 1}`,
-    color: '#000',
-    isAI: true,
-    isLocal: false,
-  }));
-}
+import { makeSeats, playOut } from '@/core/playout';
 
 const DEFAULT_CFG: HtsConfig = { expansions: [], monstersToWin: 3 };
 
@@ -441,16 +431,8 @@ describe('Here to Slay — mechanics & player decisions', () => {
   it('plays full AI-vs-AI games to completion across Base Game and all Expansions', () => {
     for (const playerCount of [2, 3, 4]) {
       for (let seed = 1; seed <= 3; seed++) {
-        let s = createInitialState(DEFAULT_CFG, seed * 29, makeSeats(playerCount));
-        let steps = 0;
-        while (s.phase !== 'gameOver' && steps < 2500) {
-          const active = s.activePlayerId;
-          expect(active).toBeTruthy();
-          const action = chooseAIAction(s, active!);
-          expect(action).toBeTruthy();
-          s = applyAction(s, action!);
-          steps++;
-        }
+        const { state: s, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState(DEFAULT_CFG, seed * 29, makeSeats(playerCount)), 2500);
+        expect(stuck).toBe(false);
         expect(s.phase).toBe('gameOver');
         expect(s.winnerId).toBeTruthy();
       }
@@ -464,16 +446,8 @@ describe('Here to Slay — mechanics & player decisions', () => {
     ];
 
     for (const cfg of expansionConfigs) {
-      let s = createInitialState(cfg, 77, makeSeats(3));
-      let steps = 0;
-      while (s.phase !== 'gameOver' && steps < 3000) {
-        const active = s.activePlayerId;
-        expect(active).toBeTruthy();
-        const action = chooseAIAction(s, active!);
-        expect(action).toBeTruthy();
-        s = applyAction(s, action!);
-        steps++;
-      }
+      const { state: s, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState(cfg, 77, makeSeats(3)), 3000);
+      expect(stuck).toBe(false);
       expect(s.phase).toBe('gameOver');
       expect(s.winnerId).toBeTruthy();
     }

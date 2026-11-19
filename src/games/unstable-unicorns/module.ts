@@ -15,6 +15,7 @@ export const unstableUnicornsModule: GameModule<UuState, UuAction, UuConfig> = {
   tagline: 'Build a unicorn army. Betray your friends. Neigh everything.',
   minPlayers: 2,
   maxPlayers: 8,
+  accent: '#ff5fd2',
 
   Thumbnail,
 
@@ -31,10 +32,12 @@ export const unstableUnicornsModule: GameModule<UuState, UuAction, UuConfig> = {
   chooseAIAction,
 
   ui: async () => {
-    const [{ GameView, LobbyConfig }, { Rules }] = await Promise.all([
+    const [{ GameView, LobbyConfig }, { Rules }, { Gallery }] = await Promise.all([
       import('./ui'),
       import('./Rules'),
+      import('./Gallery'),
+      import('./uu.css'),
     ]);
-    return { GameView, LobbyConfig, Rules };
+    return { GameView, LobbyConfig, Rules, Gallery };
   },
 };

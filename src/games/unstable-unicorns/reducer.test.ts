@@ -16,16 +16,7 @@ import {
 } from './reducer';
 import { UU_EXPANSIONS } from './types';
 import type { UuCard, UuConfig, UuEdition, UuExpansionId } from './types';
-
-function makeSeats(n: number): Seat[] {
-  return Array.from({ length: n }, (_, i) => ({
-    id: `p${i + 1}`,
-    name: `Player ${i + 1}`,
-    color: '#000',
-    isAI: true,
-    isLocal: false,
-  }));
-}
+import { makeSeats, playOut } from '@/core/playout';
 
 const DEFAULT_CFG: UuConfig = { expansions: [], edition: 'base-2nd' };
 
@@ -171,16 +162,8 @@ describe('Unstable Unicorns — core mechanics & player decisions', () => {
   it('plays full AI-vs-AI games to completion without errors or infinite loops', () => {
     for (const playerCount of [2, 3, 4]) {
       for (let seed = 1; seed <= 4; seed++) {
-        let s = createInitialState(DEFAULT_CFG, seed * 17, makeSeats(playerCount));
-        let steps = 0;
-        while (s.phase !== 'gameOver' && steps < 2000) {
-          const active = s.activePlayerId;
-          expect(active).toBeTruthy();
-          const action = chooseAIAction(s, active!);
-          expect(action).toBeTruthy();
-          s = applyAction(s, action!);
-          steps++;
-        }
+        const { state: s, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState(DEFAULT_CFG, seed * 17, makeSeats(playerCount)), 2000);
+        expect(stuck).toBe(false);
         expect(s.phase).toBe('gameOver');
         expect(s.winnerId).toBeTruthy();
       }
@@ -196,14 +179,8 @@ describe('Unstable Unicorns — core mechanics & player decisions', () => {
       { id: 'guest-uuid', name: 'Gus', color: '#3a6ec9', isAI: false, isLocal: false },
       { id: 'ai-1', name: 'AI', color: '#f37025', isAI: true, isLocal: false },
     ];
-    let s = createInitialState(unstableUnicornsModule.defaultConfig(seats), 304094739, seats);
-    let steps = 0;
-    while (s.phase !== 'gameOver' && steps < 2000) {
-      const action = chooseAIAction(s, s.activePlayerId!);
-      expect(action).toBeTruthy();
-      s = applyAction(s, action!);
-      steps++;
-    }
+    const { state: s, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState(unstableUnicornsModule.defaultConfig(seats), 304094739, seats), 2000);
+    expect(stuck).toBe(false);
     expect(s.phase).toBe('gameOver');
   });
 });
@@ -389,16 +366,8 @@ describe('Unstable Unicorns — all 8 Expansions & Editions', () => {
   it('plays full AI-vs-AI games to completion across every Edition', () => {
     const editions: UuEdition[] = ['base-2nd', 'base', 'control', 'chaos', 'diamond', 'travel'];
     for (const edition of editions) {
-      let s = createInitialState({ edition, expansions: [] }, 91, makeSeats(3));
-      let steps = 0;
-      while (s.phase !== 'gameOver' && steps < 2500) {
-        const active = s.activePlayerId;
-        expect(active).toBeTruthy();
-        const action = chooseAIAction(s, active!);
-        expect(action).toBeTruthy();
-        s = applyAction(s, action!);
-        steps++;
-      }
+      const { state: s, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState({ edition, expansions: [] }, 91, makeSeats(3)), 2500);
+      expect(stuck).toBe(false);
       expect(s.phase).toBe('gameOver');
       expect(s.winnerId).toBeTruthy();
     }
@@ -408,32 +377,16 @@ describe('Unstable Unicorns — all 8 Expansions & Editions', () => {
     const seats = makeSeats(3);
     for (const exp of UU_EXPANSIONS) {
       const expId = exp.id as UuExpansionId;
-      let s = createInitialState({ edition: 'base-2nd', expansions: [expId] }, 123, seats);
-      let steps = 0;
-      while (s.phase !== 'gameOver' && steps < 2500) {
-        const active = s.activePlayerId;
-        expect(active).toBeTruthy();
-        const action = chooseAIAction(s, active!);
-        expect(action).toBeTruthy();
-        s = applyAction(s, action!);
-        steps++;
-      }
+      const { state: s, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState({ edition: 'base-2nd', expansions: [expId] }, 123, seats), 2500);
+      expect(stuck).toBe(false);
       expect(s.phase).toBe('gameOver');
       expect(s.winnerId).toBeTruthy();
     }
 
     // All 8 expansions combined
     const allExpIds = UU_EXPANSIONS.map((e) => e.id as UuExpansionId);
-    let sAll = createInitialState({ edition: 'base-2nd', expansions: allExpIds }, 456, seats);
-    let steps = 0;
-    while (sAll.phase !== 'gameOver' && steps < 3000) {
-      const active = sAll.activePlayerId;
-      expect(active).toBeTruthy();
-      const action = chooseAIAction(sAll, active!);
-      expect(action).toBeTruthy();
-      sAll = applyAction(sAll, action!);
-      steps++;
-    }
+    const { state: sAll, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState({ edition: 'base-2nd', expansions: allExpIds }, 456, seats), 3000);
+    expect(stuck).toBe(false);
     expect(sAll.phase).toBe('gameOver');
     expect(sAll.winnerId).toBeTruthy();
   });

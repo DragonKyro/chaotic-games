@@ -1,7 +1,7 @@
 // Here to Slay — pure deterministic reducer for Base Game + Expansions
 // (Warriors & Druids, Berserkers & Necromancers, Here to Sleigh).
 
-import { rngInt, shuffle } from '@/core/rng';
+import { createRng, rngInt, shuffle } from '@/core/rng';
 import type { PlayerId, Seat } from '@/core/types';
 import { dealHtsSetup, HTS_ALL_PARTY_LEADERS, HTS_PARTY_LEADERS } from './cards';
 import type {
@@ -15,8 +15,8 @@ import type {
   HtsPrompt,
   HtsState,
 } from './types';
+import { cloneState, pushLog, seatName } from '@/core/state';
 
-const LOG_CAP = 60;
 const HAND_LIMIT = 7;
 
 export function getClassesToWin(config: HtsConfig): number {
@@ -34,7 +34,7 @@ export function getClassesToWin(config: HtsConfig): number {
 // ============================================================================
 
 export function createInitialState(config: HtsConfig, seed: number, seats: Seat[]): HtsState {
-  const rngState = { seed: seed >>> 0 };
+  const rngState = createRng(seed);
   const first = seats[0];
   if (!first) throw new Error('Here to Slay needs at least one seat');
 
@@ -102,21 +102,6 @@ export function createInitialState(config: HtsConfig, seed: number, seats: Seat[
 // Helpers & Continuous Passive Queries
 // ============================================================================
 
-function clone(state: HtsState): HtsState {
-  return JSON.parse(JSON.stringify(state)) as HtsState;
-}
-
-function pushLog(s: HtsState, byPlayerId: PlayerId | null, text: string, tone: 'normal' | 'danger' | 'good') {
-  s.logSeq += 1;
-  s.log.push({ seq: s.logSeq, byPlayerId, text, tone });
-  if (s.log.length > LOG_CAP) s.log = s.log.slice(-LOG_CAP);
-}
-
-export function seatName(s: HtsState, id: PlayerId | null): string {
-  if (!id) return 'Someone';
-  return s.seats.find((x) => x.id === id)?.name ?? 'Someone';
-}
-
 export function handOf(s: HtsState, id: PlayerId): HtsCard[] {
   const h = s.hands[id];
   if (!h) throw new Error(`unknown hand ${id}`);
@@ -141,7 +126,7 @@ export function niceGiftsOf(s: HtsState, id: PlayerId): HtsCard[] {
   return s.niceGifts[id]!;
 }
 
-export function hasTrophy(s: HtsState, playerId: PlayerId, monsterKind: string): boolean {
+function hasTrophy(s: HtsState, playerId: PlayerId, monsterKind: string): boolean {
   return trophiesOf(s, playerId).some((m) => m.card.kind === monsterKind);
 }
 
@@ -156,7 +141,7 @@ export function heroHasItemKind(h: HtsPartyHero, kind: string): boolean {
   return heroEquippedItems(h).some((i) => i.kind === kind);
 }
 
-export function heroMaxItems(h: HtsPartyHero): number {
+function heroMaxItems(h: HtsPartyHero): number {
   if (heroHasItemKind(h, 'bottomless-bag')) return 3;
   return h.card.maxItems ?? 1;
 }
@@ -173,7 +158,7 @@ export function canEquipItemToHero(h: HtsPartyHero, itemCard?: HtsCard): boolean
   return true;
 }
 
-export function equipItemOnHero(h: HtsPartyHero, itemCard: HtsCard): boolean {
+function equipItemOnHero(h: HtsPartyHero, itemCard: HtsCard): boolean {
   if (!canEquipItemToHero(h, itemCard)) return false;
   if (!h.equippedItem) {
     h.equippedItem = itemCard;
@@ -183,7 +168,7 @@ export function equipItemOnHero(h: HtsPartyHero, itemCard: HtsCard): boolean {
   return true;
 }
 
-export function countPartyEquippedItems(s: HtsState, playerId: PlayerId): number {
+function countPartyEquippedItems(s: HtsState, playerId: PlayerId): number {
   let total = 0;
   for (const h of partyOf(s, playerId)) {
     total += heroEquippedItems(h).length;
@@ -191,7 +176,7 @@ export function countPartyEquippedItems(s: HtsState, playerId: PlayerId): number
   return total;
 }
 
-export function heroEffectiveClass(h: HtsPartyHero): HtsBaseClass | null {
+function heroEffectiveClass(h: HtsPartyHero): HtsBaseClass | null {
   for (const item of heroEquippedItems(h)) {
     if (item.class) return item.class;
   }
@@ -219,13 +204,13 @@ export function canAttackMonster(s: HtsState, playerId: PlayerId, monster: HtsMo
   return true;
 }
 
-export function canDestroyPartyHero(s: HtsState, ownerId: PlayerId): boolean {
+function canDestroyPartyHero(s: HtsState, ownerId: PlayerId): boolean {
   if (s.protectedFromDestroy[ownerId]) return false;
   if (hasTrophy(s, ownerId, 'monster-terratuga')) return false;
   return true;
 }
 
-export function canStealPartyHero(s: HtsState, ownerId: PlayerId): boolean {
+function canStealPartyHero(s: HtsState, ownerId: PlayerId): boolean {
   if (s.protectedFromSteal[ownerId]) return false;
   return true;
 }
@@ -2875,7 +2860,7 @@ function finishTurnAdvance(s: HtsState) {
 
 export function applyAction(state: HtsState, action: HtsAction): HtsState {
   if (state.phase === 'gameOver') throw new Error('the game is over');
-  const s = clone(state);
+  const s = cloneState(state);
 
   switch (action.type) {
     case 'choosePartyLeader':

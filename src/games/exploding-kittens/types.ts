@@ -42,8 +42,8 @@
 // without any special-casing (same trick the sibling project used).
 
 import type { GameStateShape } from '@/core/module';
-import type { PlayerId } from '@/core/types';
-import type { ExpansionMeta, ScaffoldConfig } from '../_scaffold';
+import type { ExpansionConfig, ExpansionMeta, PlayerId } from '@/core/types';
+import type { LogEntry } from '@/core/state';
 
 // ============================================================================
 // Cards
@@ -153,15 +153,6 @@ export interface EkPendingPlay {
 // A take-that game is unreadable without a record of who did what to whom, so
 // the log is part of replicated state. Capped in the reducer.
 
-export interface EkLogEntry {
-  /** Monotonic counter, not a timestamp — reducers must stay pure. */
-  seq: number;
-  byPlayerId: PlayerId | null;
-  text: string;
-  /** Drives log styling: explosions and eliminations read differently. */
-  tone: 'normal' | 'danger' | 'good';
-}
-
 // ============================================================================
 // Config
 // ============================================================================
@@ -213,7 +204,7 @@ export const EK_EXPANSIONS: readonly ExpansionMeta[] = [
   },
 ];
 
-export interface EkConfig extends ScaffoldConfig {
+export interface EkConfig extends ExpansionConfig {
   /** Enabled expansion packs. */
   expansions: EkExpansionId[];
   /**
@@ -227,8 +218,6 @@ export interface EkConfig extends ScaffoldConfig {
    * form a combo; true = cat cards only.
    */
   combosCatsOnly: boolean;
-  /** Optional seat count from the lobby for player-count vs expansion validation. */
-  playerCount?: number;
 }
 
 // ============================================================================
@@ -348,7 +337,7 @@ export interface EkState extends GameStateShape {
   /** Whether resolving the current pendingKitten ends the active turn (true on draw, false on mid-turn exposure). */
   defuseEndsTurn?: boolean;
 
-  log: EkLogEntry[];
+  log: LogEntry[];
   logSeq: number;
 
   config: EkConfig;

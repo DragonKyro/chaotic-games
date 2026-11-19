@@ -1,0 +1,542 @@
+/* ==========================================================================
+   Casting Shadows — "moonlit arcane woodland".
+   Night-teal table under starlight, rune hexes that glow from within, tarot
+   cards with elemental borders, faceted gem dice. The kit does the layout;
+   this file themes it and draws the map, cards and the caster's area.
+   ========================================================================== */
+
+@import '@fontsource/almendra/latin-400.css';
+@import '@fontsource/almendra/latin-700.css';
+
+.cs-table {
+  --cg-felt:
+    radial-gradient(1.2px 1.2px at 12% 18%, rgba(224, 253, 255, 0.7), transparent 60%),
+    radial-gradient(1px 1px at 68% 8%, rgba(224, 253, 255, 0.6), transparent 60%),
+    radial-gradient(1.4px 1.4px at 88% 26%, rgba(224, 253, 255, 0.5), transparent 60%),
+    radial-gradient(1px 1px at 34% 62%, rgba(176, 107, 255, 0.6), transparent 60%),
+    radial-gradient(1.2px 1.2px at 78% 72%, rgba(124, 245, 255, 0.55), transparent 60%),
+    radial-gradient(90% 70% at 50% 30%, #0d3346 0%, #071a2a 45%, #040b16 100%);
+  --cg-surface: rgba(6, 18, 30, 0.86);
+  --cg-surface-2: #12324a;
+  --cg-edge: #02060c;
+  --cg-ink: #02060c;
+  --cg-text: #e8fbff;
+  --cg-dim: #9cc4d4;
+  --cg-accent: #7cf5ff;
+  --cg-accent-ink: #032029;
+  --cg-danger: #ff5a6a;
+  --cg-good: #7dffb6;
+  --cg-display: 'Almendra', 'Georgia', serif;
+  --cg-radius: 14px;
+  --cg-card-w: 96px;
+  --cs-shadow: #b06bff;
+}
+.cs-table .cg-dock-title { font-weight: 700; font-size: 24px; }
+.cs-table .cg-log-title, .cs-table .cg-panel-head h4 { font-weight: 700; font-size: 15px; letter-spacing: 0.03em; }
+.cs-table.is-eclipse { animation: cs-eclipse 900ms ease both; }
+@keyframes cs-eclipse {
+  0% { filter: none; }
+  30% { filter: saturate(1.6) hue-rotate(40deg) brightness(0.8); }
+  100% { filter: none; }
+}
+
+/* ==========================================================================
+   Gems, costs, tiers
+   ========================================================================== */
+
+.cs-gem { display: inline-block; vertical-align: middle; flex-shrink: 0; }
+.cs-cost { display: inline-flex; align-items: center; gap: 1px; }
+.cs-cost-free { font-size: 0.85em; font-style: italic; opacity: 0.8; }
+.cs-tier { display: inline-flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 1px 3px; max-width: 100%; }
+.cs-tier-arrow { opacity: 0.6; font-size: 0.9em; }
+.cs-tier-fx { display: inline-flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 1px 3px; }
+.cs-fx-dmg {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.5em;
+  height: 1.5em;
+  padding: 0 3px;
+  font-weight: 800;
+  color: #fff;
+  background: radial-gradient(circle at 35% 30%, #ff9a7a, #d8253a);
+  border: 1.5px solid var(--cg-ink, #02060c);
+  border-radius: 50% 50% 46% 54%;
+  font-size: 0.85em;
+}
+.cs-fx-heal { color: #7dffb6; font-weight: 800; }
+.cs-fx-shield { color: #ffe1a6; font-weight: 800; }
+.cs-fx-shade { color: #e7c8ff; font-weight: 800; }
+.cs-fx-status { font-size: 0.78em; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #9feeff; }
+
+/* ==========================================================================
+   Cards — tarot frames
+   ========================================================================== */
+
+.cs-card {
+  --w: 96px;
+  --el: #7cf5ff;
+  --el-glow: #e0fdff;
+  --el-deep: #071d2a;
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: var(--w);
+  aspect-ratio: 5 / 8;
+  padding: calc(var(--w) * 0.07) calc(var(--w) * 0.06) calc(var(--w) * 0.05);
+  border-radius: calc(var(--w) * 0.09);
+  border: 2.5px solid var(--cg-ink, #02060c);
+  background:
+    linear-gradient(170deg, color-mix(in srgb, var(--el) 26%, transparent), transparent 46%),
+    radial-gradient(120% 70% at 50% 100%, color-mix(in srgb, var(--el-deep) 90%, #000), #050c16);
+  box-shadow:
+    inset 0 0 0 calc(var(--w) * 0.025) color-mix(in srgb, var(--el) 70%, transparent),
+    inset 0 0 0 calc(var(--w) * 0.04) var(--cg-ink, #02060c),
+    3px 3px 0 var(--cg-ink, #02060c);
+  color: #f3fdff;
+  font: inherit;
+  text-align: center;
+  user-select: none;
+  transition: transform var(--dur-med) var(--ease-spring), box-shadow var(--dur-med) var(--ease-out), filter var(--dur-med);
+}
+button.cs-card { cursor: pointer; }
+.cs-card-xs { --w: 44px; border-width: 1.5px; box-shadow: inset 0 0 0 1px var(--el), 1px 1px 0 var(--cg-ink, #02060c); padding: 3px; }
+.cs-card-sm { --w: 70px; }
+.cs-card-md { --w: 96px; }
+.cs-card-lg { --w: 158px; }
+
+.cs-card-crown {
+  position: absolute;
+  top: calc(var(--w) * -0.005);
+  left: 50%;
+  translate: -50% -40%;
+  z-index: 2;
+  min-width: calc(var(--w) * 0.26);
+  padding: 0 calc(var(--w) * 0.05);
+  font-family: 'Almendra', Georgia, serif;
+  font-weight: 700;
+  font-size: calc(var(--w) * 0.13);
+  line-height: 1.35;
+  color: var(--cg-ink, #02060c);
+  background: var(--el-glow);
+  border: 1.5px solid var(--cg-ink, #02060c);
+  border-radius: 999px;
+}
+.cs-card-xs .cs-card-crown { display: none; }
+
+.cs-card-window {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  aspect-ratio: 1 / 0.92;
+  overflow: hidden;
+  border-radius: 50% 50% calc(var(--w) * 0.05) calc(var(--w) * 0.05) / 44% 44% calc(var(--w) * 0.05) calc(var(--w) * 0.05);
+  border: 1.5px solid var(--cg-ink, #02060c);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--el) 60%, transparent);
+}
+.cs-card-xs .cs-card-window { border-radius: 40% 40% 3px 3px / 30% 30% 3px 3px; }
+.cs-card-window .cs-art { display: block; width: 100%; height: 100%; }
+
+.cs-card-name {
+  margin-top: calc(var(--w) * 0.05);
+  font-family: 'Almendra', Georgia, serif;
+  font-weight: 700;
+  font-size: calc(var(--w) * 0.13);
+  line-height: 1.02;
+  color: var(--el-glow);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cs-card-xs .cs-card-name { font-size: 7px; margin-top: 2px; -webkit-line-clamp: 1; }
+.cs-card-type {
+  margin-top: 2px;
+  font-size: calc(var(--w) * 0.075);
+  font-weight: 600;
+  line-height: 1.1;
+  color: color-mix(in srgb, var(--el) 60%, #cfe9f2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cs-card-tiers { display: flex; flex-direction: column; align-items: center; gap: 2px; margin-top: auto; padding-top: 3px; font-size: calc(var(--w) * 0.1); }
+.cs-card-text { margin-top: 4px; font-size: calc(var(--w) * 0.068); line-height: 1.25; color: #cfe9f2; }
+.cs-card-collect { margin-top: 4px; display: inline-flex; align-items: center; gap: 4px; font-size: calc(var(--w) * 0.066); color: var(--cg-dim, #9cc4d4); text-transform: uppercase; letter-spacing: 0.05em; }
+.cs-card-lg .cs-card-tiers { margin-top: 4px; }
+
+.cs-card-foot {
+  position: absolute;
+  z-index: 3;
+  right: -6px;
+  bottom: 22%;
+  padding: 0 6px;
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--cg-ink, #02060c);
+  background: var(--cg-accent, #7cf5ff);
+  border: 1.5px solid var(--cg-ink, #02060c);
+  border-radius: 6px;
+  transform: rotate(5deg);
+}
+
+/* Frames by card type. */
+.cs-type-counterspell {
+  background:
+    repeating-linear-gradient(135deg, rgba(201, 212, 255, 0.07) 0 6px, transparent 6px 12px),
+    radial-gradient(120% 70% at 50% 100%, #1a2150, #070b1e);
+}
+.cs-type-counterspell .cs-card-window { border-radius: calc(var(--w) * 0.05) calc(var(--w) * 0.05) 50% 50% / calc(var(--w) * 0.05) calc(var(--w) * 0.05) 40% 40%; }
+.cs-type-companion {
+  background: radial-gradient(120% 70% at 50% 100%, #0a3326, #03110c);
+}
+.cs-type-companion .cs-card-window { border-radius: 50%; aspect-ratio: 1; width: 92%; }
+.cs-type-resource .cs-card-window { border-radius: calc(var(--w) * 0.1); }
+
+.cs-card.is-interactive:hover { transform: translateY(-5px) rotate(-1deg); box-shadow: inset 0 0 0 calc(var(--w) * 0.025) var(--el), inset 0 0 0 calc(var(--w) * 0.04) var(--cg-ink, #02060c), 4px 7px 0 var(--cg-ink, #02060c), 0 0 18px -2px var(--el); }
+.cs-card.is-selected {
+  transform: translateY(-16px);
+  box-shadow: inset 0 0 0 calc(var(--w) * 0.025) var(--el), inset 0 0 0 calc(var(--w) * 0.04) var(--cg-ink, #02060c), 0 0 0 3px var(--cg-accent, #7cf5ff), 0 0 24px var(--el);
+}
+.cs-card.is-used { filter: grayscale(0.7) brightness(0.65); }
+.cs-card.is-used::after {
+  content: 'cast';
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  translate: -50% -50%;
+  rotate: -12deg;
+  padding: 0 8px;
+  font-family: 'Almendra', Georgia, serif;
+  font-weight: 700;
+  font-size: calc(var(--w) * 0.18);
+  color: var(--cg-accent, #7cf5ff);
+  border: 2px solid currentColor;
+  border-radius: 8px;
+  background: rgba(2, 6, 12, 0.7);
+}
+.cs-card.is-disabled.is-interactive, .cs-book .cs-card.is-disabled { filter: saturate(0.55) brightness(0.8); }
+
+.cs-card.is-facedown { padding: 0; overflow: hidden; background: #040812; box-shadow: 2px 2px 0 var(--cg-ink, #02060c); }
+.cs-card.is-facedown .cs-back { display: block; width: 100%; height: 100%; }
+.cs-card-back-label {
+  position: absolute;
+  left: 50%;
+  bottom: 6%;
+  translate: -50% 0;
+  padding: 0 7px;
+  font-size: 10.5px;
+  font-weight: 800;
+  white-space: nowrap;
+  color: var(--cg-ink, #02060c);
+  background: var(--cg-accent, #7cf5ff);
+  border: 1.5px solid var(--cg-ink, #02060c);
+  border-radius: 999px;
+}
+
+.cs-card-preview { --w: 290px; padding: 22px 18px 16px; }
+.cs-card-preview .cs-card-text { font-size: 15px; }
+.cs-card-preview .cs-card-tiers { font-size: 17px; }
+
+/* ==========================================================================
+   The map
+   ========================================================================== */
+
+.cs-boardwrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 12px;
+  align-items: stretch;
+}
+.cs-mapframe {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: 6px;
+  border-radius: var(--cg-radius);
+  border: 2px solid rgba(124, 245, 255, 0.14);
+  background: radial-gradient(70% 70% at 50% 50%, rgba(124, 245, 255, 0.06), transparent 75%);
+}
+.cs-map { position: relative; width: 100%; max-height: 420px; max-width: calc(420px * 1.12); margin: 0 auto; }
+.cs-map-svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+.cs-hex { cursor: pointer; }
+.cs-hex > polygon:first-child { transition: transform var(--dur-med) var(--ease-spring); }
+.cs-hex-rim { opacity: 0.55; transition: opacity var(--dur-med), stroke-width var(--dur-med); }
+.cs-hex:hover .cs-hex-rim { opacity: 1; stroke-width: 2.6; }
+.cs-hex.is-mine .cs-hex-rim { opacity: 1; stroke-width: 2.6; stroke: #e0fdff; }
+.cs-hex.is-reach .cs-hex-rim { opacity: 1; stroke-width: 2.4; stroke-dasharray: 5 4; stroke: var(--glow); }
+.cs-hex.is-selected .cs-hex-rim { opacity: 1; stroke-width: 3.2; stroke: #ffffff; }
+.cs-hex.is-target .cs-hex-rim { opacity: 1; stroke: #ff5a6a; stroke-width: 3.4; }
+.cs-hex.is-target > polygon:first-child { fill-opacity: 0.85; }
+.cs-hex.is-dim { opacity: 0.45; }
+.cs-hex-name {
+  font-family: 'Almendra', Georgia, serif;
+  font-weight: 700;
+  font-size: 7.2px;
+  fill: #f0fdff;
+  stroke: #02060c;
+  stroke-width: 2.4px;
+  paint-order: stroke;
+  pointer-events: none;
+}
+.cs-hex-tag {
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  fill: var(--glow);
+  stroke: #02060c;
+  stroke-width: 2px;
+  paint-order: stroke;
+  pointer-events: none;
+}
+
+.cs-map-card { position: absolute; translate: -50% -50%; z-index: 3; rotate: 6deg; }
+.cs-map-card .cs-card { --w: clamp(26px, 2.6vw, 36px); }
+
+.cs-travel {
+  position: absolute;
+  translate: -50% -50%;
+  z-index: 5;
+  padding: 1px 9px;
+  font-size: 11.5px;
+  font-weight: 800;
+  border-radius: 999px;
+  background: var(--cg-accent);
+  color: var(--cg-accent-ink);
+  border: 2px solid var(--cg-ink);
+  box-shadow: 2px 2px 0 var(--cg-ink);
+  animation: cg-pop 300ms var(--ease-spring) both;
+}
+
+.cs-orb {
+  --seat: #fff;
+  position: absolute;
+  z-index: 6;
+  translate: -50% -50%;
+  display: grid;
+  place-items: center;
+  width: clamp(20px, 2.2vw, 28px);
+  height: clamp(20px, 2.2vw, 28px);
+  padding: 0;
+  font-size: 11px;
+  font-weight: 800;
+  color: #02060c;
+  border-radius: 50%;
+  border: 2px solid #02060c;
+  background: radial-gradient(circle at 35% 30%, #fff 0%, var(--seat) 55%, color-mix(in srgb, var(--seat) 60%, #000) 100%);
+  box-shadow: 0 0 10px 1px var(--seat), 1px 1px 0 #02060c;
+  transition: left 620ms var(--ease-out), top 620ms var(--ease-out), transform var(--dur-fast);
+  cursor: default;
+}
+.cs-orb.is-shadow { background: radial-gradient(circle at 35% 30%, #c9a0ff 0%, #2a1050 60%, #0c0418 100%); color: var(--seat); box-shadow: 0 0 10px 2px #b06bff, inset 0 0 0 2px var(--seat); }
+.cs-orb.is-me { outline: 2px dashed #e0fdff; outline-offset: 2px; }
+.cs-orb.is-turn { --pulse: color-mix(in srgb, var(--seat) 70%, transparent); animation: cg-pulse-ring 1.6s ease-out infinite; }
+.cs-orb.is-target { cursor: crosshair; transform: scale(1.25); outline: 3px solid #ff5a6a; outline-offset: 2px; }
+
+/* Hex details beside the map. */
+.cs-hexinfo { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.cs-hexinfo h4 { margin: 0; font-family: var(--cg-display); font-weight: 700; font-size: 19px; color: var(--cg-text); }
+.cs-hexinfo-effect { margin: 0; font-size: 12.5px; color: var(--cg-dim); line-height: 1.35; }
+.cs-hexinfo-card { display: flex; gap: 10px; align-items: flex-start; }
+.cs-hexinfo-actions { display: flex; flex-direction: column; gap: 6px; }
+.cs-hexinfo-actions button { font-size: 13px; padding: 5px 10px; }
+.cs-hexinfo-who { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* ==========================================================================
+   Plates: HP crystals, shadow energy
+   ========================================================================== */
+
+.cs-plate-avatar { display: block; width: 46px; height: 46px; border-radius: 50%; overflow: hidden; border: 2.5px solid var(--seat, #fff); box-shadow: 0 0 0 2px var(--cg-ink); background: #02060c; }
+.cs-plate-avatar .cs-caster { display: block; width: 100%; height: 100%; }
+.cs-plate-avatar.is-shadow { border-color: #b06bff; }
+
+.cs-hp { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.cs-hp-bar { position: relative; flex: 1; display: grid; grid-template-columns: repeat(var(--max, 18), 1fr); gap: 1.5px; min-width: 80px; max-width: 170px; }
+.cs-hp-bar i {
+  display: block;
+  height: 9px;
+  clip-path: polygon(50% 0, 100% 30%, 100% 70%, 50% 100%, 0 70%, 0 30%);
+  background: #1a2b38;
+}
+.cs-hp-bar i.is-on { background: linear-gradient(180deg, #ffb3c1, #ff3d5a 60%, #a3122f); }
+.cs-hp-bar.is-low i.is-on { background: linear-gradient(180deg, #ffd27a, #ff7a3d 60%, #a3122f); }
+.cs-hp-num { font-weight: 800; font-size: 12.5px; font-variant-numeric: tabular-nums; min-width: 2.4em; }
+
+.cs-energy { display: inline-flex; gap: 3px; align-items: center; }
+.cs-energy i { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid #6b3fb0; background: transparent; }
+.cs-energy i.is-on { background: radial-gradient(circle at 35% 30%, #e7c8ff, #b06bff); border-color: #02060c; box-shadow: 0 0 6px #b06bff; }
+
+.cs-plate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; font-size: 12px; color: var(--cg-dim); }
+/* Opponents' spell books as element pips; hover one for the card (hidden counterspells stay blank). */
+.cs-pips { display: inline-flex; gap: 3px; }
+.cs-pip {
+  display: block;
+  width: 11px;
+  height: 17px;
+  border-radius: 3px;
+  border: 1.5px solid #02060c;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--el, #7cf5ff) 70%, #fff), var(--el, #7cf5ff) 60%, color-mix(in srgb, var(--el, #7cf5ff) 50%, #000));
+  cursor: help;
+}
+.cs-pip.is-hidden { background: repeating-linear-gradient(135deg, #2a3366 0 3px, #11163a 3px 6px); cursor: default; }
+
+.cs-pop {
+  position: absolute;
+  z-index: 20;
+  right: 14px;
+  top: -6px;
+  font-family: var(--cg-display);
+  font-weight: 700;
+  font-size: 26px;
+  pointer-events: none;
+  text-shadow: 2px 2px 0 var(--cg-ink), 0 0 12px currentColor;
+  animation: cs-pop-up 1100ms var(--ease-out) both;
+}
+.cs-pop.is-hurt { color: #ff5a6a; }
+.cs-pop.is-heal { color: #7dffb6; }
+@keyframes cs-pop-up {
+  0% { opacity: 0; transform: translateY(10px) scale(0.6); }
+  20% { opacity: 1; transform: translateY(-4px) scale(1.15); }
+  70% { opacity: 1; transform: translateY(-14px) scale(1); }
+  100% { opacity: 0; transform: translateY(-26px) scale(0.95); }
+}
+
+/* ==========================================================================
+   Your area: caster, pool, spell book
+   ========================================================================== */
+
+.cs-you {
+  display: grid;
+  grid-template-columns: minmax(200px, 230px) minmax(220px, 300px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+  padding: 10px 12px;
+  border-radius: var(--cg-radius);
+  border: 2px solid var(--cg-edge);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.12));
+}
+.cs-you-section { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cs-you-title { margin: 0; font-family: var(--cg-display); font-weight: 700; font-size: 17px; letter-spacing: 0.02em; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.cs-you-title small { font-family: var(--font-ui); font-size: 12px; font-weight: 700; color: var(--cg-dim); }
+
+.cs-me { display: flex; gap: 10px; align-items: center; }
+.cs-me-portrait { position: relative; display: block; width: 74px; height: 74px; flex-shrink: 0; border-radius: 14px; overflow: hidden; border: 2.5px solid var(--seat, #7cf5ff); box-shadow: 0 0 0 2px var(--cg-ink), 0 0 18px -4px var(--seat, #7cf5ff); }
+.cs-me-portrait.is-shadow { border-color: #b06bff; box-shadow: 0 0 0 2px var(--cg-ink), 0 0 22px -2px #b06bff; }
+.cs-me-portrait .cs-caster { display: block; width: 100%; height: 100%; }
+.cs-me-name { font-family: var(--cg-display); font-weight: 700; font-size: 15px; line-height: 1.1; }
+
+.cs-ap { display: inline-flex; gap: 4px; align-items: center; }
+.cs-ap i {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid #02060c;
+  background: #12324a;
+}
+.cs-ap i.is-on { background: radial-gradient(circle at 35% 30%, #fff, #7cf5ff 60%); box-shadow: 0 0 8px #7cf5ff; }
+
+.cs-pool { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 52px; }
+.cs-die { display: inline-block; border-radius: 12px; cursor: default; transition: transform var(--dur-fast) var(--ease-spring); }
+.cs-die .cg-die-face {
+  border-radius: 26%;
+  background:
+    conic-gradient(from 45deg, rgba(255, 255, 255, 0.18) 0 25%, transparent 0 50%, rgba(0, 0, 0, 0.22) 0 75%, transparent 0),
+    radial-gradient(circle at 35% 28%, color-mix(in srgb, var(--die-c) 55%, #fff) 0%, var(--die-c) 55%, color-mix(in srgb, var(--die-c) 45%, #000) 100%);
+  border: 2px solid var(--cg-ink, #02060c);
+  box-shadow: 2px 2px 0 var(--cg-ink, #02060c), inset 0 0 0 2px rgba(255, 255, 255, 0.12);
+}
+.cs-die-red { --die-c: #6a1828; }
+.cs-die-blue { --die-c: #15306a; }
+.cs-die-purple { --die-c: #3a1a66; }
+.cs-die-token { --die-c: #24323e; }
+.cs-die.is-pickable { cursor: pointer; }
+.cs-die.is-pickable:hover { transform: translateY(-3px); }
+.cs-die.is-picked { transform: translateY(-7px); }
+.cs-die.is-picked .cg-die-face { box-shadow: 0 0 0 3px var(--cg-accent, #7cf5ff), 0 0 14px var(--cg-accent, #7cf5ff); }
+.cs-die.is-token .cg-die-face { border-radius: 50%; border-style: dashed; }
+.cs-pool-empty { font-size: 13px; color: var(--cg-dim); font-style: italic; }
+.cs-pool-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.cs-pool-actions button { font-size: 12.5px; padding: 4px 10px; }
+
+.cs-book { min-height: 170px; }
+.cs-book .cg-fan { padding-top: 22px; padding-bottom: 0; }
+.cs-book-empty { padding: 24px; text-align: center; color: var(--cg-dim); font-style: italic; }
+
+.cs-choices { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.cs-choices.is-cards { align-items: flex-end; }
+.cs-choices button.is-on { background: var(--cg-accent); color: var(--cg-accent-ink); }
+.cs-tier-btn { display: inline-flex; align-items: center; gap: 6px; }
+.cs-target-btn { display: inline-flex; align-items: center; gap: 6px; }
+.cs-target-btn i { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--cg-ink); }
+
+.cs-status-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* ==========================================================================
+   Stage moments + gallery
+   ========================================================================== */
+
+.cs-incoming { display: flex; align-items: center; gap: 8px; }
+.cs-gameover-art { display: block; width: 96px; height: 96px; border-radius: 18px; overflow: hidden; border: 3px solid var(--seat, #7cf5ff); }
+.cs-gameover-art .cs-caster { display: block; width: 100%; height: 100%; }
+
+.cs-gallery { display: block; padding: 20px; }
+.cs-gallery h3 { font-family: var(--cg-display); font-weight: 700; margin: 10px 0 12px; }
+.cs-gallery-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; margin-bottom: 20px; }
+.cs-gallery-caster { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; color: var(--cg-dim); width: 220px; }
+.cs-gallery-caster .cs-caster { width: 104px; height: 104px; border-radius: 14px; border: 2px solid #02060c; display: inline-block; }
+.cs-gallery-caster { flex-direction: row; flex-wrap: wrap; justify-content: center; }
+.cs-gallery-caster span { width: 100%; text-align: center; }
+
+@media (max-width: 1180px) {
+  .cs-you { grid-template-columns: minmax(190px, 1fr) minmax(200px, 1fr); }
+  .cs-you > .cs-you-book { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+  .cs-boardwrap { grid-template-columns: 1fr; }
+  .cs-you { grid-template-columns: 1fr; }
+  .cs-table { --cg-card-w: 80px; }
+  .cs-book .cs-card-md { --w: 80px; }
+  .cs-map { max-height: none; max-width: none; }
+}
+
+/* ==========================================================================
+   Lobby: pick a caster per seat (renders outside the table)
+   ========================================================================== */
+
+.cs-lobby-casters { display: flex; flex-direction: column; gap: 8px; }
+.cs-lobby-seat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--night-1, #151024);
+  border: 2px solid var(--line, #3b3066);
+}
+.cs-lobby-seat-name { display: inline-flex; align-items: center; gap: 8px; font-weight: 800; }
+.cs-lobby-seat-name i { width: 12px; height: 12px; border-radius: 50%; background: var(--seat); border: 2px solid #02060c; }
+.cs-lobby-seat-name small { font-weight: 600; color: var(--text-dim, #bdb2dd); }
+.cs-lobby-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.cs-lobby-caster {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 2px solid #02060c;
+  background: #02060c;
+  box-shadow: 2px 2px 0 #02060c;
+  opacity: 0.6;
+}
+.cs-lobby-caster .cs-caster { display: block; width: 100%; height: 100%; }
+.cs-lobby-caster:hover:not(:disabled) { opacity: 1; transform: translateY(-2px); }
+.cs-lobby-caster.is-on { opacity: 1; border-color: #7cf5ff; box-shadow: 0 0 0 2px #7cf5ff, 0 0 14px -2px #7cf5ff; }
+
+.cs-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid #02060c; }

@@ -1,8 +1,8 @@
 // Happy Little Dinosaurs — types for Base Game + all 4 Expansions.
 
 import type { GameStateShape } from '@/core/module';
-import type { PlayerId } from '@/core/types';
-import type { ExpansionMeta, ScaffoldConfig } from '../_scaffold';
+import type { ExpansionConfig, ExpansionMeta, PlayerId } from '@/core/types';
+import type { LogEntry } from '@/core/state';
 
 // ============================================================================
 // Dinosaurs, Disasters, Hazards & Cards
@@ -185,13 +185,6 @@ export type HldPrompt =
       canTransferToOpponent: boolean;
     };
 
-export interface HldLogEntry {
-  seq: number;
-  byPlayerId: PlayerId | null;
-  text: string;
-  tone: 'normal' | 'danger' | 'good';
-}
-
 // ============================================================================
 // Config
 // ============================================================================
@@ -229,7 +222,7 @@ export const HLD_EXPANSIONS: readonly ExpansionMeta[] = [
   },
 ];
 
-export interface HldConfig extends ScaffoldConfig {
+export interface HldConfig extends ExpansionConfig {
   expansions: HldExpansionId[];
   trackLength: number;
   dinoSelections?: Record<PlayerId, HldDinoId>;
@@ -290,7 +283,7 @@ export interface HldState extends GameStateShape {
   winnerId: PlayerId | null;
 
   roundNumber: number;
-  log: HldLogEntry[];
+  log: LogEntry[];
   logSeq: number;
 
   config: HldConfig;

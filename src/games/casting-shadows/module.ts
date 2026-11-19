@@ -9,14 +9,13 @@ import { Thumbnail } from './Thumbnail';
 
 const NAME = 'Casting Shadows';
 
-export const castingShadowsModule: GameModule<CsState, CsAction, CsConfig> & {
-  validateConfig: (config: CsConfig, seats?: Seat[]) => string[];
-} = {
+export const castingShadowsModule: GameModule<CsState, CsAction, CsConfig> = {
   id: 'casting-shadows',
   name: NAME,
   tagline: 'Gather sparks, craft spells, and let your shadow off the leash.',
   minPlayers: 2,
   maxPlayers: 6,
+  accent: '#7cf5ff',
 
   Thumbnail,
 
@@ -25,7 +24,7 @@ export const castingShadowsModule: GameModule<CsState, CsAction, CsConfig> & {
     characterByPlayer: {},
   }),
 
-  validateConfig: (config: CsConfig, seats?: Seat[]) => {
+  validateConfig: (config, seats) => {
     const errors: string[] = [];
     const playerCount = seats?.length ?? Object.keys(config.characterByPlayer).length;
     if (playerCount > 4 && config.expansions.length === 0) {
@@ -39,10 +38,12 @@ export const castingShadowsModule: GameModule<CsState, CsAction, CsConfig> & {
   chooseAIAction,
 
   ui: async () => {
-    const [{ GameView, LobbyConfig }, { Rules }] = await Promise.all([
+    const [{ GameView, LobbyConfig }, { Rules }, { Gallery }] = await Promise.all([
       import('./ui'),
       import('./Rules'),
+      import('./Gallery'),
+      import('./cs.css'),
     ]);
-    return { GameView, LobbyConfig, Rules };
+    return { GameView, LobbyConfig, Rules, Gallery };
   },
 };

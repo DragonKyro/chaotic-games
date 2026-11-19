@@ -5,7 +5,7 @@
 // Throws on illegal actions. The UI is responsible for only offering legal ones;
 // a throw means either a bug or a desynced peer.
 
-import { shuffle, rngInt } from '@/core/rng';
+import { createRng, rngInt, shuffle } from '@/core/rng';
 import type { Seat } from '@/core/types';
 import type { PlayerId } from '@/core/types';
 import {
@@ -26,8 +26,8 @@ import type {
   EkPendingPlay,
   EkState,
 } from './types';
+import { cloneState, isLive, livePlayerIds, pushLog, seatName } from '@/core/state';
 
-const LOG_CAP = 60;
 const FUTURE_COUNT = 3;
 
 // ============================================================================
@@ -35,7 +35,7 @@ const FUTURE_COUNT = 3;
 // ============================================================================
 
 export function createInitialState(config: EkConfig, seed: number, seats: Seat[]): EkState {
-  const rngState = { seed: seed >>> 0 };
+  const rngState = createRng(seed);
   const { deck, hands } = dealSetup(seats, rngState, config.handSize, config.expansions);
   const first = seats[0];
   if (!first) throw new Error('Exploding Kittens needs at least one seat');
@@ -92,29 +92,6 @@ export function createInitialState(config: EkConfig, seed: number, seats: Seat[]
  * The state is a few dozen small objects, so the cost is irrelevant and it
  * removes a whole class of accidental-shared-reference bugs.
  */
-function clone(state: EkState): EkState {
-  return JSON.parse(JSON.stringify(state)) as EkState;
-}
-
-function pushLog(s: EkState, byPlayerId: PlayerId | null, text: string, tone: 'normal' | 'danger' | 'good') {
-  s.logSeq += 1;
-  s.log.push({ seq: s.logSeq, byPlayerId, text, tone });
-  if (s.log.length > LOG_CAP) s.log = s.log.slice(-LOG_CAP);
-}
-
-export function seatName(s: EkState, id: PlayerId | null): string {
-  if (!id) return 'Someone';
-  return s.seats.find((x) => x.id === id)?.name ?? 'Someone';
-}
-
-export function isLive(s: EkState, id: PlayerId): boolean {
-  return !s.eliminated.includes(id);
-}
-
-export function livePlayerIds(s: EkState): PlayerId[] {
-  return s.seats.filter((x) => isLive(s, x.id)).map((x) => x.id);
-}
-
 /** Live players in current turn order starting from `from`. */
 function livePlayersFrom(s: EkState, from: PlayerId): PlayerId[] {
   const n = s.seats.length;
@@ -1283,7 +1260,7 @@ function handlePickDigDeeper(s: EkState, a: Extract<EkAction, { type: 'pickDigDe
 
 export function applyAction(state: EkState, action: EkAction): EkState {
   if (state.phase === 'gameOver') throw new Error('the game is over');
-  const s = clone(state);
+  const s = cloneState(state);
 
   switch (action.type) {
     case 'playCards': handlePlayCards(s, action); break;

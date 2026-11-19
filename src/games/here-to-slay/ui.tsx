@@ -1,27 +1,30 @@
-// Here to Slay — LobbyConfig + GameView with full player decision support.
+// Here to Slay — lobby config + in-game view, on the shared table kit.
+//
+// Hidden information: only `localPlayerId`'s hand is ever rendered (cards
+// shown to a player by Sharp Fox / Bullseye come from their own prompt). The
+// deck is only ever a count. Dice are public: every roll goes through the
+// roll tray — live while a modifier window is open, and afterwards for a few
+// seconds with its verdict.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { randomSeed, rngInt } from '@/core/rng';
 import type { PlayerId, Seat } from '@/core/types';
+import { seatName } from '@/core/state';
+import {
+  CardFan, Chip, Die, Dock, ExpansionPicker, FxLayer, GameLog, GameOverPanel, GameTable, PlayerPlate, PlayerStrip,
+  TurnCue, useFx, usePulse,
+} from '@/ui/kit';
+import { LeaderBanner } from './art';
 import { getPartyLeadersForExpansions } from './cards';
 import {
-  canAttackMonster,
-  canEquipItemToHero,
-  computeRollTotals,
-  getClassesToWin,
-  handOf,
-  heroEffectiveClass,
-  heroEquippedItems,
-  heroHasItemKind,
-  niceGiftsOf,
-  partyClasses,
-  partyOf,
-  seatName,
-  trophiesOf,
-  validHandCardsForPrompt,
-  validHeroTargets,
+  ApLanterns, ClassSlots, FaceDownCard, HtsCardView, MonsterCard, Pennant, TrophyRow, rollLabel,
+} from './Card';
+import {
+  canAttackMonster, canEquipItemToHero, computeRollTotals, getClassesToWin, handOf, heroEquippedItems, heroHasItemKind,
+  niceGiftsOf, partyClasses, partyOf, trophiesOf, validHandCardsForPrompt, validHeroTargets,
 } from './reducer';
-import type { HtsAction, HtsCard, HtsConfig, HtsExpansionId, HtsPrompt, HtsState } from './types';
+import { CLASS_META, WaxSeal } from './sigils';
+import type { HtsAction, HtsCard, HtsConfig, HtsExpansionId, HtsMonster, HtsPartyHero, HtsPendingRoll, HtsPrompt, HtsState } from './types';
 import { HTS_EXPANSIONS } from './types';
 
 function rollClient2d6(): [number, number] {
@@ -29,990 +32,916 @@ function rollClient2d6(): [number, number] {
   return [rngInt(rng, 6) + 1, rngInt(rng, 6) + 1];
 }
 
-export function Thumbnail() {
-  return (
-    <svg viewBox="0 0 240 140" style={{ width: '100%', height: 'auto', display: 'block' }}>
-      <defs>
-        <linearGradient id="hts-bg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#1e1b4b" />
-          <stop offset="50%" stopColor="#311042" />
-          <stop offset="100%" stopColor="#450a0a" />
-        </linearGradient>
-      </defs>
-      <rect width="240" height="140" rx="12" fill="url(#hts-bg)" />
-      {/* Crossed Swords & Shield */}
-      <path d="M58 106 L124 40 M50 98 L66 114" stroke="#e2e8f0" strokeWidth="4" strokeLinecap="round" />
-      <path d="M182 106 L116 40 M190 98 L174 114" stroke="#e2e8f0" strokeWidth="4" strokeLinecap="round" />
-      <path
-        d="M120 26 L152 38 V68 C152 92 136 108 120 116 C104 108 88 92 88 68 V38 Z"
-        fill="#7f1d1d"
-        stroke="#facc15"
-        strokeWidth="3"
-      />
-      {/* 2d6 Dice on Shield */}
-      <rect x="99" y="54" width="18" height="18" rx="3" fill="#f8fafc" stroke="#0f172a" strokeWidth="1.5" />
-      <circle cx="104" cy="59" r="1.7" fill="#0f172a" />
-      <circle cx="112" cy="67" r="1.7" fill="#0f172a" />
-      <rect x="123" y="54" width="18" height="18" rx="3" fill="#facc15" stroke="#0f172a" strokeWidth="1.5" />
-      <circle cx="128" cy="59" r="1.7" fill="#0f172a" />
-      <circle cx="132" cy="63" r="1.7" fill="#0f172a" />
-      <circle cx="136" cy="67" r="1.7" fill="#0f172a" />
-      {/* Class Gems */}
-      <circle cx="36" cy="36" r="6" fill="#ef4444" />
-      <circle cx="36" cy="56" r="6" fill="#f97316" />
-      <circle cx="36" cy="76" r="6" fill="#eab308" />
-      <circle cx="204" cy="36" r="6" fill="#22c55e" />
-      <circle cx="204" cy="56" r="6" fill="#3b82f6" />
-      <circle cx="204" cy="76" r="6" fill="#a855f7" />
-      <text
-        x="120"
-        y="131"
-        textAnchor="middle"
-        fill="#fef08a"
-        fontSize="12"
-        fontWeight="700"
-        letterSpacing="1"
-      >
-        HERE TO SLAY
-      </text>
-    </svg>
-  );
-}
+// ============================================================================
+// Lobby
+// ============================================================================
 
-export function LobbyConfig({
-  config,
-  onChange,
-}: {
+export function LobbyConfig({ config, onChange, readOnly }: {
   config: HtsConfig;
-  seats: Seat[];
+  seats?: Seat[];
   onChange: (c: HtsConfig) => void;
+  readOnly?: boolean;
 }) {
   const classesToWin = getClassesToWin(config);
-
-  const toggleExpansion = (expId: HtsExpansionId) => {
-    const has = config.expansions.includes(expId);
-    const nextExpansions = has
-      ? config.expansions.filter((x) => x !== expId)
-      : [...config.expansions, expId];
-    const hasClassExp =
-      nextExpansions.includes('warriors-druids') || nextExpansions.includes('berserkers-necromancers');
-    onChange({
-      ...config,
-      expansions: nextExpansions,
-      classesToWin: hasClassExp ? 7 : 6,
-    });
+  const toggle = (id: string) => {
+    const expId = id as HtsExpansionId;
+    const next = config.expansions.includes(expId) ? config.expansions.filter((x) => x !== expId) : [...config.expansions, expId];
+    const classExp = next.includes('warriors-druids') || next.includes('berserkers-necromancers');
+    onChange({ ...config, expansions: next, classesToWin: classExp ? 7 : 6 });
   };
-
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span>Monsters to Slay to Win</span>
-        <select
-          value={config.monstersToWin}
-          onChange={(e) => onChange({ ...config, monstersToWin: Number(e.target.value) })}
-        >
-          <option value={3}>3 Monsters (Standard Rulebook)</option>
-          <option value={2}>2 Monsters (Quick Game)</option>
+    <div className="game-config">
+      <label className="field">
+        <span>Monsters to slay to win</span>
+        <select value={config.monstersToWin} onChange={(e) => onChange({ ...config, monstersToWin: Number(e.target.value) })}>
+          <option value={3}>3 monsters (rulebook)</option>
+          <option value={2}>2 monsters (quick game)</option>
         </select>
       </label>
-
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span>Distinct Hero Classes to Win</span>
-        <select
-          value={classesToWin}
-          onChange={(e) => onChange({ ...config, classesToWin: Number(e.target.value) })}
-        >
-          <option value={6}>6 Classes (Base Game Standard)</option>
-          <option value={7}>7 Classes (Standard with Class Expansion)</option>
-          <option value={8}>8 Classes (Epic Party)</option>
+      <label className="field">
+        <span>Distinct classes to win</span>
+        <select value={classesToWin} onChange={(e) => onChange({ ...config, classesToWin: Number(e.target.value) })}>
+          <option value={6}>6 classes (base game)</option>
+          <option value={7}>7 classes (with a class expansion)</option>
+          <option value={8}>8 classes (epic party)</option>
         </select>
       </label>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <span>Expansions</span>
-        {HTS_EXPANSIONS.map((exp) => {
-          const checked = config.expansions.includes(exp.id as HtsExpansionId);
-          return (
-            <label
-              key={exp.id}
-              style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 8,
-                padding: '6px 8px',
-                borderRadius: 6,
-                background: checked ? 'rgba(250,204,21,0.12)' : 'rgba(255,255,255,0.03)',
-                border: `1px solid ${checked ? '#facc15' : 'rgba(255,255,255,0.12)'}`,
-                cursor: 'pointer',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={() => toggleExpansion(exp.id as HtsExpansionId)}
-              />
-              <div style={{ fontSize: '0.82rem' }}>
-                <strong>{exp.name}</strong> — <span style={{ opacity: 0.85 }}>{exp.summary}</span>
-              </div>
-            </label>
-          );
-        })}
-      </div>
-
-      <p style={{ margin: 0, fontSize: '0.85rem', opacity: 0.8 }}>
-        2–6 players. 3 Action Points per turn. Slay {config.monstersToWin} Monsters OR assemble {classesToWin} distinct
-        Hero classes{config.expansions.includes('here-to-sleigh') ? ' OR collect 3 Nice List Gifts' : ''} to win!
+      <ExpansionPicker expansions={HTS_EXPANSIONS} enabled={config.expansions} onToggle={toggle} readOnly={readOnly} />
+      <p className="lobby-hint" style={{ margin: 0 }}>
+        3 action points a turn. Slay {config.monstersToWin} monsters or gather {classesToWin} classes
+        {config.expansions.includes('here-to-sleigh') ? ', or collect 3 Nice Gifts,' : ''} to win.
       </p>
     </div>
   );
 }
 
-const CLASS_COLORS: Record<string, string> = {
-  fighter: '#ef4444',
-  bard: '#f97316',
-  guardian: '#eab308',
-  ranger: '#22c55e',
-  thief: '#3b82f6',
-  wizard: '#a855f7',
-  warrior: '#0ea5e9',
-  druid: '#10b981',
-  berserker: '#dc2626',
-  necromancer: '#7c3aed',
-};
+// ============================================================================
+// Game view
+// ============================================================================
 
-function HtsCardTile({
-  card,
-  selected,
-  onClick,
-  badgeText,
-  compact,
-}: {
-  card: HtsCard;
-  selected?: boolean;
-  onClick?: () => void;
-  badgeText?: string;
-  compact?: boolean;
-}) {
-  const color = (card.class && CLASS_COLORS[card.class]) || '#64748b';
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        border: `2px solid ${selected ? '#facc15' : color}`,
-        borderRadius: 8,
-        padding: compact ? '6px 8px' : '8px 10px',
-        background: selected ? 'rgba(250,204,21,0.15)' : 'rgba(255,255,255,0.04)',
-        width: compact ? 155 : 185,
-        cursor: onClick ? 'pointer' : 'default',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 4,
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
-        <strong style={{ fontSize: '0.84rem' }}>{card.name}</strong>
-        <span
-          style={{
-            fontSize: '0.68rem',
-            padding: '1px 5px',
-            borderRadius: 4,
-            background: color,
-            color: '#fff',
-          }}
-        >
-          {badgeText ?? card.class ?? card.type}
-        </span>
-      </div>
-      {card.abilityThreshold && (
-        <div style={{ fontSize: '0.74rem', color: card.rollLow ? '#34d399' : '#facc15' }}>
-          Roll {card.rollLow ? `≤${card.abilityThreshold}` : `${card.abilityThreshold}+`}
-        </div>
-      )}
-      <div style={{ fontSize: '0.73rem', opacity: 0.85, lineHeight: 1.25 }}>{card.text}</div>
-    </div>
-  );
-}
-
-export function GameView({
-  state: s,
-  localPlayerId: me,
-  dispatch,
-}: {
+interface ViewProps {
   state: HtsState;
   localPlayerId: PlayerId | null;
   dispatch: (action: HtsAction) => void;
-}) {
+}
+
+/** A roll the tray can show after it resolved: someone's window closing, or this device's own throw. */
+interface RecentRoll {
+  key: number;
+  roll: HtsPendingRoll;
+  actorTotal: number;
+  challengerTotal: number;
+  /** Name of the hero / monster / card rolled for. */
+  subject: string;
+}
+
+const PROMPT_WAIT: Record<HtsPrompt['kind'], string> = {
+  rollEnteredHero: 'is rolling for a new hero',
+  chooseHeroTarget: 'is choosing a hero',
+  chooseCardsFromHand: 'is choosing cards',
+  choosePlayer: 'is choosing a player',
+  chooseFromPile: 'is choosing a card',
+  bullseyePeek: 'is peeking at the deck',
+  peekHandAck: 'is peeking at a hand',
+  corruptedSabretoothChoice: 'is deciding to steal or destroy',
+};
+
+function maxAp(s: HtsState, id: PlayerId): number {
+  return trophiesOf(s, id).some((m) => m.card.kind === 'monster-mega-slime') ? 4 : 3;
+}
+
+function rollSubject(s: HtsState, r: HtsPendingRoll): string {
+  if (r.reason === 'monsterAttack') return s.monsterRow.find((m) => m.card.id === r.sourceCardId)?.card.name ?? 'a monster';
+  if (r.reason === 'challengeDuel') return s.pendingPlay?.card.name ?? 'the card';
+  for (const seat of s.seats) {
+    const h = partyOf(s, seat.id).find((x) => x.card.id === r.sourceCardId);
+    if (h) return h.card.name;
+  }
+  return 'a hero';
+}
+
+/** Did a resolved roll succeed? (Duels: did the card survive the challenge.) */
+function verdict(s: HtsState, rr: RecentRoll): { good: boolean; label: string } {
+  const r = rr.roll;
+  if (r.reason === 'challengeDuel') {
+    const challengerWon = rr.challengerTotal >= rr.actorTotal;
+    return { good: !challengerWon, label: challengerWon ? 'Challenge won!' : 'Card stands!' };
+  }
+  if (r.reason === 'monsterAttack') {
+    const m = s.monsterRow.find((x) => x.card.id === r.sourceCardId) ?? s.seats.flatMap((st) => trophiesOf(s, st.id)).find((x) => x.card.id === r.sourceCardId);
+    if (m) {
+      const slain = m.slayOnLow ? rr.actorTotal <= m.slayThreshold : rr.actorTotal >= m.slayThreshold;
+      const failed = m.slayOnLow ? rr.actorTotal >= m.failThreshold : rr.actorTotal <= m.failThreshold;
+      return slain ? { good: true, label: 'Slain!' } : failed ? { good: false, label: 'Mauled!' } : { good: false, label: 'It holds…' };
+    }
+  }
+  const ok = r.rollLow ? rr.actorTotal <= r.threshold : rr.actorTotal >= r.threshold;
+  return { good: ok, label: ok ? 'Success!' : 'Failed' };
+}
+
+export function GameView({ state: s, localPlayerId: me, dispatch }: ViewProps) {
   const [selectedHandId, setSelectedHandId] = useState<number | null>(null);
-  const [equipTargetPlayer, setEquipTargetPlayer] = useState<PlayerId | null>(null);
-  const [equipTargetHero, setEquipTargetHero] = useState<number | null>(null);
-  const [shadowClawTarget, setShadowClawTarget] = useState<PlayerId | null>(null);
+  const [picked, setPicked] = useState<number[]>([]);
+  const [clawArmed, setClawArmed] = useState(false);
+  const [recent, setRecent] = useState<RecentRoll | null>(null);
+  const rollCounter = useRef(0);
+  const fx = useFx();
+  const [shaking, shake] = usePulse(520);
 
   const myHand = me ? handOf(s, me) : [];
-  const isMyTurn = me !== null && s.turnPlayerId === me;
-  const selectedCard = myHand.find((c) => c.id === selectedHandId) ?? null;
+  const isMyTurn = me !== null && s.turnPlayerId === me && s.phase === 'playing';
+  const canAct = isMyTurn && s.subPhase === 'awaitingAction';
+  const prompt = s.subPhase === 'awaitingPrompt' ? s.promptQueue[0] ?? null : null;
+  const myPrompt = prompt && me && prompt.playerId === me && s.activePlayerId === me ? prompt : null;
+  const selectedCard = canAct ? myHand.find((c) => c.id === selectedHandId) ?? null : null;
+  const opponents = s.seats.filter((x) => x.id !== me);
+  const classesToWin = getClassesToWin(s.config);
+  const sleigh = s.config.expansions.includes('here-to-sleigh');
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* Top Status Bar */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 10,
-          padding: '10px 14px',
-          borderRadius: 8,
-          background: 'rgba(255,255,255,0.05)',
-        }}
-      >
-        <div>
-          <strong>Turn:</strong> {seatName(s, s.turnPlayerId)} · <strong>AP Remaining:</strong>{' '}
-          <span style={{ color: '#facc15', fontWeight: 700 }}>{s.actionPointsRemaining}</span> ·{' '}
-          <strong>Phase:</strong> {s.subPhase}
-        </div>
-        <div style={{ display: 'flex', gap: 14, fontSize: '0.88rem' }}>
-          <span>Deck: <strong>{s.deck.length}</strong></span>
-          <span>Discard: <strong>{s.discard.length}</strong></span>
-          <span>Monsters Left: <strong>{s.monsterDeck.length}</strong></span>
-        </div>
-      </div>
+  // Prompt-local selections reset whenever the decision changes.
+  const promptKey = myPrompt ? `${myPrompt.kind}-${s.logSeq}-${s.promptQueue.length}` : '';
+  useEffect(() => { setPicked([]); }, [promptKey]);
+  useEffect(() => { if (!canAct) { setSelectedHandId(null); setClawArmed(false); } }, [canAct]);
 
-      {/* Game Over */}
-      {s.phase === 'gameOver' && (
-        <div style={{ padding: 14, borderRadius: 8, background: 'rgba(34,197,94,0.2)', border: '2px solid #22c55e' }}>
-          <h3 style={{ margin: 0 }}>🏆 {seatName(s, s.winnerId)} wins Here to Slay!</h3>
-        </div>
-      )}
+  function send(a: HtsAction) {
+    dispatch(a);
+    setSelectedHandId(null);
+    setPicked([]);
+    setClawArmed(false);
+  }
 
-      {/* Reaction / Prompt Windows */}
-      {me && s.subPhase === 'awaitingChallenge' && s.activePlayerId === me && (
-        <ChallengeWindowView state={s} me={me} dispatch={dispatch} />
-      )}
+  /** Throw dice for one of this device's own rolls, and remember them for the tray. */
+  function throwDice(make: (dice: [number, number]) => HtsAction, roll: Omit<HtsPendingRoll, 'dice' | 'modifiers' | 'responderQueue' | 'challengerId' | 'challengerDice'>, subject: string) {
+    const dice = rollClient2d6();
+    const pending: HtsPendingRoll = { ...roll, dice, challengerId: null, challengerDice: null, modifiers: [], responderQueue: [] };
+    const { actorTotal } = computeRollTotals(s, pending);
+    rollCounter.current += 1;
+    setRecent({ key: rollCounter.current, roll: pending, actorTotal, challengerTotal: 0, subject });
+    send(make(dice));
+  }
 
-      {me && s.subPhase === 'awaitingModifiers' && s.activePlayerId === me && (
-        <ModifierWindowView state={s} me={me} dispatch={dispatch} />
-      )}
+  /** Challenge the pending play: both sides' dice are thrown here, so the tray can show the duel. */
+  function throwDuel(challengeCardId: number) {
+    const p = s.pendingPlay;
+    if (!p || !me) return;
+    const actorDice = rollClient2d6();
+    const challengerDice = rollClient2d6();
+    const pending: HtsPendingRoll = {
+      byPlayerId: p.byPlayerId, reason: 'challengeDuel', dice: actorDice, challengerId: me, challengerDice,
+      sourceCardId: p.card.id, threshold: 0, modifiers: [], responderQueue: [],
+    };
+    const { actorTotal, challengerTotal } = computeRollTotals(s, pending);
+    rollCounter.current += 1;
+    setRecent({ key: rollCounter.current, roll: pending, actorTotal, challengerTotal, subject: p.card.name });
+    send({ type: 'playChallenge', playerId: me, cardId: challengeCardId, actorDice, challengerDice });
+  }
 
-      {me && s.subPhase === 'awaitingPrompt' && s.activePlayerId === me && s.promptQueue[0] && (
-        <HtsPromptView state={s} prompt={s.promptQueue[0]} me={me} dispatch={dispatch} />
-      )}
+  // ---- FX from state transitions --------------------------------------------------
+  const prev = useRef(s);
+  useEffect(() => {
+    const was = prev.current;
+    prev.current = s;
+    if (was === s) return;
+    // A roll window closed: keep its result on the tray for a moment.
+    if (was.pendingRoll && !s.pendingRoll) {
+      const { actorTotal, challengerTotal } = computeRollTotals(was, was.pendingRoll);
+      rollCounter.current += 1;
+      setRecent({ key: rollCounter.current, roll: was.pendingRoll, actorTotal, challengerTotal, subject: rollSubject(was, was.pendingRoll) });
+    }
+    if (s.pendingRoll?.reason === 'challengeDuel' && was.pendingRoll?.reason !== 'challengeDuel') fx.stamp('CHALLENGE!', 'danger');
+    for (const seat of s.seats) {
+      const before = trophiesOf(was, seat.id);
+      const after = trophiesOf(s, seat.id);
+      if (after.length > before.length) {
+        fx.stamp('SLAIN!', 'good');
+        fx.burst([0.45, 0.32], '#ffb02e');
+        fx.toast(`${seat.name} slew ${after[after.length - 1]!.card.name}!`, 'good');
+      }
+      if (niceGiftsOf(s, seat.id).length > niceGiftsOf(was, seat.id).length) fx.toast(`${seat.name} claimed a Nice Gift!`, 'good');
+    }
+    // Heroes that left a party: stolen (now elsewhere) or destroyed / sacrificed (gone).
+    const where = new Map<number, PlayerId>();
+    for (const seat of s.seats) for (const h of partyOf(s, seat.id)) where.set(h.card.id, seat.id);
+    for (const seat of was.seats) {
+      for (const h of partyOf(was, seat.id)) {
+        const now = where.get(h.card.id);
+        if (now === seat.id) continue;
+        if (now) fx.toast(`${seatName(s, now)} stole ${h.card.name} from ${seat.name}!`, 'danger');
+        else {
+          fx.toast(`${seat.name} lost ${h.card.name}.`, 'danger');
+          fx.burst([0.5, 0.12], CLASS_META[h.card.class ?? 'fighter'].color);
+          if (seat.id === me) shake();
+        }
+      }
+    }
+    if (s.phase === 'gameOver' && was.phase !== 'gameOver') fx.stamp('VICTORY!', 'good');
+    // Keyed on the state alone: fx and shake only schedule animations.
+  }, [s]);
 
-      {/* Shared Monster Row */}
-      <div style={{ border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, padding: 12 }}>
-        <h4 style={{ margin: '0 0 8px' }}>🐉 Active Monsters (2 AP to Attack)</h4>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          {s.monsterRow.map((m) => {
-            const canAtk =
-              me !== null &&
-              isMyTurn &&
-              s.subPhase === 'awaitingAction' &&
-              s.actionPointsRemaining >= 2 &&
-              canAttackMonster(s, me, m);
-            return (
-              <div
-                key={m.card.id}
-                style={{
-                  border: '2px solid #dc2626',
-                  borderRadius: 8,
-                  padding: 10,
-                  width: 240,
-                  background: 'rgba(220,38,38,0.08)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 6,
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <strong>{m.card.name}</strong>
-                  <span style={{ fontSize: '0.75rem', color: '#facc15' }}>Req: {m.requirementText}</span>
-                </div>
-                <div style={{ fontSize: '0.76rem' }}>
-                  <strong>SLAY:</strong> {m.slayOnLow ? `≤${m.slayThreshold}` : `${m.slayThreshold}+`} ·{' '}
-                  <strong>FAIL:</strong> {m.slayOnLow ? `${m.failThreshold}+` : `≤${m.failThreshold}`} (
-                  {m.failPenalty === 'sacrificeHero' ? 'Sacrifice Hero' : 'Discard 2'})
-                </div>
-                <div style={{ fontSize: '0.74rem', opacity: 0.85 }}>{m.card.text}</div>
-                {isMyTurn && s.subPhase === 'awaitingAction' && me && (
-                  <button
-                    disabled={!canAtk}
-                    onClick={() =>
-                      dispatch({
-                        type: 'attackMonster',
-                        playerId: me,
-                        monsterCardId: m.card.id,
-                        dice: rollClient2d6(),
-                      })
-                    }
-                  >
-                    Attack (2 AP)
-                  </button>
-                )}
+  // The tray's afterglow fades.
+  useEffect(() => {
+    if (!recent) return;
+    const t = setTimeout(() => setRecent((r) => (r?.key === recent.key ? null : r)), 7000);
+    return () => clearTimeout(t);
+  }, [recent]);
+
+  // ---- valid targets for the current decision -------------------------------------------
+  const heroTargets = myPrompt?.kind === 'chooseHeroTarget' ? validHeroTargets(s, myPrompt) : [];
+  const heroTargetIds = new Set(heroTargets.map((t) => t.hero.card.id));
+  const pickHero = (heroId: number) => send({ type: 'resolvePrompt', playerId: me!, targetCardId: heroId });
+  const playerPick = myPrompt?.kind === 'choosePlayer';
+  const clawTargets = clawArmed ? new Set(opponents.filter((o) => handOf(s, o.id).length > 0).map((o) => o.id)) : null;
+  const handPick = myPrompt?.kind === 'chooseCardsFromHand' ? myPrompt : null;
+  const handPickValid = handPick ? new Set(validHandCardsForPrompt(s, handPick).map((c) => c.id)) : null;
+  const handPickMax = handPick ? Math.min(handPick.count, handPickValid!.size) : 0;
+
+  function onPlate(id: PlayerId): (() => void) | undefined {
+    if (playerPick) return () => send({ type: 'resolvePrompt', playerId: me!, targetPlayerId: id });
+    if (clawTargets?.has(id)) return () => send({ type: 'shadowClawPull', playerId: me!, targetPlayerId: id });
+    return undefined;
+  }
+
+  // ---- opponents ------------------------------------------------------------------------
+  const top = (
+    <PlayerStrip>
+      {opponents.map((o) => {
+        const party = partyOf(s, o.id);
+        const leader = s.partyLeaders[o.id];
+        const click = onPlate(o.id);
+        return (
+          <PlayerPlate
+            key={o.id}
+            seat={o}
+            active={s.turnPlayerId === o.id && s.phase === 'playing'}
+            sub={<>Hand {handOf(s, o.id).length} · {leader?.name ?? 'no leader'}{s.activePlayerId === o.id && s.turnPlayerId !== o.id ? ' · deciding…' : ''}</>}
+            targetable={!!click}
+            onClick={click}
+          >
+            <div className="hts-plate-row">
+              <div className="hts-pennants">
+                {leader?.class && <span className="hts-plate-seal" title={leader.name}><WaxSeal cls={leader.class} /></span>}
+                {party.map((h) => (
+                  <Pennant
+                    key={h.card.id}
+                    hero={h}
+                    onClick={heroTargetIds.has(h.card.id) ? () => pickHero(h.card.id) : undefined}
+                    selected={heroTargetIds.has(h.card.id)}
+                  />
+                ))}
               </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Players' Parties & Leaders */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
-        {s.seats.map((seat) => {
-          const leader = s.partyLeaders[seat.id];
-          const party = partyOf(s, seat.id);
-          const trophies = trophiesOf(s, seat.id);
-          const gifts = niceGiftsOf(s, seat.id);
-          const classes = Array.from(partyClasses(s, seat.id));
-          const classesToWin = getClassesToWin(s.config);
-          const availableLeaders = getPartyLeadersForExpansions(s.config.expansions);
-          return (
-            <div
-              key={seat.id}
-              style={{
-                border: `2px solid ${s.turnPlayerId === seat.id ? seat.color : 'rgba(255,255,255,0.12)'}`,
-                borderRadius: 10,
-                padding: 12,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <strong>{seat.name}</strong> {seat.id === me && <em>(You)</em>}
-                </div>
-                <div style={{ fontSize: '0.8rem' }}>
-                  Classes: <strong>{classes.length}/{classesToWin}</strong> · Monsters: <strong>{trophies.length}/{s.config.monstersToWin}</strong>
-                  {s.config.expansions.includes('here-to-sleigh') && (
-                    <> · Gifts: <strong>{gifts.length}/3</strong></>
-                  )}{' '}
-                  · Hand: <strong>{handOf(s, seat.id).length}</strong>
-                </div>
-              </div>
-
-              {leader && (
-                <div style={{ fontSize: '0.78rem', padding: 6, borderRadius: 6, background: 'rgba(255,255,255,0.05)' }}>
-                  <div>
-                    <strong>Party Leader:</strong> {leader.name} ({leader.class}) — {leader.text}
-                  </div>
-                  {seat.id === me && isMyTurn && s.subPhase === 'awaitingAction' && (
-                    <div style={{ marginTop: 4, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <select
-                        value={leader.kind}
-                        onChange={(e) =>
-                          dispatch({ type: 'choosePartyLeader', playerId: me, leaderKind: e.target.value })
-                        }
-                        style={{ fontSize: '0.75rem' }}
-                      >
-                        {availableLeaders.map((l) => (
-                          <option key={l.kind} value={l.kind}>
-                            {l.name} ({l.class})
-                          </option>
-                        ))}
-                      </select>
-                      {leader.kind === 'leader-shadow-claw' && !s.turnBuffs.shadowClawUsed && s.actionPointsRemaining >= 1 && (
-                        <>
-                          <select
-                            value={shadowClawTarget ?? ''}
-                            onChange={(e) => setShadowClawTarget(e.target.value)}
-                            style={{ fontSize: '0.75rem' }}
-                          >
-                            <option value="">Target player…</option>
-                            {s.seats
-                              .filter((st) => st.id !== me && handOf(s, st.id).length > 0)
-                              .map((st) => (
-                                <option key={st.id} value={st.id}>
-                                  {st.name}
-                                </option>
-                              ))}
-                          </select>
-                          <button
-                            disabled={!shadowClawTarget}
-                            onClick={() => {
-                              if (!shadowClawTarget) return;
-                              dispatch({ type: 'shadowClawPull', playerId: me, targetPlayerId: shadowClawTarget });
-                            }}
-                          >
-                            Shadow Claw Pull (1 AP)
-                          </button>
-                        </>
-                      )}
-                      {leader.kind === 'leader-gnawing-dread' &&
-                        !s.turnBuffs.gnawingDreadUsed &&
-                        s.actionPointsRemaining >= 2 &&
-                        s.discard.length > 0 && (
-                          <button
-                            onClick={() => dispatch({ type: 'gnawingDreadSearch', playerId: me })}
-                          >
-                            Gnawing Dread Search Discard (2 AP)
-                          </button>
-                        )}
-                      {leader.kind === 'leader-noble-shaman' && !s.turnBuffs.nobleShamanUsed && (
-                        <>
-                          <button
-                            onClick={() => dispatch({ type: 'nobleShamanAdjust', playerId: me, delta: 1 })}
-                          >
-                            Noble Shaman +1 Roll
-                          </button>
-                          <button
-                            onClick={() => dispatch({ type: 'nobleShamanAdjust', playerId: me, delta: -1 })}
-                          >
-                            Noble Shaman -1 Roll
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {party.map((h) => {
-                  const effClass = heroEffectiveClass(h);
-                  const equipped = heroEquippedItems(h);
-                  const canRoll =
-                    seat.id === me &&
-                    isMyTurn &&
-                    s.subPhase === 'awaitingAction' &&
-                    s.actionPointsRemaining >= 1 &&
-                    !h.usedThisTurn &&
-                    !heroHasItemKind(h, 'sealing-key');
-                  return (
-                    <div key={h.card.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <HtsCardTile
-                        card={h.card}
-                        compact
-                        badgeText={`${effClass ?? ''}${equipped.length > 0 ? ` + ${equipped.map((i) => i.name).join(' + ')}` : ''}`}
-                      />
-                      {seat.id === me && isMyTurn && s.subPhase === 'awaitingAction' && (
-                        <button
-                          disabled={!canRoll}
-                          onClick={() =>
-                            dispatch({
-                              type: 'useHeroAbility',
-                              playerId: me,
-                              heroCardId: h.card.id,
-                              dice: rollClient2d6(),
-                            })
-                          }
-                        >
-                          {h.usedThisTurn ? 'Used This Turn' : `Roll Ability (1 AP)`}
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-                {party.length === 0 && <span style={{ fontSize: '0.8rem', opacity: 0.5 }}>No Heroes in Party yet</span>}
-              </div>
-
-              {trophies.length > 0 && (
-                <div style={{ fontSize: '0.76rem', color: '#22c55e' }}>
-                  <strong>Slain Monsters:</strong> {trophies.map((t) => t.card.name).join(', ')}
-                </div>
-              )}
-              {gifts.length > 0 && (
-                <div style={{ fontSize: '0.76rem', color: '#facc15' }}>
-                  <strong>🎁 Nice Gifts ({gifts.length}/3):</strong> {gifts.map((g) => g.name).join(', ')}
-                </div>
-              )}
+              {s.turnPlayerId === o.id && s.phase === 'playing' && <ApLanterns remaining={s.actionPointsRemaining} max={maxAp(s, o.id)} />}
             </div>
-          );
-        })}
-      </div>
-
-      {/* Local Hand & Turn Actions */}
-      {me && (
-        <div style={{ border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <h4 style={{ margin: 0 }}>Your Hand ({myHand.length})</h4>
-            {isMyTurn && s.subPhase === 'awaitingAction' && (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button
-                  disabled={s.actionPointsRemaining < 1}
-                  onClick={() => dispatch({ type: 'drawCard', playerId: me })}
-                >
-                  Draw 1 Card (1 AP)
-                </button>
-                {s.config.expansions.includes('here-to-sleigh') && (
-                  <button
-                    disabled={s.actionPointsRemaining < 2 || partyOf(s, me).length < 1}
-                    onClick={() => dispatch({ type: 'claimHolidayGift', playerId: me })}
-                  >
-                    🎁 Deliver Holiday Gift (2 AP)
-                  </button>
-                )}
-                <button
-                  className="secondary"
-                  disabled={s.actionPointsRemaining < 3}
-                  onClick={() => dispatch({ type: 'discardAndRedraw', playerId: me })}
-                >
-                  Discard All &amp; Draw 5 (3 AP)
-                </button>
-                <button className="secondary" onClick={() => dispatch({ type: 'endTurn', playerId: me })}>
-                  End Turn
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {myHand.map((c) => (
-              <HtsCardTile
-                key={c.id}
-                card={c}
-                selected={selectedHandId === c.id}
-                onClick={
-                  isMyTurn && s.subPhase === 'awaitingAction'
-                    ? () => setSelectedHandId((cur) => (cur === c.id ? null : c.id))
-                    : undefined
-                }
-              />
-            ))}
-          </div>
-
-          {isMyTurn && s.subPhase === 'awaitingAction' && selectedCard && s.actionPointsRemaining >= 1 && (
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: 10, borderRadius: 8, background: 'rgba(255,255,255,0.05)' }}>
-              {selectedCard.type === 'hero' && (
-                <button
-                  onClick={() => {
-                    dispatch({ type: 'playHero', playerId: me, cardId: selectedCard.id });
-                    setSelectedHandId(null);
-                  }}
-                >
-                  Play Hero {selectedCard.name} (1 AP)
-                </button>
-              )}
-              {selectedCard.type === 'magic' && (
-                <button
-                  onClick={() => {
-                    dispatch({ type: 'playMagic', playerId: me, cardId: selectedCard.id });
-                    setSelectedHandId(null);
-                  }}
-                >
-                  Play Magic {selectedCard.name} (1 AP)
-                </button>
-              )}
-              {(selectedCard.type === 'item' || selectedCard.type === 'cursedItem') && (
-                <>
-                  <select
-                    value={equipTargetPlayer ?? me}
-                    onChange={(e) => {
-                      setEquipTargetPlayer(e.target.value);
-                      setEquipTargetHero(null);
-                    }}
-                  >
-                    {s.seats.map((st) => (
-                      <option key={st.id} value={st.id}>
-                        {st.name}&apos;s Party
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={equipTargetHero ?? ''}
-                    onChange={(e) => setEquipTargetHero(Number(e.target.value))}
-                  >
-                    <option value="">Choose Hero…</option>
-                    {partyOf(s, equipTargetPlayer ?? me)
-                      .filter((h) => canEquipItemToHero(h, selectedCard))
-                      .map((h) => (
-                        <option key={h.card.id} value={h.card.id}>
-                          {h.card.name}
-                        </option>
-                      ))}
-                  </select>
-                  <button
-                    disabled={!equipTargetHero}
-                    onClick={() => {
-                      if (!equipTargetHero) return;
-                      dispatch({
-                        type: 'equipItem',
-                        playerId: me,
-                        cardId: selectedCard.id,
-                        targetPlayerId: equipTargetPlayer ?? me,
-                        heroCardId: equipTargetHero,
-                      });
-                      setSelectedHandId(null);
-                      setEquipTargetHero(null);
-                    }}
-                  >
-                    Equip {selectedCard.name} (1 AP)
-                  </button>
-                </>
-              )}
+            <div className="hts-goals">
+              <ClassSlots have={Array.from(partyClasses(s, o.id))} need={classesToWin} />
+              <TrophyRow have={trophiesOf(s, o.id).length} need={s.config.monstersToWin} />
+              {sleigh && <span className="hts-gifts">🎁 {niceGiftsOf(s, o.id).length}/3</span>}
             </div>
-          )}
-        </div>
-      )}
+          </PlayerPlate>
+        );
+      })}
+    </PlayerStrip>
+  );
 
-      {/* Log */}
-      <div style={{ fontSize: '0.82rem', padding: 10, borderRadius: 8, background: 'rgba(0,0,0,0.25)', maxHeight: 130, overflowY: 'auto' }}>
-        {s.log.slice(-8).map((entry) => (
-          <div key={entry.seq}>{entry.text}</div>
-        ))}
+  // ---- board: piles · monsters · roll tray ------------------------------------------------
+  const topDiscard = s.discard[s.discard.length - 1];
+  const board = (
+    <div className="hts-board">
+      <div className="hts-piles">
+        <div className="hts-pile-group">
+          <div className="hts-pile">
+            {s.deck.length > 1 && <FaceDownCard />}
+            {s.deck.length > 0 ? <FaceDownCard /> : <div className="hts-pile-empty" />}
+            <span className="hts-pile-count">{s.deck.length}</span>
+          </div>
+          <span className="hts-pile-name">Deck</span>
+        </div>
+        <div className="hts-pile-group">
+          <div className="hts-pile">
+            {topDiscard ? <HtsCardView key={topDiscard.id} card={topDiscard} size="sm" className="hts-discard-top" /> : <div className="hts-pile-empty" />}
+            <span className="hts-pile-count">{s.discard.length}</span>
+          </div>
+          <span className="hts-pile-name">Discard</span>
+        </div>
       </div>
+
+      <div className="hts-monsters">
+        <div className="hts-board-label">The monsters</div>
+        <div className="hts-monster-row">
+          {s.monsterRow.map((m) => (
+            <MonsterSlot key={m.card.id} state={s} monster={m} me={me} canAct={canAct} onAttack={() => throwDice(
+              (dice) => ({ type: 'attackMonster', playerId: me!, monsterCardId: m.card.id, dice }),
+              { byPlayerId: me!, reason: 'monsterAttack', sourceCardId: m.card.id, threshold: m.slayThreshold, rollLow: m.slayOnLow },
+              m.card.name,
+            )} />
+          ))}
+        </div>
+        <div className="hts-monster-left">{s.monsterDeck.length} more lurking in the dark</div>
+      </div>
+
+      <RollTray state={s} recent={recent} />
     </div>
   );
-}
 
-// ============================================================================
-// Challenge & Modifier Windows
-// ============================================================================
+  // ---- the dock ---------------------------------------------------------------------------
+  const dock = renderDock();
 
-function ChallengeWindowView({
-  state: s,
-  me,
-  dispatch,
-}: {
-  state: HtsState;
-  me: PlayerId;
-  dispatch: (a: HtsAction) => void;
-}) {
-  const p = s.pendingPlay;
-  if (!p) return null;
-  const challenges = handOf(s, me).filter((c) => c.type === 'challenge');
-  return (
-    <div style={{ padding: 14, borderRadius: 8, background: 'rgba(239,68,68,0.15)', border: '2px solid #ef4444' }}>
-      <h4 style={{ margin: '0 0 6px' }}>Challenge {seatName(s, p.byPlayerId)}&apos;s {p.card.name}?</h4>
-      <p style={{ margin: '0 0 10px', fontSize: '0.88rem' }}>{p.card.text}</p>
-      <div style={{ display: 'flex', gap: 8 }}>
-        {challenges.slice(0, 1).map((c) => (
-          <button
-            key={c.id}
-            onClick={() =>
-              dispatch({
-                type: 'playChallenge',
-                playerId: me,
-                cardId: c.id,
-                actorDice: rollClient2d6(),
-                challengerDice: rollClient2d6(),
-              })
+  function renderDock(): ReactNode {
+    if (s.phase === 'gameOver') {
+      const w = s.winnerId;
+      const how = w
+        ? trophiesOf(s, w).length >= s.config.monstersToWin ? `slew ${trophiesOf(s, w).length} monsters`
+          : sleigh && niceGiftsOf(s, w).length >= 3 ? 'collected 3 Nice Gifts'
+          : `gathered a ${partyClasses(s, w).size}-class party`
+        : '';
+      return (
+        <GameOverPanel
+          seats={s.seats}
+          finalScores={s.finalScores}
+          winnerIds={w ? [w] : undefined}
+          localPlayerId={me}
+          headline={`${seatName(s, w)} wins!`}
+          detail={how ? `${seatName(s, w)} ${how}.` : undefined}
+          showScores={false}
+          art={<svg viewBox="0 0 100 100"><LeaderBanner cls={s.partyLeaders[w ?? '']?.class ?? null} /></svg>}
+        />
+      );
+    }
+    const active = s.seats.find((x) => x.id === s.activePlayerId) ?? null;
+    const mine = !!me && s.activePlayerId === me;
+
+    if (s.subPhase === 'awaitingChallenge' && s.pendingPlay) {
+      const p = s.pendingPlay;
+      if (mine) {
+        const challenge = myHand.find((c) => c.type === 'challenge');
+        return (
+          <Dock
+            tone="react"
+            eyebrow="Challenge window"
+            title={`Challenge ${seatName(s, p.byPlayerId)}'s ${p.card.name}?`}
+            actions={
+              <>
+                {challenge && (
+                  <>
+                    <HtsCardView card={challenge} size="xs" inspect={false} />
+                    <button onClick={() => throwDuel(challenge.id)}>Challenge!</button>
+                  </>
+                )}
+                <button className="secondary" onClick={() => send({ type: 'declineChallenge', playerId: me! })}>Let it be</button>
+              </>
             }
           >
-            Play Challenge! (Roll 2d6 Duel)
-          </button>
-        ))}
-        <button className="secondary" onClick={() => dispatch({ type: 'declineChallenge', playerId: me })}>
-          Pass
-        </button>
-      </div>
-    </div>
-  );
-}
+            Play a Challenge and you both roll — beat or tie their roll and the card is discarded.
+          </Dock>
+        );
+      }
+      return <Dock tone="wait" who={active} eyebrow={`Challenge window · ${active?.name ?? '…'} may challenge`} title={`${seatName(s, p.byPlayerId)} played ${p.card.name}`} />;
+    }
 
-function ModifierWindowView({
-  state: s,
-  me,
-  dispatch,
-}: {
-  state: HtsState;
-  me: PlayerId;
-  dispatch: (a: HtsAction) => void;
-}) {
-  const r = s.pendingRoll;
-  const [hornDelta, setHornDelta] = useState<1 | -1>(1);
-  const [targetSide, setTargetSide] = useState<'actor' | 'challenger'>('actor');
-  if (!r) return null;
+    if (s.subPhase === 'awaitingModifiers' && s.pendingRoll) {
+      if (mine) return <ModifierDock key={`${s.pendingRoll.sourceCardId}-${s.pendingRoll.dice.join('')}`} state={s} me={me!} onSend={send} />;
+      return <Dock tone="wait" who={active} eyebrow={`Modifier window · ${active?.name ?? '…'} may tamper`} title={`${seatName(s, s.pendingRoll.byPlayerId)} rolled for ${rollSubject(s, s.pendingRoll)}`} />;
+    }
 
-  const { actorTotal, challengerTotal } = computeRollTotals(s, r);
-  const mods = handOf(s, me).filter((c) => c.type === 'modifier');
-  const isProtectingHorn = s.partyLeaders[me]?.kind === 'leader-protecting-horn';
-  const canNobleShaman =
-    me === s.turnPlayerId &&
-    s.partyLeaders[me]?.kind === 'leader-noble-shaman' &&
-    !s.turnBuffs.nobleShamanUsed;
+    if (prompt) {
+      if (!myPrompt) {
+        const who = s.seats.find((x) => x.id === prompt.playerId) ?? active;
+        return <Dock tone="wait" who={who} title={`${who?.name ?? 'Someone'} ${PROMPT_WAIT[prompt.kind]}`}>{'reason' in prompt ? prompt.reason : undefined}</Dock>;
+      }
+      return renderPrompt(myPrompt);
+    }
 
-  return (
-    <div style={{ padding: 14, borderRadius: 8, background: 'rgba(59,130,246,0.15)', border: '2px solid #3b82f6' }}>
-      <h4 style={{ margin: '0 0 6px' }}>
-        Roll Window — {seatName(s, r.byPlayerId)} rolled {r.dice[0]} + {r.dice[1]} (Current Total: {actorTotal}
-        {r.reason !== 'challengeDuel'
-          ? `, Needs ${r.rollLow ? `≤${r.threshold}` : `${r.threshold}+`}`
-          : ` vs Challenger ${seatName(s, r.challengerId)}: ${challengerTotal}`}
-        )
-      </h4>
+    // awaitingAction
+    if (!isMyTurn) {
+      const t = s.seats.find((x) => x.id === s.turnPlayerId) ?? null;
+      return <Dock tone="wait" who={t} eyebrow={`${t?.name ?? '…'} has ${s.actionPointsRemaining} action point${s.actionPointsRemaining === 1 ? '' : 's'}`} title={`${t?.name ?? 'Someone'}'s turn`} />;
+    }
+    return renderTurnDock();
+  }
 
-      {r.reason === 'challengeDuel' && (
-        <div style={{ marginBottom: 8, fontSize: '0.85rem' }}>
-          <span>Apply modifier to: </span>
-          <select value={targetSide} onChange={(e) => setTargetSide(e.target.value as 'actor' | 'challenger')}>
-            <option value="actor">{seatName(s, r.byPlayerId)} (Card Player)</option>
-            <option value="challenger">{seatName(s, r.challengerId)} (Challenger)</option>
-          </select>
-        </div>
-      )}
-
-      {isProtectingHorn && (
-        <div style={{ marginBottom: 8, fontSize: '0.85rem' }}>
-          <span>The Protecting Horn bonus: </span>
-          <select value={hornDelta} onChange={(e) => setHornDelta(Number(e.target.value) as 1 | -1)}>
-            <option value={1}>Extra +1</option>
-            <option value={-1}>Extra -1</option>
-          </select>
-        </div>
-      )}
-
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        {canNobleShaman && (
+  function renderTurnDock(): ReactNode {
+    const ap = s.actionPointsRemaining;
+    const leader = me ? s.partyLeaders[me] : undefined;
+    const tools = (
+      <div className="hts-leader-tools">
+        <button className="secondary tiny" disabled={ap < 1} onClick={() => send({ type: 'drawCard', playerId: me! })}>Draw · 1 AP</button>
+        <button className="secondary tiny" disabled={ap < 3} onClick={() => send({ type: 'discardAndRedraw', playerId: me! })}>New hand · 3 AP</button>
+        {sleigh && (
+          <button className="secondary tiny" disabled={ap < 2 || partyOf(s, me!).length < 1} onClick={() => send({ type: 'claimHolidayGift', playerId: me! })}>Deliver a gift · 2 AP</button>
+        )}
+        {leader?.kind === 'leader-shadow-claw' && !s.turnBuffs.shadowClawUsed && ap >= 1 && (
+          <button className={`secondary tiny${clawArmed ? ' is-on' : ''}`} onClick={() => setClawArmed((v) => !v)}>Shadow Claw pull · 1 AP</button>
+        )}
+        {leader?.kind === 'leader-gnawing-dread' && !s.turnBuffs.gnawingDreadUsed && ap >= 2 && s.discard.length > 0 && (
+          <button className="secondary tiny" onClick={() => send({ type: 'gnawingDreadSearch', playerId: me! })}>Gnawing Dread search · 2 AP</button>
+        )}
+        {leader?.kind === 'leader-noble-shaman' && !s.turnBuffs.nobleShamanUsed && (
           <>
-            <button onClick={() => dispatch({ type: 'nobleShamanAdjust', playerId: me, delta: 1 })}>
-              The Noble Shaman: +1
-            </button>
-            <button onClick={() => dispatch({ type: 'nobleShamanAdjust', playerId: me, delta: -1 })}>
-              The Noble Shaman: -1
-            </button>
+            <button className="secondary tiny" onClick={() => send({ type: 'nobleShamanAdjust', playerId: me!, delta: 1 })}>Noble Shaman +1</button>
+            <button className="secondary tiny" onClick={() => send({ type: 'nobleShamanAdjust', playerId: me!, delta: -1 })}>Noble Shaman −1</button>
           </>
         )}
-        {mods.map((m) =>
-          (m.modifierChoices ?? []).map((val) => (
-            <button
-              key={`${m.id}-${val}`}
-              onClick={() =>
-                dispatch({
-                  type: 'playModifier',
-                  playerId: me,
-                  cardId: m.id,
-                  chosenValue: val,
-                  protectingHornDelta: isProtectingHorn ? hornDelta : undefined,
-                  targetSide,
-                })
-              }
-            >
-              {m.name}: Apply {val >= 0 ? `+${val}` : val}
-            </button>
-          )),
+        {leader && (
+          <select
+            aria-label="Party Leader"
+            title="Swap your Party Leader"
+            value={leader.kind}
+            onChange={(e) => send({ type: 'choosePartyLeader', playerId: me!, leaderKind: e.target.value })}
+          >
+            {getPartyLeadersForExpansions(s.config.expansions).map((l) => (
+              <option key={l.kind} value={l.kind}>{l.name}</option>
+            ))}
+          </select>
         )}
-        <button className="secondary" onClick={() => dispatch({ type: 'declineModifier', playerId: me })}>
-          Pass
-        </button>
+      </div>
+    );
+    const end = <button className="secondary" onClick={() => send({ type: 'endTurn', playerId: me! })}>End turn</button>;
+    const eyebrow = <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>Your turn <ApLanterns remaining={ap} max={maxAp(s, me!)} /></span>;
+
+    if (clawArmed) {
+      return (
+        <Dock tone="turn" eyebrow={eyebrow} title="Shadow Claw: whose hand?" actions={<><button className="secondary" onClick={() => setClawArmed(false)}>Cancel</button>{end}</>}>
+          Click an opponent above to pull a card from their hand.
+        </Dock>
+      );
+    }
+    const c = selectedCard;
+    if (c && (c.type === 'item' || c.type === 'cursedItem')) {
+      const targets = s.seats
+        .map((seat) => ({ seat, heroes: partyOf(s, seat.id).filter((h) => canEquipItemToHero(h, c)) }))
+        .filter((g) => g.heroes.length > 0);
+      return (
+        <Dock tone="turn" eyebrow={eyebrow} title={`Equip ${c.name} · 1 AP`} actions={<><button className="secondary" onClick={() => setSelectedHandId(null)}>Cancel</button>{end}</>}>
+          {targets.length ? `Pick the hero to wear it${c.type === 'cursedItem' ? ' — cursed items are best given away' : ''}.` : 'No hero can take this item right now.'}
+          <div className="hts-choices is-scroll">
+            {targets.map(({ seat, heroes }) => (
+              <div key={seat.id} className="hts-owner-group">
+                <span>{seat.id === me ? 'Your party' : `${seat.name}'s party`}</span>
+                <div>
+                  {heroes.map((h) => (
+                    <HtsCardView key={h.card.id} card={h.card} size="sm" disabled={ap < 1} onClick={() => send({ type: 'equipItem', playerId: me!, cardId: c.id, targetPlayerId: seat.id, heroCardId: h.card.id })} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Dock>
+      );
+    }
+    if (c && (c.type === 'hero' || c.type === 'magic')) {
+      const hero = c.type === 'hero';
+      return (
+        <Dock
+          tone="turn"
+          eyebrow={eyebrow}
+          title={hero ? `Recruit ${c.name}?` : `Cast ${c.name}?`}
+          actions={
+            <>
+              <button disabled={ap < 1} onClick={() => send(hero ? { type: 'playHero', playerId: me!, cardId: c.id } : { type: 'playMagic', playerId: me!, cardId: c.id })}>
+                {hero ? 'Recruit' : 'Cast'} · 1 AP
+              </button>
+              <button className="secondary" onClick={() => setSelectedHandId(null)}>Cancel</button>
+            </>
+          }
+        >
+          {c.text}
+          {hero && ' Recruiting lets you roll its ability right away, for free.'}
+        </Dock>
+      );
+    }
+    return (
+      <Dock tone="turn" eyebrow={eyebrow} title={c ? `${c.name} waits for a roll` : ap > 0 ? 'Spend your action points' : 'Out of action points'} actions={end}>
+        {c
+          ? c.type === 'modifier' ? 'Modifiers are played when someone rolls.' : c.type === 'challenge' ? "Challenges answer other players' cards." : c.text
+          : ap > 0 ? 'Pick a card from your hand, roll a hero below, or attack a monster.' : 'Your lanterns are spent — end your turn.'}
+        {tools}
+      </Dock>
+    );
+  }
+
+  function renderPrompt(p: HtsPrompt): ReactNode {
+    const decline = () => send({ type: 'resolvePrompt', playerId: me!, decline: true });
+    switch (p.kind) {
+      case 'rollEnteredHero': {
+        const h = p.heroCard;
+        return (
+          <Dock
+            tone="turn"
+            eyebrow="A hero joins your party"
+            title={`Roll for ${h.name}?`}
+            actions={
+              <>
+                <HtsCardView card={h} size="sm" />
+                <button onClick={() => throwDice(
+                  (dice) => ({ type: 'resolvePrompt', playerId: me!, dice }),
+                  { byPlayerId: me!, reason: 'heroAbility', sourceCardId: h.id, threshold: h.abilityThreshold ?? 7, rollLow: h.rollLow },
+                  h.name,
+                )}>Roll · free</button>
+                <button className="secondary" onClick={decline}>Skip</button>
+              </>
+            }
+          >
+            Needs {rollLabel(h.abilityThreshold ?? 7, h.rollLow)}: {h.text}
+          </Dock>
+        );
+      }
+      case 'chooseHeroTarget': {
+        const harsh = p.mode === 'destroy' || p.mode === 'sacrifice' || p.mode === 'steal' || p.mode === 'stealItem';
+        const byOwner = s.seats.map((seat) => ({ seat, list: heroTargets.filter((t) => t.ownerId === seat.id) })).filter((g) => g.list.length);
+        return (
+          <Dock tone={harsh ? 'danger' : 'turn'} eyebrow="Choose a hero" title={p.reason} actions={p.optional ? <button className="secondary" onClick={decline}>Skip</button> : undefined}>
+            {byOwner.length ? 'Click a hero here, or a pennant above.' : 'No hero can be chosen.'}
+            <div className="hts-choices is-scroll">
+              {byOwner.map(({ seat, list }) => (
+                <div key={seat.id} className="hts-owner-group">
+                  <span>{seat.id === me ? 'Your party' : `${seat.name}'s party`}</span>
+                  <div>{list.map(({ hero }) => <HtsCardView key={hero.card.id} card={hero.card} size="sm" onClick={() => pickHero(hero.card.id)} />)}</div>
+                </div>
+              ))}
+            </div>
+          </Dock>
+        );
+      }
+      case 'chooseCardsFromHand': {
+        const ok = p.upTo ? picked.length >= 1 : picked.length === handPickMax;
+        return (
+          <Dock
+            tone={p.effectTag.toLowerCase().includes('discard') ? 'danger' : 'turn'}
+            eyebrow={`Choose ${p.upTo ? 'up to ' : ''}${handPickMax} from your hand`}
+            title={p.reason}
+            actions={
+              <>
+                <button disabled={!ok} onClick={() => send({ type: 'resolvePrompt', playerId: me!, cardIds: picked })}>Confirm ({picked.length})</button>
+                {p.optional && <button className="secondary" onClick={decline}>Skip</button>}
+              </>
+            }
+          >
+            {handPickValid!.size ? 'Click the cards in your hand below.' : 'Nothing in your hand fits.'}
+          </Dock>
+        );
+      }
+      case 'choosePlayer':
+        return (
+          <Dock tone="turn" eyebrow="Choose a player" title={p.reason} actions={opponents.map((o) => (
+            <button key={o.id} className="secondary tiny" onClick={() => send({ type: 'resolvePrompt', playerId: me!, targetPlayerId: o.id })}>{o.name}</button>
+          ))}>
+            Click a player above.
+          </Dock>
+        );
+      case 'chooseFromPile':
+        return (
+          <Dock tone="turn" eyebrow="Choose a card" title={p.reason}>
+            <div className="hts-choices is-scroll">
+              {p.cards.map((c) => <HtsCardView key={c.id} card={c} size="sm" onClick={() => send({ type: 'resolvePrompt', playerId: me!, targetCardId: c.id })} />)}
+            </div>
+          </Dock>
+        );
+      case 'bullseyePeek':
+        return <BullseyeDock key={p.cards.map((c) => c.id).join('-')} cards={p.cards} onConfirm={(pick, order) => send({ type: 'resolvePrompt', playerId: me!, bullseyePickId: pick, bullseyeTopOrder: order })} />;
+      case 'peekHandAck':
+        return (
+          <Dock tone="turn" eyebrow="Sharp Fox" title={`${seatName(s, p.targetPlayerId)}'s hand`} actions={<button onClick={() => send({ type: 'resolvePrompt', playerId: me! })}>Got it</button>}>
+            <div className="hts-choices is-scroll">{p.cards.map((c) => <HtsCardView key={c.id} card={c} size="sm" />)}</div>
+          </Dock>
+        );
+      case 'corruptedSabretoothChoice':
+        return (
+          <Dock tone="danger" eyebrow="Corrupted Sabretooth" title="Steal the hero instead of destroying it?" actions={
+            <>
+              <button onClick={() => send({ type: 'resolvePrompt', playerId: me!, decline: false })}>Steal it</button>
+              <button className="secondary" onClick={() => send({ type: 'resolvePrompt', playerId: me!, decline: true })}>Destroy it</button>
+            </>
+          } />
+        );
+    }
+  }
+
+  // ---- your party + hand ---------------------------------------------------------------------
+  const myParty = me ? partyOf(s, me) : [];
+  const myLeader = me ? s.partyLeaders[me] : undefined;
+  const handMode: 'play' | 'pick' | 'idle' = handPick ? 'pick' : canAct ? 'play' : 'idle';
+
+  function onHandCard(c: HtsCard): (() => void) | undefined {
+    if (handMode === 'pick') {
+      if (!handPickValid!.has(c.id)) return undefined;
+      return () => setPicked((cur) => (cur.includes(c.id) ? cur.filter((x) => x !== c.id) : cur.length < handPickMax ? [...cur, c.id] : cur));
+    }
+    if (handMode === 'play') return () => setSelectedHandId((cur) => (cur === c.id ? null : c.id));
+    return undefined;
+  }
+
+  const hand = me ? (
+    <div className="hts-home">
+      <div className="hts-home-head">
+        <h4>Your party</h4>
+        <div className="hts-goals">
+          <ClassSlots have={Array.from(partyClasses(s, me))} need={classesToWin} />
+          <TrophyRow have={trophiesOf(s, me).length} need={s.config.monstersToWin} />
+          {sleigh && <span className="hts-gifts">🎁 {niceGiftsOf(s, me).length}/3</span>}
+          <Chip>{myHand.length} in hand</Chip>
+        </div>
+      </div>
+      <div className="hts-home-row">
+      <div className="hts-party">
+        {myLeader && <HtsCardView card={myLeader} size="sm" />}
+        <span className="hts-party-divider" />
+        {myParty.length === 0 && <span className="hts-party-empty">No heroes yet — recruit one from your hand.</span>}
+        {myParty.map((h) => (
+          <PartyHero
+            key={h.card.id}
+            hero={h}
+            ap={s.actionPointsRemaining}
+            canAct={canAct}
+            targetable={heroTargetIds.has(h.card.id)}
+            onTarget={() => pickHero(h.card.id)}
+            onRoll={() => throwDice(
+              (dice) => ({ type: 'useHeroAbility', playerId: me, heroCardId: h.card.id, dice }),
+              { byPlayerId: me, reason: 'heroAbility', sourceCardId: h.card.id, threshold: h.card.abilityThreshold ?? 7, rollLow: h.card.rollLow },
+              h.card.name,
+            )}
+          />
+        ))}
+      </div>
+      <div className="hts-hand">
+        {myHand.length === 0 ? (
+          <p className="hts-hand-empty">Your hand is empty.</p>
+        ) : (
+          <CardFan label="Your hand" maxTilt={8}>
+            {myHand.map((c) => {
+              const click = onHandCard(c);
+              return (
+                <HtsCardView
+                  key={c.id}
+                  card={c}
+                  selected={handMode === 'pick' ? picked.includes(c.id) : selectedHandId === c.id}
+                  disabled={!click}
+                  onClick={click}
+                />
+              );
+            })}
+          </CardFan>
+        )}
+      </div>
+      </div>
+    </div>
+  ) : (
+    <div className="hts-home"><p className="hts-hand-empty">Spectating — no hand to show.</p></div>
+  );
+
+  return (
+    <GameTable
+      className={`hts-table${shaking ? ' is-shaking' : ''}`}
+      top={top}
+      board={board}
+      side={<GameLog entries={s.log} seats={s.seats} title="Tavern tales" />}
+      dock={dock}
+      hand={hand}
+      overlay={
+        <>
+          <FxLayer fx={fx} />
+          <TurnCue active={canAct && s.actionPointsRemaining === maxAp(s, me!)}>Your turn</TurnCue>
+        </>
+      }
+    />
+  );
+}
+
+// ============================================================================
+// Pieces
+// ============================================================================
+
+function MonsterSlot({ state: s, monster: m, me, canAct, onAttack }: {
+  state: HtsState;
+  monster: HtsMonster;
+  me: PlayerId | null;
+  canAct: boolean;
+  onAttack: () => void;
+}) {
+  const meets = me ? canAttackMonster(s, me, m) : false;
+  const ready = canAct && meets && s.actionPointsRemaining >= 2;
+  const why = !canAct ? null : !meets ? `Needs ${m.requirementText}` : s.actionPointsRemaining < 2 ? 'Needs 2 AP' : null;
+  return (
+    <div className={`hts-monster-slot${ready ? ' is-ready' : ''}`}>
+      <MonsterCard monster={m} onClick={ready ? onAttack : undefined} />
+      {canAct && (
+        <>
+          <button className="hts-attack" disabled={!ready} onClick={onAttack}>Attack · 2 AP</button>
+          {why && <span className="hts-why">{why}</span>}
+        </>
+      )}
+    </div>
+  );
+}
+
+function PartyHero({ hero: h, ap, canAct, targetable, onTarget, onRoll }: {
+  hero: HtsPartyHero;
+  ap: number;
+  canAct: boolean;
+  targetable: boolean;
+  onTarget: () => void;
+  onRoll: () => void;
+}) {
+  const sealed = heroHasItemKind(h, 'sealing-key');
+  const can = canAct && ap >= 1 && !h.usedThisTurn && !sealed;
+  const items = heroEquippedItems(h);
+  const label = h.usedThisTurn ? 'Used' : sealed ? 'Sealed' : `Roll ${rollLabel(h.card.abilityThreshold ?? 7, h.card.rollLow)} · 1 AP`;
+  return (
+    <div className="hts-party-hero">
+      <HtsCardView card={h.card} size="sm" selected={targetable} onClick={targetable ? onTarget : undefined} footnote={h.usedThisTurn && !canAct ? 'used' : undefined} />
+      {items.length > 0 && (
+        <div className="hts-party-items">{items.map((it) => <HtsCardView key={it.id} card={it} size="xs" />)}</div>
+      )}
+      {canAct && <button className="secondary tiny" disabled={!can} onClick={onRoll}>{label}</button>}
+    </div>
+  );
+}
+
+/** Every 2d6: live while modifiers can still land, then its result for a few seconds. */
+function RollTray({ state: s, recent }: { state: HtsState; recent: RecentRoll | null }) {
+  if (s.pendingRoll) {
+    const r = s.pendingRoll;
+    const { actorTotal, challengerTotal } = computeRollTotals(s, r);
+    return <TrayRoll state={s} roll={r} actorTotal={actorTotal} challengerTotal={challengerTotal} subject={rollSubject(s, r)} live />;
+  }
+  if (s.subPhase === 'awaitingChallenge' && s.pendingPlay) {
+    return (
+      <div className="hts-tray">
+        <div className="hts-staged">
+          <HtsCardView key={s.pendingPlay.card.id} card={s.pendingPlay.card} size="sm" />
+          <div className="hts-tray-title">{seatName(s, s.pendingPlay.byPlayerId)} plays {s.pendingPlay.card.name}</div>
+          <div className="hts-tray-sub">…unless someone challenges</div>
+        </div>
+      </div>
+    );
+  }
+  if (recent) {
+    return <TrayRoll key={recent.key} state={s} roll={recent.roll} actorTotal={recent.actorTotal} challengerTotal={recent.challengerTotal} subject={recent.subject} verdictOf={recent} />;
+  }
+  return (
+    <div className="hts-tray">
+      <div className="hts-tray-idle">
+        <svg viewBox="0 0 20 28" aria-hidden="true" className="hts-lantern-big">
+          <path d="M7 2 H13 M10 2 V5" stroke="#1d140d" strokeWidth={1.6} strokeLinecap="round" />
+          <path d="M5 6 H15 L16 9 H4 Z" fill="#5a3a1e" stroke="#1d140d" strokeWidth={1.2} />
+          <path d="M5 9 H15 V22 H5 Z" fill="#ffcf6a" stroke="#1d140d" strokeWidth={1.4} />
+          <path d="M10 20 Q7 16 10 11 Q13 16 10 20 Z" fill="#fff3c2" />
+          <path d="M4 22 H16 L15 25 H5 Z" fill="#5a3a1e" stroke="#1d140d" strokeWidth={1.2} />
+        </svg>
+        <div className="hts-tray-title">The dice are quiet</div>
+        <div className="hts-tray-sub">Every roll lands here.</div>
       </div>
     </div>
   );
 }
 
-// ============================================================================
-// Interactive Prompt View
-// ============================================================================
-
-function HtsPromptView({
-  state: s,
-  prompt,
-  me,
-  dispatch,
-}: {
+function TrayRoll({ state: s, roll: r, actorTotal, challengerTotal, subject, live, verdictOf }: {
   state: HtsState;
-  prompt: HtsPrompt;
-  me: PlayerId;
-  dispatch: (a: HtsAction) => void;
+  roll: HtsPendingRoll;
+  actorTotal: number;
+  challengerTotal: number;
+  subject: string;
+  live?: boolean;
+  verdictOf?: RecentRoll;
 }) {
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const [bullseyePick, setBullseyePick] = useState<number | null>(null);
-  const [swapBullseyeRest, setSwapBullseyeRest] = useState(false);
-
-  if (prompt.kind === 'rollEnteredHero') {
+  const v = verdictOf ? verdict(s, verdictOf) : null;
+  const bone = '#f4ecd8';
+  const modsOn = (side: 'actor' | 'challenger') => r.modifiers.filter((m) => m.targetSide === side);
+  const bonus = (side: 'actor' | 'challenger', total: number, dice: [number, number]) =>
+    total - dice[0] - dice[1] - modsOn(side).reduce((a, m) => a + m.amount, 0);
+  const chips = (side: 'actor' | 'challenger', total: number, dice: [number, number]) => {
+    const b = bonus(side, total, dice);
     return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(34,197,94,0.15)', border: '2px solid #22c55e' }}>
-        <h4 style={{ margin: '0 0 6px' }}>{prompt.heroCard.name} entered your Party!</h4>
-        <p style={{ margin: '0 0 10px', fontSize: '0.88rem' }}>
-          Roll {prompt.heroCard.rollLow ? `≤${prompt.heroCard.abilityThreshold}` : `${prompt.heroCard.abilityThreshold}+`} for free now: {prompt.heroCard.text}
-        </p>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, dice: rollClient2d6() })}>
-            Roll 2d6 Now (Free)
-          </button>
-          <button className="secondary" onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, decline: true })}>
-            Skip Roll
-          </button>
+      <div className="hts-mods">
+        {modsOn(side).map((m, i) => (
+          <Chip key={i} tone={m.amount >= 0 ? 'good' : 'danger'} title={`${m.card.name} by ${seatName(s, m.playerId)}`}>
+            {m.amount >= 0 ? '+' : '−'}{Math.abs(m.amount)} {seatName(s, m.playerId)}
+          </Chip>
+        ))}
+        {b !== 0 && <Chip tone="accent" title="Leader, trophies, items and turn bonuses">{b > 0 ? '+' : '−'}{Math.abs(b)} bonuses</Chip>}
+      </div>
+    );
+  };
+  const rollKey = `${r.sourceCardId}-${r.dice.join('')}-${r.challengerDice?.join('') ?? ''}`;
+  if (r.reason === 'challengeDuel' && r.challengerDice) {
+    const ahead = challengerTotal >= actorTotal ? 'challenger' : 'actor';
+    return (
+      <div className="hts-tray">
+        <div className="hts-tray-title">Challenge: {subject}</div>
+        <div className="hts-duel">
+          <div className={`hts-duel-side${ahead === 'actor' ? ' is-ahead' : ''}`}>
+            <span className="hts-duel-name">{seatName(s, r.byPlayerId)}</span>
+            <div className="hts-dice"><Die value={r.dice[0]} rollKey={rollKey} size={34} color={bone} /><Die value={r.dice[1]} rollKey={rollKey} size={34} color={bone} /></div>
+            <div className="hts-total">{actorTotal}</div>
+            {chips('actor', actorTotal, r.dice)}
+          </div>
+          <span className="hts-duel-vs">vs</span>
+          <div className={`hts-duel-side${ahead === 'challenger' ? ' is-ahead' : ''}`}>
+            <span className="hts-duel-name">{seatName(s, r.challengerId)}</span>
+            <div className="hts-dice"><Die value={r.challengerDice[0]} rollKey={rollKey} size={34} color={bone} /><Die value={r.challengerDice[1]} rollKey={rollKey} size={34} color={bone} /></div>
+            <div className="hts-total">{challengerTotal}</div>
+            {chips('challenger', challengerTotal, r.challengerDice)}
+          </div>
         </div>
+        {live ? <div className="hts-tray-sub">Ties go to the challenger · modifiers may still land</div> : v && <div className={`hts-verdict ${v.good ? 'is-good' : 'is-bad'}`}>{v.label}</div>}
       </div>
     );
   }
-
-  if (prompt.kind === 'chooseHeroTarget') {
-    const valid = validHeroTargets(s, prompt);
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(249,115,22,0.15)', border: '2px solid #f97316' }}>
-        <h4 style={{ margin: '0 0 8px' }}>{prompt.reason}</h4>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-          {valid.map(({ ownerId, hero }) => (
-            <div key={hero.card.id}>
-              <div style={{ fontSize: '0.75rem', opacity: 0.8 }}>{seatName(s, ownerId)}&apos;s Party:</div>
-              <HtsCardTile
-                card={hero.card}
-                compact
-                onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, targetCardId: hero.card.id })}
-              />
-            </div>
-          ))}
-        </div>
-        {prompt.optional && (
-          <button className="secondary" onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, decline: true })}>
-            Skip / Decline
-          </button>
-        )}
+  const need = r.reason === 'monsterAttack'
+    ? (() => {
+        const m = s.monsterRow.find((x) => x.card.id === r.sourceCardId);
+        return m ? `slay ${m.slayOnLow ? `≤${m.slayThreshold}` : `${m.slayThreshold}+`} · fail ${m.slayOnLow ? `${m.failThreshold}+` : `≤${m.failThreshold}`}` : '';
+      })()
+    : `needs ${rollLabel(r.threshold, r.rollLow)}`;
+  return (
+    <div className="hts-tray">
+      <div className="hts-tray-title">{seatName(s, r.byPlayerId)} {r.reason === 'monsterAttack' ? 'attacks' : 'rolls for'} {subject}</div>
+      <div className="hts-dice">
+        <Die value={r.dice[0]} rollKey={rollKey} color={bone} />
+        <Die value={r.dice[1]} rollKey={rollKey} color={bone} />
       </div>
-    );
-  }
+      <div className="hts-total">{actorTotal} <small>{need}</small></div>
+      {chips('actor', actorTotal, r.dice)}
+      {live ? <div className="hts-tray-sub">Modifiers may still land…</div> : v && <div className={`hts-verdict ${v.good ? 'is-good' : 'is-bad'}`}>{v.label}</div>}
+    </div>
+  );
+}
 
-  if (prompt.kind === 'chooseCardsFromHand') {
-    const valid = validHandCardsForPrompt(s, prompt);
-    const maxCount = Math.min(prompt.count, valid.length);
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(234,179,8,0.15)', border: '2px solid #eab308' }}>
-        <h4 style={{ margin: '0 0 6px' }}>{prompt.reason}</h4>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-          {valid.map((c) => (
-            <HtsCardTile
-              key={c.id}
-              card={c}
-              compact
-              selected={selectedIds.includes(c.id)}
-              onClick={() =>
-                setSelectedIds((cur) =>
-                  cur.includes(c.id)
-                    ? cur.filter((x) => x !== c.id)
-                    : cur.length < maxCount
-                      ? [...cur, c.id]
-                      : cur,
-                )
-              }
-            />
-          ))}
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            disabled={prompt.upTo ? selectedIds.length < 1 : selectedIds.length !== maxCount}
-            onClick={() => {
-              dispatch({ type: 'resolvePrompt', playerId: me, cardIds: selectedIds });
-              setSelectedIds([]);
-            }}
-          >
-            Confirm ({selectedIds.length})
-          </button>
-          {prompt.optional && (
+function ModifierDock({ state: s, me, onSend }: { state: HtsState; me: PlayerId; onSend: (a: HtsAction) => void }) {
+  const r = s.pendingRoll!;
+  const [horn, setHorn] = useState<1 | -1>(1);
+  const [side, setSide] = useState<'actor' | 'challenger'>(r.byPlayerId === me ? 'actor' : r.challengerId === me ? 'challenger' : 'actor');
+  const { actorTotal, challengerTotal } = computeRollTotals(s, r);
+  const mods = handOf(s, me).filter((c) => c.type === 'modifier');
+  const isHorn = s.partyLeaders[me]?.kind === 'leader-protecting-horn';
+  const shaman = me === s.turnPlayerId && s.partyLeaders[me]?.kind === 'leader-noble-shaman' && !s.turnBuffs.nobleShamanUsed;
+  const duel = r.reason === 'challengeDuel';
+  const subject = rollSubject(s, r);
+  return (
+    <Dock
+      tone="react"
+      eyebrow="Modifier window"
+      title={duel ? `Tip the duel? ${actorTotal} vs ${challengerTotal}` : `Modify ${seatName(s, r.byPlayerId)}'s roll of ${actorTotal}?`}
+      actions={
+        <>
+          {shaman && (
+            <>
+              <button className="secondary tiny" onClick={() => onSend({ type: 'nobleShamanAdjust', playerId: me, delta: 1 })}>Shaman +1</button>
+              <button className="secondary tiny" onClick={() => onSend({ type: 'nobleShamanAdjust', playerId: me, delta: -1 })}>Shaman −1</button>
+            </>
+          )}
+          {mods.flatMap((m) => (m.modifierChoices ?? []).map((val) => (
             <button
-              className="secondary"
-              onClick={() => {
-                dispatch({ type: 'resolvePrompt', playerId: me, decline: true });
-                setSelectedIds([]);
-              }}
+              key={`${m.id}-${val}`}
+              className="hts-modbtn"
+              onClick={() => onSend({ type: 'playModifier', playerId: me, cardId: m.id, chosenValue: val, protectingHornDelta: isHorn ? horn : undefined, targetSide: side })}
             >
-              Skip / Decline
+              {val >= 0 ? `+${val}` : `−${Math.abs(val)}`}
+              <small>{m.name.replace('Modifier ', '')}</small>
             </button>
+          )))}
+          <button className="secondary" onClick={() => onSend({ type: 'declineModifier', playerId: me })}>Pass</button>
+        </>
+      }
+    >
+      {duel ? `${seatName(s, r.byPlayerId)} defends ${subject} against ${seatName(s, r.challengerId)}.` : `For ${subject}: ${r.reason === 'monsterAttack' ? 'a monster attack' : `needs ${rollLabel(r.threshold, r.rollLow)}`}.`}
+      {(duel || isHorn) && (
+        <div className="hts-picker">
+          {duel && (
+            <>
+              <span>Help:</span>
+              <button className={`secondary tiny${side === 'actor' ? ' is-on' : ''}`} onClick={() => setSide('actor')}>{seatName(s, r.byPlayerId)}</button>
+              <button className={`secondary tiny${side === 'challenger' ? ' is-on' : ''}`} onClick={() => setSide('challenger')}>{seatName(s, r.challengerId)}</button>
+            </>
+          )}
+          {isHorn && (
+            <>
+              <span>Protecting Horn:</span>
+              <button className={`secondary tiny${horn === 1 ? ' is-on' : ''}`} onClick={() => setHorn(1)}>extra +1</button>
+              <button className={`secondary tiny${horn === -1 ? ' is-on' : ''}`} onClick={() => setHorn(-1)}>extra −1</button>
+            </>
           )}
         </div>
-      </div>
-    );
-  }
+      )}
+    </Dock>
+  );
+}
 
-  if (prompt.kind === 'choosePlayer') {
-    const others = s.seats.filter((st) => st.id !== me);
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(168,85,247,0.15)', border: '2px solid #a855f7' }}>
-        <h4 style={{ margin: '0 0 8px' }}>{prompt.reason}</h4>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {others.map((st) => (
-            <button
-              key={st.id}
-              onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, targetPlayerId: st.id })}
-            >
-              {st.name} (Hand: {handOf(s, st.id).length}, Party: {partyOf(s, st.id).length})
-            </button>
-          ))}
-        </div>
+function BullseyeDock({ cards, onConfirm }: { cards: HtsCard[]; onConfirm: (pick: number, order: number[]) => void }) {
+  const [pick, setPick] = useState<number | null>(cards[0]?.id ?? null);
+  const [swap, setSwap] = useState(false);
+  const rest = cards.filter((c) => c.id !== pick);
+  const ordered = swap && rest.length === 2 ? [rest[1]!, rest[0]!] : rest;
+  return (
+    <Dock
+      tone="turn"
+      eyebrow="Bullseye"
+      title="Keep one, stack the rest"
+      actions={<button disabled={pick === null} onClick={() => pick !== null && onConfirm(pick, ordered.map((c) => c.id))}>Confirm</button>}
+    >
+      Click the card to keep. The others go back on top{ordered.length === 2 ? `: ${ordered[0]!.name} first, then ${ordered[1]!.name}` : ''}.
+      {ordered.length === 2 && <button className="secondary tiny" style={{ marginLeft: 8 }} onClick={() => setSwap((v) => !v)}>Swap order</button>}
+      <div className="hts-choices">
+        {cards.map((c) => <HtsCardView key={c.id} card={c} size="sm" selected={pick === c.id} onClick={() => setPick(c.id)} footnote={pick === c.id ? 'keep' : undefined} />)}
       </div>
-    );
-  }
-
-  if (prompt.kind === 'chooseFromPile') {
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(34,197,94,0.15)', border: '2px solid #22c55e' }}>
-        <h4 style={{ margin: '0 0 8px' }}>{prompt.reason}</h4>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {prompt.cards.map((c) => (
-            <HtsCardTile
-              key={c.id}
-              card={c}
-              compact
-              onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, targetCardId: c.id })}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (prompt.kind === 'bullseyePeek') {
-    const pickedId = bullseyePick ?? prompt.cards[0]?.id ?? null;
-    const rest = prompt.cards.filter((c) => c.id !== pickedId);
-    const orderedRest = swapBullseyeRest && rest.length === 2 ? [rest[1]!, rest[0]!] : rest;
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(59,130,246,0.15)', border: '2px solid #3b82f6' }}>
-        <h4 style={{ margin: '0 0 6px' }}>Bullseye — Choose 1 card for your hand &amp; order the other 2</h4>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-          {prompt.cards.map((c) => (
-            <HtsCardTile
-              key={c.id}
-              card={c}
-              compact
-              selected={pickedId === c.id}
-              onClick={() => setBullseyePick(c.id)}
-            />
-          ))}
-        </div>
-        {orderedRest.length === 2 && (
-          <div style={{ marginBottom: 8, fontSize: '0.85rem', display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span>Top of deck: 1st {orderedRest[0]!.name}, 2nd {orderedRest[1]!.name}</span>
-            <button className="secondary" onClick={() => setSwapBullseyeRest((v) => !v)}>
-              Swap Order
-            </button>
-          </div>
-        )}
-        <button
-          disabled={pickedId === null}
-          onClick={() => {
-            if (pickedId === null) return;
-            dispatch({
-              type: 'resolvePrompt',
-              playerId: me,
-              bullseyePickId: pickedId,
-              bullseyeTopOrder: orderedRest.map((c) => c.id),
-            });
-          }}
-        >
-          Confirm Bullseye Choice
-        </button>
-      </div>
-    );
-  }
-
-  if (prompt.kind === 'peekHandAck') {
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(59,130,246,0.15)', border: '2px solid #3b82f6' }}>
-        <h4 style={{ margin: '0 0 8px' }}>Sharp Fox — {seatName(s, prompt.targetPlayerId)}&apos;s Hand:</h4>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-          {prompt.cards.map((c) => (
-            <HtsCardTile key={c.id} card={c} compact />
-          ))}
-        </div>
-        <button onClick={() => dispatch({ type: 'resolvePrompt', playerId: me })}>Got it</button>
-      </div>
-    );
-  }
-
-  if (prompt.kind === 'corruptedSabretoothChoice') {
-    return (
-      <div style={{ padding: 14, borderRadius: 8, background: 'rgba(34,197,94,0.15)', border: '2px solid #22c55e' }}>
-        <h4 style={{ margin: '0 0 6px' }}>Corrupted Sabretooth — STEAL instead of DESTROY?</h4>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, decline: false })}>
-            Steal Hero into Your Party
-          </button>
-          <button className="secondary" onClick={() => dispatch({ type: 'resolvePrompt', playerId: me, decline: true })}>
-            Destroy Hero Normally
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return null;
+    </Dock>
+  );
 }

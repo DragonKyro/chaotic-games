@@ -14,3 +14,22 @@ export type Seat = {
 };
 
 export type GamePhase = 'lobby' | 'playing' | 'gameOver';
+
+/** One expansion / add-on for a game, as sold. */
+export interface ExpansionMeta {
+  /** Stable id stored in config.expansions and over the wire. */
+  id: string;
+  name: string;
+  /** What it adds, one line. */
+  summary: string;
+  /**
+   * false = the name or contents still need confirming against the physical
+   * product or rulebook. Never treat an unverified entry as authoritative.
+   */
+  verified: boolean;
+}
+
+/** Every game's config carries at least the set of enabled expansion ids. */
+export interface ExpansionConfig {
+  expansions: string[];
+}

@@ -6,7 +6,7 @@ Infrastructure is lifted from the sibling [card-collecting](../card-collecting) 
 
 ## Status
 
-**All 6 base games AND all 30 expansions are implemented and playable** — hot-seat, online with friends, or against heuristic AIs, with home-page picker thumbnails, lobby expansion/edition/player settings, in-app rules books, and verified official card lists and frequencies (239 tests passing).
+**All 6 base games AND all 30 expansions are implemented and playable** — hot-seat, online with friends, or against heuristic AIs, each with its own original art direction, lobby expansion/edition/player settings, in-app rules books, and verified official card lists and frequencies (242 tests passing).
 
 | Game | Players | Expansions modelled as toggles | State |
 |---|---|---|---|
@@ -65,16 +65,17 @@ Infrastructure is lifted from the sibling [card-collecting](../card-collecting) 
   - [x] Full player decision support for all trait actions, attachments/steals/swaps/suppresses, catastrophe choices, and World's End choices
   - [x] AI driver, Thumbnail, functional GameView + LobbyConfig + Rules, and test suite
 
-Expansion names were verified against the publishers' stores, except Doomlings — its site was unreachable during research, so its list is deliberately empty rather than guessed.
+Expansion names were verified against the publishers' stores.
 
 ### Exploding Kittens
 
 Everything in the base game: the 56-card deck, drawing as the turn-ender, Defuse
 plus secret reinsertion, the Nope stack, Attack turn-stacking, Skip, Favor,
-Shuffle, See the Future, all three combos, and player elimination. 93 tests
-cover it, including 48 complete AI-vs-AI games across 2–5 players.
+Shuffle, See the Future, all three combos, and player elimination, plus all six
+expansions. 130 tests cover it, including complete AI-vs-AI games across 2–10
+players.
 
-- **Card art** is original inline SVG — thirteen cards built from one shared cat-head primitive, in `CardArt.tsx`. No raster assets.
+- **Card art** is original inline SVG — every card built from one shared cat-head primitive, in `CardArt.tsx`. No raster assets.
 - **The AI** plays to a risk model and is deliberately honest: it only reads the deck through what that seat has legitimately seen. See below.
 - **Rules** live in the app behind the 📖 button, including a card-count table and a note on every place the rules were ambiguous.
 
@@ -91,6 +92,7 @@ Two calls we had to make, both documented in-app and in `cards.ts`:
 | UI | React 19 |
 | State | Zustand |
 | Multiplayer | Firebase Realtime Database + anonymous Auth (project `github-games-e7c7d`, shared; this app's data under `/chaotic-games`) |
+| Art & type | Original inline SVG (no raster assets); fonts self-hosted from `@fontsource` |
 | Tests | Vitest |
 | Hosting | GitHub Pages (static) |
 
@@ -98,26 +100,42 @@ Two calls we had to make, both documented in-app and in `cards.ts`:
 
 ```
 src/
-  core/         GameModule contract, RNG, shared types, seat helpers. Game-agnostic.
+  core/         GameModule contract, RNG (+ art hashing), shared types, reducer helpers (state.ts),
+                AI playout (playout.ts), seat helpers. Game-agnostic.
   net/          Room transport (Firebase, lazy-loaded; in-memory fake for tests), identity, room links.
   store/        Zustand stores (gameStore, networkStore) + actionSync (the online move log).
-  ui/           Shell — App, GameLobby, OnlineLobby, OnlineStatus, GameHost, ChatPanel, RulesBook, theme.
+  ui/           Shell — App, Brand, GameLobby, OnlineLobby, OnlineStatus, GameHost, ChatPanel,
+                RulesBook, theme.css (the design system), devDemo.ts (dev-only deep links).
+    kit/        The game-view kit: table layout, player plates, decision dock, hand fan, card
+                shell, log, FX, game over, expansion picker, dice. Themed by --cg-* variables.
   games/
     registry.ts            List of all GameModules.
-    _scaffold/             Temporary placeholder helpers for the outlines. Delete when done.
-    exploding-kittens/     Outline: types + design notes.
-    unstable-unicorns/     Outline.
-    here-to-slay/          Outline.
-    casting-shadows/       Outline.
-    happy-little-dinos/    Outline.
-    doomlings/             Outline.
+    exploding-kittens/     Each game: types, cards, reducer, AI, tests, and its UI bundle —
+    unstable-unicorns/     ui.tsx (lobby + table), card frame + art, Thumbnail, Gallery,
+    here-to-slay/          Rules, and its own stylesheet.
+    casting-shadows/
+    happy-little-dinos/
+    doomlings/
 ```
 
-Outside `src/`: `database.rules.json` (this app's security rules), `firebase.json` / `.firebaserc`, and `scripts/` (`merge-db-rules.mjs` for rules deploys, `fix-lockfile.mjs` + `lockfile.test.ts` for the lockfile).
+Outside `src/`: `database.rules.json` (this app's security rules), `firebase.json` / `.firebaserc`, and `scripts/` (`merge-db-rules.mjs` for rules deploys, `fix-lockfile.mjs` + `lockfile.test.ts` for the lockfile, `render.mjs` + `lib/chrome.mjs` for screenshots).
 
 Each game lives in its own folder behind the `GameModule<S, A, C>` contract from `src/core/module.ts`. To add a new game: create `src/games/<id>/`, export a module, add it to `src/games/registry.ts`. **No other file needs to change.**
 
-Every game currently exports a `module.ts` whose `applyAction` throws, and borrows a placeholder lobby form + board from `_scaffold/`. As each game gets a real implementation it stops importing `_scaffold/`; the folder gets deleted when the last one does.
+## Look and feel
+
+The shell is a "midnight carnival": ink-violet night, chunky sticker outlines with hard offset shadows, and a chaos-yellow signature. Each game then paints its own table:
+
+| Game | Direction |
+|---|---|
+| Exploding Kittens | Comic-book bomb shelter — halftone crimson, kittens on black stock, a deck whose fuse burns hotter with your draw risk, KABOOM / NOPE! / DEFUSED! stamps |
+| Unstable Unicorns | Glitter-goth sleepover — plum velvet, holo-foil frames, a parametric unicorn for every card, Stables as corrals, NEIGH! stamps |
+| Here to Slay | Lantern-lit tavern — walnut and parchment, heroes as coats of arms, monster silhouettes, lantern action points, a 2d6 roll tray |
+| Casting Shadows | Moonlit arcane woodland — a glowing rune-hex map, hooded caster silhouettes, gem dice, tarot spells |
+| Happy Little Dinosaurs | Saturday-morning disaster cartoon — a winding Escape Route board, papercraft dinos, egg-backed picks that flip together |
+| Doomlings | Cosmic petri dish — living-cell trait cards, and a species for every player that evolves with their Trait Pile |
+
+All art is original and drawn in code. Effects are driven by game-state changes, animate transform and opacity only, and stop for `prefers-reduced-motion`. Every game's code, art, CSS and fonts load only when that game is opened.
 
 ## Multiplayer model
 
@@ -150,6 +168,7 @@ Online play runs through a **Firebase Realtime Database** shared with Kyle's oth
 | `FIREBASE_LIVE=1 npx vitest run src/store/networkStore.live.test.ts` | Online play + security rules against the real Firebase project |
 | `npm run deploy:rules` | Deploy `database.rules.json`, merged into the shared database's live rules |
 | `npm run fix-lock` | After any `npm install`: point every lockfile URL at registry.npmjs.org |
+| `node scripts/render.mjs [shot…]` | Headless-Chrome screenshots into `art-renders/` (e.g. `home`, `ek-gallery`, `cs-game`; or `--url "?demo=doomlings&sub=…"`) |
 
 ## Project plan / roadmap
 
@@ -171,12 +190,14 @@ Dice (Here to Slay, Casting Shadows) need no new primitive: a roll is public the
 ### Phase 3 — Exploding Kittens base game ✅
 See the status section above.
 
-### Phase 4+ — Remaining titles
-Unstable Unicorns is the natural next one: Neigh chains reuse the reaction window almost directly, and it needs a terminal-cancel variant. Then Happy Little Dinosaurs (simultaneous face-down commits), Doomlings (trait tableau + ages deck), Here to Slay and Casting Shadows (dice; Casting Shadows also brings the first spatial board).
+### Phase 4 — Remaining titles and every expansion ✅
+Unstable Unicorns, Here to Slay, Casting Shadows, Happy Little Dinosaurs and Doomlings, with all 30 expansions across the six games.
 
-Exploding Kittens' own expansions are a separate track — Imploding Kittens is the cheapest, since Reverse and Alter the Future both slot into machinery that already exists.
+### Phase 5 — Online rooms ✅
+Firebase Realtime Database rooms replaced peer-to-peer WebRTC (see Multiplayer model).
 
-Blocked on research: Casting Shadows and Doomlings both need rulebooks, and Doomlings needs its expansion list sourced.
+### Phase 6 — Look and feel ✅
+The shell's design system, the shared game-view kit, and an original art direction for each game (see Look and feel).
 
 ## Decided: hidden deck order
 

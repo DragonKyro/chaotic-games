@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { Seat } from '@/core/types';
 import {
   buildHldDecks,
   HLD_5_6_DISASTER_DEFS,
@@ -18,16 +17,7 @@ import { chooseAIAction } from './ai';
 import { happyLittleDinosModule } from './module';
 import { applyAction, computeRoundScores, createInitialState, isEliminatedByDisasters } from './reducer';
 import type { HldConfig } from './types';
-
-function makeSeats(n: number): Seat[] {
-  return Array.from({ length: n }, (_, i) => ({
-    id: `p${i + 1}`,
-    name: `Player ${i + 1}`,
-    color: '#000',
-    isAI: true,
-    isLocal: false,
-  }));
-}
+import { makeSeats, playOut } from '@/core/playout';
 
 const DEFAULT_CFG: HldConfig = { expansions: [], trackLength: 50 };
 
@@ -383,16 +373,8 @@ describe('Happy Little Dinosaurs — elimination & mechanics', () => {
   it('plays full AI-vs-AI games across 2, 3, and 4 players to completion', () => {
     for (const playerCount of [2, 3, 4]) {
       for (let seed = 1; seed <= 4; seed++) {
-        let s = createInitialState(DEFAULT_CFG, seed * 31, makeSeats(playerCount));
-        let steps = 0;
-        while (s.phase !== 'gameOver' && steps < 2000) {
-          const active = s.activePlayerId;
-          expect(active).toBeTruthy();
-          const action = chooseAIAction(s, active!);
-          expect(action).toBeTruthy();
-          s = applyAction(s, action!);
-          steps++;
-        }
+        const { state: s, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState(DEFAULT_CFG, seed * 31, makeSeats(playerCount)), 2000);
+        expect(stuck).toBe(false);
         expect(s.phase).toBe('gameOver');
         expect(s.winnerId).toBeTruthy();
       }
@@ -406,16 +388,8 @@ describe('Happy Little Dinosaurs — elimination & mechanics', () => {
     };
     for (const playerCount of [3, 5, 6]) {
       for (let seed = 1; seed <= 3; seed++) {
-        let s = createInitialState(allExpConfig, seed * 47, makeSeats(playerCount));
-        let steps = 0;
-        while (s.phase !== 'gameOver' && steps < 2500) {
-          const active = s.activePlayerId;
-          expect(active).toBeTruthy();
-          const action = chooseAIAction(s, active!);
-          expect(action).toBeTruthy();
-          s = applyAction(s, action!);
-          steps++;
-        }
+        const { state: s, stuck } = playOut({ applyAction, chooseAIAction }, createInitialState(allExpConfig, seed * 47, makeSeats(playerCount)), 2500);
+        expect(stuck).toBe(false);
         expect(s.phase).toBe('gameOver');
         expect(s.winnerId).toBeTruthy();
       }
